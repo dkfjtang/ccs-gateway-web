@@ -1,0 +1,45 @@
+# Cargo 配置优化
+# 用于加速依赖编译和缓存
+
+[source.crates-io]
+registry = "https://github.com/rust-lang/crates.io-index"
+
+# 替换为国内镜像源（如果在中国）
+# [source.crates-io]
+# registry = "https://mirrors.ustc.edu.cn/crates.io-index"
+# replace-with = 'ustc'
+
+# [source.ustc]
+# registry = "https://mirrors.ustc.edu.cn/crates.io-index"
+
+[build]
+# 并行编译
+jobs = 8
+
+[target.x86_64-unknown-linux-gnu]
+# 链接器优化（可选）
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[profile.release]
+# 发布版本优化
+opt-level = "s"          # 优化大小
+lto = "thin"            # 链接时优化
+codegen-units = 1       # 减少代码生成单元以提升优化
+panic = "abort"         # 减少二进制大小
+strip = true           # 移除调试符号
+
+[profile.dev]
+# 开发版本优化 - 更快的编译速度
+opt-level = 0
+debug = true
+overflow-checks = true
+lto = false
+panic = "unwind"
+incremental = true
+codegen-units = 256     # 最大并行度
+
+# 缓存配置
+[env]
+CARGO_INCREMENTAL = "1"
+CARGO_TARGET_DIR = "${PWD}/.cargo-cache"
