@@ -44,6 +44,29 @@ GitHub Releases publish the Web runtime only.
 - Windows: run the `.exe` directly in PowerShell or Command Prompt.
 - Linux: official assets are built on Ubuntu 20.04 to keep the minimum supported baseline explicit.
 
+### Docker + NGINX deployment
+
+The Docker deployment follows the same local-backend / edge-proxy rule used by the 9router deployment:
+
+- The container service is published on the host loopback only: `127.0.0.1:17666:17666`.
+- External access must go through NGINX, for example `0.0.0.0:30034 -> http://127.0.0.1:17666`.
+- Do not publish the backend as `0.0.0.0:17666:17666`.
+
+Build and start the local container:
+
+```bash
+docker compose -f docker-compose.ccs-web.yml build
+docker compose -f docker-compose.ccs-web.yml up -d
+```
+
+Expected smoke checks:
+
+```bash
+curl -fsS http://127.0.0.1:17666/health
+curl -fsS http://127.0.0.1:30034/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30034/.env  # expected: 404
+```
+
 ## Local Development
 
 ### Requirements
