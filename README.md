@@ -46,6 +46,8 @@ GitHub Releases publish the Web runtime only.
 
 ### Docker + NGINX deployment
 
+For the production operation checklist, recovery steps, and verification gates, see [CCS Gateway Web Production Runbook](docs/ccs-production-runbook.md).
+
 The Docker deployment follows the same local-backend / edge-proxy rule used by the 9router deployment:
 
 - WSL/Ubuntu hosts OpenClaw, NGINX, and the Dockerized CCS Web runtime.
