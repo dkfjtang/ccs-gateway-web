@@ -158,6 +158,23 @@ async fn main() {
     let auth_token = std::env::var("CC_SWITCH_AUTH_TOKEN").ok();
     let state = ServerState::new(auth_token, event_bus, session_store, auth_config);
 
+    let auto_start_proxy = std::env::var("CC_SWITCH_START_PROXY")
+        .map(|v| v != "0" && v.to_lowercase() != "false")
+        .unwrap_or(false);
+    if auto_start_proxy {
+        let proxy_state = state.clone();
+        tokio::spawn(async move {
+            match proxy_state.core.app_state().proxy_service.start().await {
+                Ok(info) => tracing::info!(
+                    address = %info.address,
+                    port = info.port,
+                    "Local proxy auto-started"
+                ),
+                Err(err) => tracing::error!(error = %err, "Failed to auto-start local proxy"),
+            }
+        });
+    }
+
     // CORS configuration
     let cors = CorsLayer::new()
         .allow_origin(Any)

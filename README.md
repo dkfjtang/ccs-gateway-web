@@ -51,6 +51,7 @@ The Docker deployment follows the same local-backend / edge-proxy rule used by t
 - WSL/Ubuntu hosts OpenClaw, NGINX, and the Dockerized CCS Web runtime.
 - Docker uses bridge networking and publishes only loopback ports: `127.0.0.1:17666:17666` for Web UI/API and `127.0.0.1:15721:15721` for the OpenAI-compatible local proxy.
 - OpenClaw uses the internal route `http://127.0.0.1:15721/v1`; external clients must not be able to call the model proxy port directly.
+- The container sets `CC_SWITCH_START_PROXY=true` so the local proxy is restored automatically after container restarts.
 - External web access must go through NGINX only, for example `0.0.0.0:30034 -> http://127.0.0.1:17666`.
 - Web auth is required for the management UI/API. Create `/root/.cc-switch/web-auth.json` with a bcrypt `password_hash`; keep any bootstrap password outside Git.
 - Do not route production verification through the temporary `127.0.0.1:20128` test upstream.
