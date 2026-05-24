@@ -11,5 +11,7 @@ services:
       CC_SWITCH_PORT: 17666
       CC_SWITCH_AUTO_PORT: "false"
       RUST_LOG: cc_switch_server=info,tower_http=info
-    ports:
-      - "127.0.0.1:17666:17666"
+    volumes:
+      - /root/.openclaw:/root/.openclaw:ro
+      - /root/.cc-switch:/root/.cc-switch
+    network_mode: host

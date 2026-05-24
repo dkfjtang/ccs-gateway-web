@@ -48,13 +48,24 @@ GitHub Releases publish the Web runtime only.
 
 The Docker deployment follows the same local-backend / edge-proxy rule used by the 9router deployment:
 
-- The container service is published on the host loopback only: `127.0.0.1:17666:17666`.
-- External access must go through NGINX, for example `0.0.0.0:30034 -> http://127.0.0.1:17666`.
-- Do not publish the backend as `0.0.0.0:17666:17666`.
+- The container uses host networking so its managed local proxy can call configured local or remote provider upstreams directly; do not route production verification through the temporary `127.0.0.1:20128` test upstream.
+- Web UI/API listens on `0.0.0.0:17666`; keep it reachable only through host firewall/WSL boundary and NGINX policy.
+- The OpenAI-compatible local proxy listens on `0.0.0.0:15721`; OpenClaw uses `http://localhost:15721/v1`.
+- External web access must go through NGINX, for example `0.0.0.0:30034 -> http://127.0.0.1:17666`.
+- Do not publish Docker bridge ports as `0.0.0.0:17666:17666`; if bridge networking is restored, publish host loopback only.
+- Persistent data is bind-mounted from the host: `/root/.cc-switch:/root/.cc-switch` stores the CC-Switch SQLite DB, providers, proxy config, settings, backups, and local verification provider state.
+- OpenClaw config is mounted read-only: `/root/.openclaw:/root/.openclaw:ro`; CC-Switch may import providers but must not mutate OpenClaw's live config from this container.
+- Before destructive rebuilds, migrations, or config experiments, back up `/root/.cc-switch` and `/root/.openclaw/openclaw.json` under `/home/win-files/openclaw-backups/ccs-gateway-web-data/`.
 
 Build and start the local container:
 
 ```bash
+stamp=$(date +%Y%m%d-%H%M%S)
+backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/$stamp"
+mkdir -p "$backup_dir/openclaw-config"
+tar -czf "$backup_dir/root-cc-switch.tar.gz" -C /root .cc-switch
+cp -a /root/.openclaw/openclaw.json "$backup_dir/openclaw-config/openclaw.json"
+
 docker compose -f docker-compose.ccs-web.yml build
 docker compose -f docker-compose.ccs-web.yml up -d
 ```
@@ -63,6 +74,10 @@ Expected smoke checks:
 
 ```bash
 curl -fsS http://127.0.0.1:17666/health
+curl -fsS http://127.0.0.1:15721/status
+curl -sS http://127.0.0.1:15721/v1/responses \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gpt-5.5","input":[{"role":"user","content":"Return exactly: CCS_PING_OK"}],"max_output_tokens":32}'
 curl -fsS http://127.0.0.1:30034/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30034/.env  # expected: 404
 ```

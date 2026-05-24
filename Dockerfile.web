@@ -22,5 +22,5 @@ ENV CC_SWITCH_HOST=0.0.0.0 \
     CC_SWITCH_PORT=17666 \
     CC_SWITCH_AUTO_PORT=false \
     RUST_LOG=cc_switch_server=info,tower_http=info
-EXPOSE 17666
+EXPOSE 17666 15721
 CMD ["/usr/local/bin/cc-switch-web"]
