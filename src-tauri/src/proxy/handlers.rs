@@ -9,8 +9,10 @@
 
 use super::{
     error_mapper::{get_error_message, map_proxy_error_to_status},
+    forwarder::ActiveConnectionGuard,
     handler_config::{
-        CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG, GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
+        claude_stream_usage_event_filter, CLAUDE_PARSER_CONFIG, CODEX_PARSER_CONFIG,
+        GEMINI_PARSER_CONFIG, OPENAI_PARSER_CONFIG,
     },
     handler_context::RequestContext,
     providers::{
@@ -22,7 +24,7 @@ use super::{
     response_processor::{
         create_logged_passthrough_stream, process_response, read_decoded_body,
         strip_entity_headers_for_rebuilt_body, strip_hop_by_hop_response_headers,
-        SseUsageCollector,
+        usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, take_sse_block},
@@ -31,6 +33,7 @@ use super::{
     ProxyError,
 };
 use crate::app_config::AppType;
+use crate::database::PRICING_SOURCE_REQUEST;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -114,6 +117,7 @@ async fn handle_messages_for_app(
     strip_prefix: Option<&'static str>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -143,9 +147,10 @@ async fn handle_messages_for_app(
 
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &app_type,
+            method,
             endpoint,
             body.clone(),
             headers,
@@ -164,6 +169,7 @@ async fn handle_messages_for_app(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let api_format = result
         .claude_api_format
@@ -178,12 +184,27 @@ async fn handle_messages_for_app(
 
     // Claude 特有：格式转换处理
     if needs_transform {
-        return handle_claude_transform(response, &ctx, &state, &body, is_stream, &api_format)
-            .await;
+        return handle_claude_transform(
+            response,
+            &ctx,
+            &state,
+            &body,
+            is_stream,
+            &api_format,
+            connection_guard,
+        )
+        .await;
     }
 
     // 通用响应处理（透传模式）
-    process_response(response, &ctx, &state, &CLAUDE_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CLAUDE_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 fn validate_claude_desktop_gateway_auth(
@@ -223,6 +244,7 @@ async fn handle_claude_transform(
     original_body: &Value,
     is_stream: bool,
     api_format: &str,
+    connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
     let is_codex_oauth = ctx
@@ -270,60 +292,49 @@ async fn handle_claude_transform(
             Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
 
-        // 创建使用量收集器
-        let usage_collector = {
+        // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
+        let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let model = ctx.request_model.clone();
             let status_code = status.as_u16();
             let start_time = ctx.start_time;
+            let session_id = ctx.session_id.clone();
 
-            SseUsageCollector::new(start_time, move |events, first_token_ms| {
-                if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
-                    let latency_ms = start_time.elapsed().as_millis() as u64;
-                    let state = state.clone();
-                    let provider_id = provider_id.clone();
-                    let model = model.clone();
+            Some(SseUsageCollector::new(
+                start_time,
+                Some(claude_stream_usage_event_filter),
+                move |events, first_token_ms| {
+                    if let Some(usage) = TokenUsage::from_claude_stream_events(&events) {
+                        let latency_ms = start_time.elapsed().as_millis() as u64;
+                        let state = state.clone();
+                        let provider_id = provider_id.clone();
+                        let model = model.clone();
+                        let session_id = session_id.clone();
 
-                    tokio::spawn(async move {
-                        log_usage(
-                            &state,
-                            &provider_id,
-                            "claude",
-                            &model,
-                            &model,
-                            usage,
-                            latency_ms,
-                            first_token_ms,
-                            true,
-                            status_code,
-                        )
-                        .await;
-                    });
-                } else {
-                    let latency_ms = start_time.elapsed().as_millis() as u64;
-                    let state = state.clone();
-                    let provider_id = provider_id.clone();
-                    let model = model.clone();
-
-                    tokio::spawn(async move {
-                        log_usage(
-                            &state,
-                            &provider_id,
-                            "claude",
-                            &model,
-                            &model,
-                            TokenUsage::default(),
-                            latency_ms,
-                            first_token_ms,
-                            true,
-                            status_code,
-                        )
-                        .await;
-                    });
-                    log::debug!("[Claude] OpenRouter 流式响应缺少 usage 统计，记录 0 token 请求");
-                }
-            })
+                        tokio::spawn(async move {
+                            log_usage(
+                                &state,
+                                &provider_id,
+                                "claude",
+                                &model,
+                                &model,
+                                usage,
+                                latency_ms,
+                                first_token_ms,
+                                true,
+                                status_code,
+                                Some(session_id),
+                            )
+                            .await;
+                        });
+                    } else {
+                        log::debug!("[Claude] OpenRouter 流式响应缺少 usage 统计，跳过消费记录");
+                    }
+                },
+            ))
+        } else {
+            None
         };
 
         // 获取流式超时配置
@@ -332,8 +343,9 @@ async fn handle_claude_transform(
         let logged_stream = create_logged_passthrough_stream(
             sse_stream,
             "Claude/OpenRouter",
-            Some(usage_collector),
+            usage_collector,
             timeout_config,
+            connection_guard,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -403,6 +415,7 @@ async fn handle_claude_transform(
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
             let model = model.to_string();
+            let session_id = ctx.session_id.clone();
             async move {
                 log_usage(
                     &state,
@@ -415,38 +428,11 @@ async fn handle_claude_transform(
                     None,
                     false,
                     status.as_u16(),
+                    Some(session_id),
                 )
                 .await;
             }
         });
-    } else {
-        let model = anthropic_response
-            .get("model")
-            .and_then(|m| m.as_str())
-            .unwrap_or(&ctx.request_model);
-        let latency_ms = ctx.latency_ms();
-        let request_model = ctx.request_model.clone();
-        tokio::spawn({
-            let state = state.clone();
-            let provider_id = ctx.provider.id.clone();
-            let model = model.to_string();
-            async move {
-                log_usage(
-                    &state,
-                    &provider_id,
-                    "claude",
-                    &model,
-                    &request_model,
-                    TokenUsage::default(),
-                    latency_ms,
-                    None,
-                    false,
-                    status.as_u16(),
-                )
-                .await;
-            }
-        });
-        log::debug!("[Claude] 转换后的非流式响应缺少 usage 统计，记录 0 token 请求");
     }
 
     // 构建响应
@@ -489,6 +475,7 @@ pub async fn handle_chat_completions(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -510,9 +497,10 @@ pub async fn handle_chat_completions(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -531,10 +519,18 @@ pub async fn handle_chat_completions(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &OPENAI_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &OPENAI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 /// 处理 /v1/responses 请求（OpenAI Responses API - Codex CLI 透传）
@@ -543,6 +539,7 @@ pub async fn handle_responses(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -564,9 +561,10 @@ pub async fn handle_responses(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -585,10 +583,18 @@ pub async fn handle_responses(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 /// 处理 /v1/responses/compact 请求（OpenAI Responses Compact API - Codex CLI 透传）
@@ -597,6 +603,7 @@ pub async fn handle_responses_compact(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
@@ -618,9 +625,10 @@ pub async fn handle_responses_compact(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Codex,
+            method,
             &endpoint,
             body,
             headers,
@@ -639,10 +647,18 @@ pub async fn handle_responses_compact(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &CODEX_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &CODEX_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 // ============================================================================
@@ -656,6 +672,7 @@ pub async fn handle_gemini(
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
+    let method = parts.method.clone();
     let headers = parts.headers;
     let extensions = parts.extensions;
     let body_bytes = req_body
@@ -663,8 +680,14 @@ pub async fn handle_gemini(
         .await
         .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
         .to_bytes();
-    let body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
+    // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
+    // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
+    let body: Value = if body_bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body_bytes)
+            .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
+    };
 
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(&state, &body, &headers, AppType::Gemini, "Gemini", "gemini")
@@ -683,9 +706,10 @@ pub async fn handle_gemini(
         .unwrap_or(false);
 
     let forwarder = ctx.create_forwarder(&state);
-    let result = match forwarder
+    let mut result = match forwarder
         .forward_with_retry(
             &AppType::Gemini,
+            method,
             endpoint,
             body,
             headers,
@@ -704,10 +728,18 @@ pub async fn handle_gemini(
         }
     };
 
+    let connection_guard = result.connection_guard.take();
     ctx.provider = result.provider;
     let response = result.response;
 
-    process_response(response, &ctx, &state, &GEMINI_PARSER_CONFIG).await
+    process_response(
+        response,
+        &ctx,
+        &state,
+        &GEMINI_PARSER_CONFIG,
+        connection_guard,
+    )
+    .await
 }
 
 fn should_use_claude_transform_streaming(
@@ -837,20 +869,19 @@ async fn log_usage(
     first_token_ms: Option<u64>,
     is_streaming: bool,
     status_code: u16,
+    session_id: Option<String>,
 ) {
     use super::usage::logger::UsageLogger;
 
-    if let Ok(config) = state.config.try_read() {
-        if !config.enable_logging {
-            return;
-        }
+    if !usage_logging_enabled(state) {
+        return;
     }
 
     let logger = UsageLogger::new(&state.db);
 
     let (multiplier, pricing_model_source) =
         logger.resolve_pricing_config(provider_id, app_type).await;
-    let pricing_model = if pricing_model_source == "request" {
+    let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
         request_model
     } else {
         model
@@ -870,7 +901,7 @@ async fn log_usage(
         latency_ms,
         first_token_ms,
         status_code,
-        None,
+        session_id,
         None, // provider_type
         is_streaming,
     ) {
@@ -880,101 +911,8 @@ async fn log_usage(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::database::Database;
-    use crate::error::AppError;
-    use crate::proxy::{
-        failover_switch::FailoverSwitchManager,
-        provider_router::ProviderRouter,
-        providers::gemini_shadow::GeminiShadowStore,
-        types::{ProxyConfig, ProxyStatus},
-    };
-    use std::{collections::HashMap, sync::Arc};
-    use tokio::sync::RwLock;
-
-    fn build_state(db: Arc<Database>, enable_logging: bool) -> ProxyState {
-        let mut config = ProxyConfig::default();
-        config.enable_logging = enable_logging;
-
-        ProxyState {
-            db: db.clone(),
-            config: Arc::new(RwLock::new(config)),
-            status: Arc::new(RwLock::new(ProxyStatus::default())),
-            start_time: Arc::new(RwLock::new(None)),
-            current_providers: Arc::new(RwLock::new(HashMap::new())),
-            provider_router: Arc::new(ProviderRouter::new(db.clone())),
-            gemini_shadow: Arc::new(GeminiShadowStore::default()),
-            app_handle: None,
-            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_log_usage_records_zero_token_request() -> Result<(), AppError> {
-        let db = Arc::new(Database::memory()?);
-        let state = build_state(db.clone(), true);
-
-        log_usage(
-            &state,
-            "provider-1",
-            "claude",
-            "gpt-4.1",
-            "gpt-4.1",
-            TokenUsage::default(),
-            123,
-            None,
-            true,
-            200,
-        )
-        .await;
-
-        let conn = crate::database::lock_conn!(db.conn);
-        let (count, input_tokens, output_tokens): (i64, i64, i64) = conn
-            .query_row(
-                "SELECT COUNT(*), input_tokens, output_tokens
-                 FROM proxy_request_logs WHERE provider_id = ?1",
-                ["provider-1"],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        assert_eq!(count, 1);
-        assert_eq!(input_tokens, 0);
-        assert_eq!(output_tokens, 0);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_log_usage_respects_enable_logging() -> Result<(), AppError> {
-        let db = Arc::new(Database::memory()?);
-        let state = build_state(db.clone(), false);
-
-        log_usage(
-            &state,
-            "provider-1",
-            "claude",
-            "gpt-4.1",
-            "gpt-4.1",
-            TokenUsage::default(),
-            123,
-            None,
-            false,
-            200,
-        )
-        .await;
-
-        let conn = crate::database::lock_conn!(db.conn);
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id = ?1",
-                ["provider-1"],
-                |row| row.get(0),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        assert_eq!(count, 0);
-        Ok(())
-    }
+    use super::{responses_sse_to_response_value, should_use_claude_transform_streaming};
+    use crate::proxy::ProxyError;
 
     #[test]
     fn codex_oauth_responses_force_streaming_even_if_client_sent_false() {

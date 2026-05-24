@@ -111,7 +111,7 @@ pub use services::subscription::{
 };
 pub use services::usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary,
+    RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 pub use services::webdav_sync::{
     check_connection as webdav_check_connection, download as webdav_download,
@@ -486,6 +486,7 @@ pub const WEB_COMPAT_TAURI_COMMANDS: &[&str] = &[
     "get_auto_failover_enabled",
     "set_auto_failover_enabled",
     "get_usage_summary",
+    "get_usage_summary_by_app",
     "get_usage_trends",
     "get_provider_stats",
     "get_model_stats",
@@ -1721,6 +1722,7 @@ pub fn run() {
             commands::set_auto_failover_enabled,
             // Usage statistics
             commands::get_usage_summary,
+            commands::get_usage_summary_by_app,
             commands::get_usage_trends,
             commands::get_provider_stats,
             commands::get_model_stats,

@@ -5,6 +5,7 @@ const USAGE_INVOKE_TIMEOUT_MS = 30000;
 
 const USAGE_COMMANDS = new Set([
   "get_usage_summary",
+  "get_usage_summary_by_app",
   "get_usage_trends",
   "get_provider_stats",
   "get_model_stats",

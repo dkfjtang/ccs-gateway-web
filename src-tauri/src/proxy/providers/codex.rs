@@ -9,6 +9,7 @@ use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use regex::Regex;
+use serde_json::Value;
 use std::sync::LazyLock;
 
 /// 官方 Codex 客户端 User-Agent 正则
@@ -76,6 +77,38 @@ impl CodexAdapter {
 impl Default for CodexAdapter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+/// Remove stale cross-provider Responses message item ids.
+///
+/// Some cached/replayed Responses payloads carry provider-specific `item_*` ids from a
+/// different upstream. OpenAI-compatible Responses endpoints require message item ids to
+/// start with `msg`. Keep non-message ids and correlation fields (`call_id`, tool ids)
+/// intact; only drop the known-bad stale message ids.
+pub(crate) fn sanitize_responses_input_item_ids(body: &mut Value) {
+    let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    for item in input {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+
+        let is_message = object.get("type").and_then(Value::as_str) == Some("message")
+            || object.contains_key("role");
+        let remove_stale_message_id = is_message
+            && object
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| id.starts_with("item_"))
+                .unwrap_or(false);
+
+        if remove_stale_message_id {
+            object.remove("id");
+        }
     }
 }
 
@@ -173,12 +206,25 @@ impl ProviderAdapter for CodexAdapter {
         url
     }
 
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)> {
+    fn sanitize_outbound_request(
+        &self,
+        mut body: Value,
+        _provider: &Provider,
+    ) -> Result<Value, ProxyError> {
+        sanitize_responses_input_item_ids(&mut body);
+        Ok(body)
+    }
+
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError> {
+        use super::adapter::auth_header_value;
         let bearer = format!("Bearer {}", auth.api_key);
-        vec![(
+        Ok(vec![(
             http::HeaderName::from_static("authorization"),
-            http::HeaderValue::from_str(&bearer).unwrap(),
-        )]
+            auth_header_value(&bearer)?,
+        )])
     }
 }
 
@@ -269,6 +315,27 @@ mod tests {
         // base_url 已包含 /v1，endpoint 也包含 /v1
         let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
         assert_eq!(url, "https://www.packyapi.com/v1/responses");
+    }
+
+    #[test]
+    fn sanitize_responses_input_item_ids_removes_stale_message_item_ids_only() {
+        let mut body = json!({
+            "input": [
+                {"type": "message", "id": "item_abc", "role": "user", "content": []},
+                {"type": "message", "id": "msg_abc", "role": "assistant", "content": []},
+                {"type": "function_call", "id": "fc_abc", "call_id": "call_abc"},
+                {"type": "message", "id": "", "role": "user", "content": [{"id": "item_nested"}]}
+            ]
+        });
+
+        sanitize_responses_input_item_ids(&mut body);
+
+        assert!(body["input"][0].get("id").is_none());
+        assert_eq!(body["input"][1]["id"], "msg_abc");
+        assert_eq!(body["input"][2]["id"], "fc_abc");
+        assert_eq!(body["input"][2]["call_id"], "call_abc");
+        assert_eq!(body["input"][3]["id"], "");
+        assert_eq!(body["input"][3]["content"][0]["id"], "item_nested");
     }
 
     // 官方客户端检测测试

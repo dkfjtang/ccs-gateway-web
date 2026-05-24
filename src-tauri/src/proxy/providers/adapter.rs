@@ -30,7 +30,14 @@ pub trait ProviderAdapter: Send + Sync {
     ///
     /// The forwarder inserts these at the position of the original auth header
     /// so that header order is preserved.
-    fn get_auth_headers(&self, auth: &AuthInfo) -> Vec<(http::HeaderName, http::HeaderValue)>;
+    ///
+    /// Returns `ProxyError::AuthError` when the credential contains characters
+    /// that cannot be encoded as an HTTP header value (e.g. control chars,
+    /// CR/LF), which would otherwise panic inside `HeaderValue::from_str`.
+    fn get_auth_headers(
+        &self,
+        auth: &AuthInfo,
+    ) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, ProxyError>;
 
     /// 是否需要格式转换
     fn needs_transform(&self, _provider: &Provider) -> bool {
@@ -42,9 +49,33 @@ pub trait ProviderAdapter: Send + Sync {
         Ok(body)
     }
 
+    /// Final provider-specific outbound sanitizer.
+    ///
+    /// This runs after generic model mapping and any format transform, immediately before
+    /// private-field filtering / serialization. It must not perform format conversion.
+    fn sanitize_outbound_request(
+        &self,
+        body: Value,
+        _provider: &Provider,
+    ) -> Result<Value, ProxyError> {
+        Ok(body)
+    }
+
     /// 转换响应体
     #[allow(dead_code)]
     fn transform_response(&self, body: Value) -> Result<Value, ProxyError> {
         Ok(body)
     }
+}
+
+/// Build an HTTP `HeaderValue` from a credential / token string.
+///
+/// Returns `ProxyError::AuthError` when the string contains characters that
+/// cannot live in an HTTP header value (control bytes, CR/LF, non-ASCII).
+/// Adapters call this for every header value derived from user-pasted
+/// material so a malformed key surfaces as a 401 instead of panicking
+/// the worker via `HeaderValue::from_str(...).unwrap()`.
+pub fn auth_header_value(s: &str) -> Result<http::HeaderValue, ProxyError> {
+    http::HeaderValue::from_str(s)
+        .map_err(|e| ProxyError::AuthError(format!("invalid auth header value: {e}")))
 }
