@@ -138,7 +138,14 @@ export interface UsageRangeSelection {
   customEndDate?: number;
 }
 
-export type AppTypeFilter = "all" | "claude" | "codex" | "gemini";
+export type AppType = "claude" | "codex" | "gemini";
+
+export type AppTypeFilter = "all" | AppType;
+
+export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
+  "codex",
+  "gemini",
+]);
 
 export interface StatsFilters {
   timeRange: UsageRangePreset;
