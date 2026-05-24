@@ -38,7 +38,7 @@ pub use cc_switch::{
     SkillBackupEntry, SkillMigrationResult, SkillRepo, SkillStorageLocation, SkillUpdateInfo,
     SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig, StreamCheckResult,
     StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult, UsageSummary,
-    WebDavSyncSettings, WslShellPreferenceInput, WEB_COMPAT_TAURI_COMMANDS,
+    UsageSummaryByApp, WebDavSyncSettings, WslShellPreferenceInput, WEB_COMPAT_TAURI_COMMANDS,
 };
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
@@ -1125,6 +1125,17 @@ pub fn get_usage_summary(
     ctx.app_state()
         .db
         .get_usage_summary(start_date, end_date, app_type)
+        .map_err(|e| e.to_string())
+}
+
+pub fn get_usage_summary_by_app(
+    ctx: &CoreContext,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<Vec<UsageSummaryByApp>, String> {
+    ctx.app_state()
+        .db
+        .get_usage_summary_by_app(start_date, end_date)
         .map_err(|e| e.to_string())
 }
 

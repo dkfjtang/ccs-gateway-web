@@ -49,6 +49,18 @@ pub trait ProviderAdapter: Send + Sync {
         Ok(body)
     }
 
+    /// Final provider-specific outbound sanitizer.
+    ///
+    /// This runs after generic model mapping and any format transform, immediately before
+    /// private-field filtering / serialization. It must not perform format conversion.
+    fn sanitize_outbound_request(
+        &self,
+        body: Value,
+        _provider: &Provider,
+    ) -> Result<Value, ProxyError> {
+        Ok(body)
+    }
+
     /// 转换响应体
     #[allow(dead_code)]
     fn transform_response(&self, body: Value) -> Result<Value, ProxyError> {

@@ -63,6 +63,7 @@ rpc_business_methods!(
     "get_stream_check_config",
     "save_stream_check_config",
     "get_usage_summary",
+    "get_usage_summary_by_app",
     "get_usage_trends",
     "get_provider_stats",
     "get_model_stats",
@@ -978,6 +979,16 @@ pub async fn dispatch_command(
             let app_type = get_optional_str_param(params, &["appType", "app_type"])?;
 
             let summary = cc_switch_core::get_usage_summary(core, start_date, end_date, app_type)
+                .map_err(RpcError::app_error)?;
+
+            serde_json::to_value(summary).map_err(|e| RpcError::internal_error(e.to_string()))
+        }
+
+        "get_usage_summary_by_app" => {
+            let start_date = get_optional_i64_param(params, &["startDate", "start_date"])?;
+            let end_date = get_optional_i64_param(params, &["endDate", "end_date"])?;
+
+            let summary = cc_switch_core::get_usage_summary_by_app(core, start_date, end_date)
                 .map_err(RpcError::app_error)?;
 
             serde_json::to_value(summary).map_err(|e| RpcError::internal_error(e.to_string()))

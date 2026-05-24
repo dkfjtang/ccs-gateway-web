@@ -1160,6 +1160,9 @@ impl RequestForwarder {
         } else {
             mapped_body
         };
+        // Run final provider-specific outbound sanitizers after generic mapping and
+        // provider-specific format transforms. This hook must not re-enter format conversion.
+        let request_body = adapter.sanitize_outbound_request(request_body, provider)?;
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段

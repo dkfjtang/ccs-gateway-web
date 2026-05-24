@@ -486,6 +486,7 @@ pub const WEB_COMPAT_TAURI_COMMANDS: &[&str] = &[
     "get_auto_failover_enabled",
     "set_auto_failover_enabled",
     "get_usage_summary",
+    "get_usage_summary_by_app",
     "get_usage_trends",
     "get_provider_stats",
     "get_model_stats",
