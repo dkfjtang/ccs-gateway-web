@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+target
+src-tauri/target
+crates/**/target
+.DS_Store
+*.log
+.env
+.env.*

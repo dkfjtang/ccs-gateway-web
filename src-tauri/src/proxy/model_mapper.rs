@@ -81,6 +81,23 @@ impl ModelMapping {
     }
 }
 
+/// Remove the Claude Desktop [1M] display suffix before sending to upstream providers.
+pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
+    let Some(model) = body.get("model").and_then(Value::as_str) else {
+        return body;
+    };
+
+    let trimmed = model.trim();
+    if trimmed.to_ascii_lowercase().ends_with("[1m]") {
+        let stripped = trimmed[..trimmed.len().saturating_sub("[1M]".len())]
+            .trim_end()
+            .to_string();
+        body["model"] = serde_json::json!(stripped);
+    }
+
+    body
+}
+
 /// 对请求体应用模型映射
 ///
 /// 返回 (映射后的请求体, 原始模型名, 映射后模型名)

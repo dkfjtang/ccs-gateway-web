@@ -111,7 +111,7 @@ pub use services::subscription::{
 };
 pub use services::usage_stats::{
     DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary,
+    RequestLogDetail, UsageSummary, UsageSummaryByApp,
 };
 pub use services::webdav_sync::{
     check_connection as webdav_check_connection, download as webdav_download,

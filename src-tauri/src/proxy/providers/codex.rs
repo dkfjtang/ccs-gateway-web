@@ -9,6 +9,7 @@ use super::{AuthInfo, AuthStrategy, ProviderAdapter};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
 use regex::Regex;
+use serde_json::Value;
 use std::sync::LazyLock;
 
 /// 官方 Codex 客户端 User-Agent 正则
