@@ -1471,6 +1471,17 @@ pub fn set_optimizer_config(ctx: &CoreContext, config: OptimizerConfig) -> Resul
         }
     }
 
+    if config.token_saver_min_chars < 160 {
+        return Err("Invalid token_saver_min_chars value: must be at least 160".to_string());
+    }
+
+    if config.token_saver_keep_chars < 80 {
+        return Err("Invalid token_saver_keep_chars value: must be at least 80".to_string());
+    }
+
+    if config.token_saver_keep_chars >= config.token_saver_min_chars {
+        return Err("Invalid token_saver_keep_chars value: must be smaller than token_saver_min_chars".to_string());
+    }
 
     ctx.app_state()
         .db

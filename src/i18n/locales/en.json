@@ -364,7 +364,13 @@
         "cacheInjectionDescription": "Automatically inject cache breakpoints at key positions in requests to reduce duplicate token billing",
         "cacheTtl": "Cache TTL",
         "cacheTtl5m": "5 minutes",
-        "cacheTtl1h": "1 hour"
+        "cacheTtl1h": "1 hour",
+        "tokenSaver": "Token Compression / RTK Token Saver",
+        "tokenSaverDescription": "Inspired by 9Router RTK: compress only long tool_result, function output, and text payloads while preserving protocol IDs, tool calls, reasoning, and cache fields.",
+        "tokenSaverMinChars": "Trigger threshold (chars)",
+        "tokenSaverKeepChars": "Kept context (chars)",
+        "cavemanOutputCompression": "Caveman Output Compression (Reserved)",
+        "cavemanOutputCompressionDescription": "Documentation-only placeholder for a future capability. Runtime output is not rewritten and no enable switch is exposed yet."
       },
       "logConfig": {
         "title": "Log Management",

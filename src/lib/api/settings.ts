@@ -326,6 +326,10 @@ export interface OptimizerConfig {
   thinkingOptimizer: boolean;
   cacheInjection: boolean;
   cacheTtl: "5m" | "1h";
+  tokenSaver: boolean;
+  tokenSaverMinChars: number;
+  tokenSaverKeepChars: number;
+  cavemanOutputCompression: boolean;
 }
 
 export interface LogConfig {

@@ -364,7 +364,13 @@
         "cacheInjectionDescription": "自动在请求关键位置注入 Cache 断点，减少重复 token 计费",
         "cacheTtl": "Cache TTL",
         "cacheTtl5m": "5 分钟",
-        "cacheTtl1h": "1 小时"
+        "cacheTtl1h": "1 小时",
+        "tokenSaver": "Token 压缩 / RTK Token Saver",
+        "tokenSaverDescription": "借鉴 9Router RTK：仅压缩长 tool_result、函数输出和长文本块，保留协议 ID、tool_call、reasoning 与 cache 字段。",
+        "tokenSaverMinChars": "触发阈值（字符）",
+        "tokenSaverKeepChars": "保留长度（字符）",
+        "cavemanOutputCompression": "Caveman 输出压缩（预留）",
+        "cavemanOutputCompressionDescription": "当前仅作为后续能力说明，运行时不会改写输出；正式实现前不提供启用开关。"
       },
       "logConfig": {
         "title": "日志管理",

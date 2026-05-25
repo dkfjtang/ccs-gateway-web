@@ -236,7 +236,7 @@ impl Default for RectifierConfig {
 /// 请求优化器配置
 ///
 /// 存储在 settings 表中，key = "optimizer_config"
-/// 仅对 Bedrock provider 生效（CLAUDE_CODE_USE_BEDROCK = "1"）
+/// 其中 Bedrock thinking/cache 子项只对 Bedrock provider 生效；Token Saver 对所有 provider 的最终上游请求体生效。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OptimizerConfig {
@@ -252,10 +252,30 @@ pub struct OptimizerConfig {
     /// Cache TTL: "5m" | "1h"（默认 "1h"）
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl: String,
+    /// Token Saver：借鉴 9Router RTK，仅压缩长正文块，保护协议关键字段（默认关闭）
+    #[serde(default)]
+    pub token_saver: bool,
+    /// Token Saver 触发阈值：文本长度达到该值才压缩（默认 4000 字符）
+    #[serde(default = "default_token_saver_min_chars")]
+    pub token_saver_min_chars: usize,
+    /// Token Saver 保留长度：压缩后保留头尾各一半左右上下文（默认 800 字符）
+    #[serde(default = "default_token_saver_keep_chars")]
+    pub token_saver_keep_chars: usize,
+    /// Caveman 输出压缩：预留给非流式响应压缩，当前仅配置落地（默认关闭）
+    #[serde(default)]
+    pub caveman_output_compression: bool,
 }
 
 fn default_cache_ttl() -> String {
     "1h".to_string()
+}
+
+fn default_token_saver_min_chars() -> usize {
+    4000
+}
+
+fn default_token_saver_keep_chars() -> usize {
+    800
 }
 
 impl Default for OptimizerConfig {
@@ -265,6 +285,10 @@ impl Default for OptimizerConfig {
             thinking_optimizer: true,
             cache_injection: true,
             cache_ttl: "1h".to_string(),
+            token_saver: false,
+            token_saver_min_chars: default_token_saver_min_chars(),
+            token_saver_keep_chars: default_token_saver_keep_chars(),
+            caveman_output_compression: false,
         }
     }
 }
@@ -417,6 +441,20 @@ mod tests {
         assert!(config.enabled);
         assert!(!config.request_thinking_signature);
         assert!(config.request_thinking_budget);
+    }
+
+    #[test]
+    fn test_optimizer_config_serde_defaults_for_token_saver_fields() {
+        let json = r#"{"enabled": true, "thinkingOptimizer": true, "cacheInjection": true, "cacheTtl": "1h"}"#;
+        let config: OptimizerConfig = serde_json::from_str(json).unwrap();
+        assert!(config.enabled);
+        assert!(config.thinking_optimizer);
+        assert!(config.cache_injection);
+        assert_eq!(config.cache_ttl, "1h");
+        assert!(!config.token_saver);
+        assert_eq!(config.token_saver_min_chars, 4000);
+        assert_eq!(config.token_saver_keep_chars, 800);
+        assert!(!config.caveman_output_compression);
     }
 
     #[test]

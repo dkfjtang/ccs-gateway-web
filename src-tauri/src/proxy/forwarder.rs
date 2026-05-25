@@ -1162,7 +1162,11 @@ impl RequestForwarder {
         };
         // Run final provider-specific outbound sanitizers after generic mapping and
         // provider-specific format transforms. This hook must not re-enter format conversion.
-        let request_body = adapter.sanitize_outbound_request(request_body, provider)?;
+        let mut request_body = adapter.sanitize_outbound_request(request_body, provider)?;
+
+        if self.optimizer_config.enabled && self.optimizer_config.token_saver {
+            super::token_saver::optimize(&mut request_body, &self.optimizer_config);
+        }
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游
         // 默认使用空白名单，过滤所有 _ 前缀字段

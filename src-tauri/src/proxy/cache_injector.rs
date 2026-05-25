@@ -197,6 +197,7 @@ mod tests {
             thinking_optimizer: true,
             cache_injection: true,
             cache_ttl: "1h".to_string(),
+            ..Default::default()
         }
     }
 

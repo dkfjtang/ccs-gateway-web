@@ -21,19 +21,36 @@ export function RectifierConfigPanel() {
     thinkingOptimizer: true,
     cacheInjection: true,
     cacheTtl: "1h",
+    tokenSaver: false,
+    tokenSaverMinChars: 4000,
+    tokenSaverKeepChars: 800,
+    cavemanOutputCompression: false,
   });
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    settingsApi
-      .getRectifierConfig()
-      .then(setConfig)
-      .catch((e) => console.error("Failed to load rectifier config:", e))
-      .finally(() => setIsLoading(false));
-    settingsApi
-      .getOptimizerConfig()
-      .then(setOptimizerConfig)
-      .catch((e) => console.error("Failed to load optimizer config:", e));
+    const loadConfigs = async () => {
+      try {
+        const [rectifier, optimizer] = await Promise.all([
+          settingsApi.getRectifierConfig(),
+          settingsApi.getOptimizerConfig(),
+        ]);
+        setConfig(rectifier);
+        setOptimizerConfig({
+          tokenSaver: false,
+          tokenSaverMinChars: 4000,
+          tokenSaverKeepChars: 800,
+          cavemanOutputCompression: false,
+          ...optimizer,
+        });
+      } catch (e) {
+        console.error("Failed to load rectifier/optimizer config:", e);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadConfigs();
   }, []);
 
   const handleChange = async (updates: Partial<RectifierConfig>) => {
@@ -199,6 +216,64 @@ export function RectifierConfigPanel() {
                 </select>
               </div>
             )}
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>{t("settings.advanced.optimizer.tokenSaver")}</Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.advanced.optimizer.tokenSaverDescription")}
+                </p>
+              </div>
+              <Switch
+                checked={optimizerConfig.tokenSaver}
+                disabled={!optimizerConfig.enabled}
+                onCheckedChange={(checked) =>
+                  handleOptimizerChange({ tokenSaver: checked })
+                }
+              />
+            </div>
+
+            {optimizerConfig.tokenSaver && (
+              <div className="grid grid-cols-2 gap-3">
+                <label className="space-y-1 text-xs text-muted-foreground">
+                  <span>{t("settings.advanced.optimizer.tokenSaverMinChars")}</span>
+                  <input
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                    type="number"
+                    min={160}
+                    value={optimizerConfig.tokenSaverMinChars}
+                    disabled={!optimizerConfig.enabled || !optimizerConfig.tokenSaver}
+                    onChange={(e) =>
+                      handleOptimizerChange({
+                        tokenSaverMinChars: Math.max(160, Number(e.target.value) || 4000),
+                      })
+                    }
+                  />
+                </label>
+                <label className="space-y-1 text-xs text-muted-foreground">
+                  <span>{t("settings.advanced.optimizer.tokenSaverKeepChars")}</span>
+                  <input
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                    type="number"
+                    min={80}
+                    value={optimizerConfig.tokenSaverKeepChars}
+                    disabled={!optimizerConfig.enabled || !optimizerConfig.tokenSaver}
+                    onChange={(e) =>
+                      handleOptimizerChange({
+                        tokenSaverKeepChars: Math.max(80, Number(e.target.value) || 800),
+                      })
+                    }
+                  />
+                </label>
+              </div>
+            )}
+
+            <div className="rounded-md border border-dashed p-3 opacity-75">
+              <Label>{t("settings.advanced.optimizer.cavemanOutputCompression")}</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {t("settings.advanced.optimizer.cavemanOutputCompressionDescription")}
+              </p>
+            </div>
           </div>
         </div>
       </div>
