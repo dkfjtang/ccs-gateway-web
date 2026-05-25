@@ -9,6 +9,31 @@ import {
   type OptimizerConfig,
 } from "@/lib/api/settings";
 
+const DEFAULT_OPTIMIZER_CONFIG: OptimizerConfig = {
+  enabled: false,
+  thinkingOptimizer: true,
+  cacheInjection: true,
+  cacheTtl: "1h",
+  tokenSaver: false,
+  tokenSaverMinChars: 4000,
+  tokenSaverKeepChars: 800,
+  cavemanOutputCompression: false,
+};
+
+function normalizeOptimizerConfig(config: OptimizerConfig): OptimizerConfig {
+  const tokenSaverMinChars = Math.max(160, config.tokenSaverMinChars);
+  const tokenSaverKeepChars = Math.min(
+    Math.max(80, config.tokenSaverKeepChars),
+    tokenSaverMinChars - 1,
+  );
+
+  return {
+    ...config,
+    tokenSaverMinChars,
+    tokenSaverKeepChars,
+  };
+}
+
 export function RectifierConfigPanel() {
   const { t } = useTranslation();
   const [config, setConfig] = useState<RectifierConfig>({
@@ -16,16 +41,9 @@ export function RectifierConfigPanel() {
     requestThinkingSignature: true,
     requestThinkingBudget: true,
   });
-  const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>({
-    enabled: false,
-    thinkingOptimizer: true,
-    cacheInjection: true,
-    cacheTtl: "1h",
-    tokenSaver: false,
-    tokenSaverMinChars: 4000,
-    tokenSaverKeepChars: 800,
-    cavemanOutputCompression: false,
-  });
+  const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>(
+    DEFAULT_OPTIMIZER_CONFIG,
+  );
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -36,13 +54,9 @@ export function RectifierConfigPanel() {
           settingsApi.getOptimizerConfig(),
         ]);
         setConfig(rectifier);
-        setOptimizerConfig({
-          tokenSaver: false,
-          tokenSaverMinChars: 4000,
-          tokenSaverKeepChars: 800,
-          cavemanOutputCompression: false,
-          ...optimizer,
-        });
+        setOptimizerConfig(
+          normalizeOptimizerConfig({ ...DEFAULT_OPTIMIZER_CONFIG, ...optimizer }),
+        );
       } catch (e) {
         console.error("Failed to load rectifier/optimizer config:", e);
       } finally {
@@ -66,7 +80,7 @@ export function RectifierConfigPanel() {
   };
 
   const handleOptimizerChange = async (updates: Partial<OptimizerConfig>) => {
-    const newConfig = { ...optimizerConfig, ...updates };
+    const newConfig = normalizeOptimizerConfig({ ...optimizerConfig, ...updates });
     setOptimizerConfig(newConfig);
     try {
       await settingsApi.setOptimizerConfig(newConfig);

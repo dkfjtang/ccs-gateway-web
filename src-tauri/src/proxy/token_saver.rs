@@ -204,6 +204,7 @@ fn is_protected_field(key: &str) -> bool {
             | "response_id"
             | "cache_control"
             | "signature"
+            | "encrypted_content"
             | "name"
             | "role"
             | "type"
@@ -212,7 +213,16 @@ fn is_protected_field(key: &str) -> bool {
 }
 
 fn should_skip_block_field(block_type: &str, key: &str) -> bool {
-    if matches!(block_type, "reasoning" | "thinking" | "redacted_thinking" | "tool_call" | "function_call" | "tool_use") {
+    if matches!(
+        block_type,
+        "reasoning"
+            | "thinking"
+            | "redacted_thinking"
+            | "tool_call"
+            | "function_call"
+            | "tool_use"
+            | "computer_call_output"
+    ) {
         return true;
     }
 
@@ -390,6 +400,66 @@ src/b.rs:1:seven";
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["input"][0]["output"], json_output);
+    }
+
+    #[test]
+    fn skips_json_array_string_tool_outputs() {
+        let json_output = r#"[{"id":1,"value":"abcdefghijklmnopqrstuvwxyz0123456789"}]"#;
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": json_output
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["input"][0]["output"], json_output);
+    }
+
+    #[test]
+    fn leaves_computer_call_output_unchanged() {
+        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut body = json!({
+            "input": [{
+                "type": "computer_call_output",
+                "call_id": "call_1",
+                "output": {
+                    "type": "input_image",
+                    "image_url": long,
+                    "file_id": long
+                },
+                "text": long
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["input"][0]["call_id"], "call_1");
+        assert_eq!(body["input"][0]["output"]["image_url"], long);
+        assert_eq!(body["input"][0]["output"]["file_id"], long);
+        assert_eq!(body["input"][0]["text"], long);
+    }
+
+    #[test]
+    fn leaves_reasoning_encrypted_content_unchanged() {
+        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let mut body = json!({
+            "input": [{
+                "type": "reasoning",
+                "id": "rs_1",
+                "encrypted_content": long,
+                "summary": [{"type": "text", "text": long}],
+                "signature": long
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["input"][0]["encrypted_content"], long);
+        assert_eq!(body["input"][0]["summary"][0]["text"], long);
+        assert_eq!(body["input"][0]["signature"], long);
     }
 
     #[test]
