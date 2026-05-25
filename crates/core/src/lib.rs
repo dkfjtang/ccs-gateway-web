@@ -1286,15 +1286,153 @@ pub fn update_tray_menu(_ctx: &CoreContext) -> Result<bool, String> {
 // Settings 相关 API
 // ========================
 
+fn settings_for_frontend(mut settings: AppSettings) -> AppSettings {
+    if let Some(sync) = settings.webdav_sync.as_mut() {
+        sync.password.clear();
+    }
+    settings.webdav_backup = None;
+    settings
+}
+
+fn merge_settings_for_save(
+    mut incoming: AppSettings,
+    existing: &AppSettings,
+) -> AppSettings {
+    match (&mut incoming.webdav_sync, &existing.webdav_sync) {
+        (None, _) => incoming.webdav_sync = existing.webdav_sync.clone(),
+        (Some(incoming_sync), Some(existing_sync))
+            if incoming_sync.password.is_empty() && !existing_sync.password.is_empty() =>
+        {
+            incoming_sync.password = existing_sync.password.clone();
+        }
+        _ => {}
+    }
+    incoming
+}
+
 /// 获取应用设置
 pub fn get_settings() -> AppSettings {
-    cc_switch::get_settings()
+    settings_for_frontend(cc_switch::get_settings())
 }
 
 /// 保存应用设置
 pub fn save_settings(settings: AppSettings) -> Result<bool, String> {
-    cc_switch::update_settings(settings).map_err(|e| e.to_string())?;
+    let existing = cc_switch::get_settings();
+    let merged = merge_settings_for_save(settings, &existing);
+    cc_switch::update_settings(merged).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::{merge_settings_for_save, settings_for_frontend};
+    use cc_switch::{AppSettings, WebDavSyncSettings};
+
+    #[test]
+    fn frontend_settings_clear_webdav_password_but_keep_config() {
+        let mut settings = AppSettings::default();
+        settings.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let frontend = settings_for_frontend(settings);
+
+        let sync = frontend.webdav_sync.expect("webdav config should remain visible");
+        assert_eq!(sync.base_url, "https://dav.example.com");
+        assert_eq!(sync.username, "alice");
+        assert_eq!(sync.password, "");
+    }
+
+    #[test]
+    fn save_settings_preserves_existing_webdav_when_payload_omits_it() {
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        let sync = merged.webdav_sync.expect("existing webdav config should be preserved");
+        assert_eq!(sync.base_url, "https://dav.example.com");
+        assert_eq!(sync.password, "secret");
+    }
+
+    #[test]
+    fn save_settings_preserves_existing_webdav_password_when_frontend_sends_empty_password() {
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(merged.webdav_sync.unwrap().password, "secret");
+    }
+
+    #[test]
+    fn save_settings_replaces_existing_webdav_when_incoming_has_new_config() {
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.old.example.com".to_string(),
+            username: "old".to_string(),
+            password: "old-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.new.example.com".to_string(),
+            username: "new".to_string(),
+            password: "new-pass".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let merged = merge_settings_for_save(incoming, &existing);
+        let sync = merged.webdav_sync.expect("incoming webdav config should be used");
+        assert_eq!(sync.base_url, "https://dav.new.example.com");
+        assert_eq!(sync.username, "new");
+        assert_eq!(sync.password, "new-pass");
+    }
+
+    #[test]
+    fn save_settings_handles_both_empty_webdav_passwords() {
+        let mut existing = AppSettings::default();
+        existing.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let mut incoming = AppSettings::default();
+        incoming.webdav_sync = Some(WebDavSyncSettings {
+            base_url: "https://dav.example.com".to_string(),
+            username: "alice".to_string(),
+            password: "".to_string(),
+            ..WebDavSyncSettings::default()
+        });
+
+        let merged = merge_settings_for_save(incoming, &existing);
+        assert_eq!(merged.webdav_sync.unwrap().password, "");
+    }
 }
 
 /// 获取整流器配置
@@ -1332,6 +1470,7 @@ pub fn set_optimizer_config(ctx: &CoreContext, config: OptimizerConfig) -> Resul
             ));
         }
     }
+
 
     ctx.app_state()
         .db
