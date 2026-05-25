@@ -119,3 +119,24 @@ Minimum checks before claiming this feature safe:
 - LLM-based or structured Caveman output compression.
 - Token-saving telemetry in usage logs.
 - UI help text showing estimated saved characters per request.
+
+## Source-backed audit update
+
+Follow-up source audit corrected the terminology:
+
+- RTK source means <https://github.com/rtk-ai/rtk>, not a 9Router-internal module.
+- Caveman source means <https://github.com/JuliusBrussee/caveman>.
+
+Audit docs:
+
+- [CCS RTK Source Audit](ccs-rtk-source-audit.md)
+- [CCS Caveman Source Audit](ccs-caveman-source-audit.md)
+
+Current Token Saver v1 remains an experimental, default-off safety baseline. It should not be described as full RTK parity.
+
+Next implementation direction:
+
+1. Build a command-aware RTK-style filter engine rather than expanding blind text truncation.
+2. Start with built-in filters only; defer user/project TOML filters until trust gates exist.
+3. Treat Caveman as an agent style profile or prose-file compressor, not as a proxy response transformer.
+4. Keep Caveman runtime output rewriting disabled until a source-backed design exists.
