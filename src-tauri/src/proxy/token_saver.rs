@@ -6,7 +6,10 @@
 
 use serde_json::Value;
 
-use super::types::OptimizerConfig;
+use super::{
+    token_filter_engine::{self, CommandContext, FieldKind, FilterInput, FilterLimits},
+    types::OptimizerConfig,
+};
 
 /// Apply request-side token saving in-place.
 pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
@@ -46,7 +49,12 @@ fn compress_value(value: &mut Value, min_chars: usize, keep_chars: usize) {
                 }
 
                 if compress_keys.contains(&key.as_str()) {
-                    compress_text_like(child, min_chars, keep_chars);
+                    compress_text_like(
+                        child,
+                        min_chars,
+                        keep_chars,
+                        field_kind_for(block_type.as_str(), role.as_str()),
+                    );
                 } else {
                     compress_value(child, min_chars, keep_chars);
                 }
@@ -61,11 +69,16 @@ fn compress_value(value: &mut Value, min_chars: usize, keep_chars: usize) {
     }
 }
 
-fn compress_text_like(value: &mut Value, min_chars: usize, keep_chars: usize) {
+fn compress_text_like(
+    value: &mut Value,
+    min_chars: usize,
+    keep_chars: usize,
+    field_kind: FieldKind,
+) {
     match value {
         Value::String(text) => {
             if should_compress_string(text, min_chars) {
-                *text = summarize_text(text, keep_chars);
+                *text = filter_safe_text(text, keep_chars, field_kind);
             }
         }
         Value::Array(items) => {
@@ -100,6 +113,76 @@ fn compress_typed_text_blocks(value: &mut Value, min_chars: usize, keep_chars: u
     }
 }
 
+fn field_kind_for(block_type: &str, role: &str) -> FieldKind {
+    match (block_type, role) {
+        ("tool_result", _) => FieldKind::AnthropicToolResult,
+        ("function_call_output", _) => FieldKind::OpenAiResponsesFunctionOutput,
+        ("", "tool") => FieldKind::OpenAiChatToolContent,
+        _ => FieldKind::TypedTextBlock,
+    }
+}
+
+fn filter_safe_text(text: &str, keep_chars: usize, field_kind: FieldKind) -> String {
+    let input = FilterInput {
+        text,
+        field_kind,
+        command_context: infer_command_context(text),
+    };
+    token_filter_engine::filter(
+        input,
+        FilterLimits {
+            keep_chars,
+            ..FilterLimits::default()
+        },
+    )
+    .text
+}
+
+fn infer_command_context(text: &str) -> Option<CommandContext<'_>> {
+    let first = text.lines().find(|line| !line.trim().is_empty())?.trim_start();
+    let command = if first.starts_with("Compiling ")
+        || first.contains("error[E")
+        || first.contains("test result:")
+    {
+        Some("cargo")
+    } else if first.contains("error TS") || first.contains("warning TS") || text.contains("error TS") {
+        Some("tsc")
+    } else if text
+        .lines()
+        .take(8)
+        .filter(|line| looks_like_search_result_line(line))
+        .count()
+        >= 2
+    {
+        Some("rg")
+    } else {
+        None
+    }?;
+
+    Some(CommandContext {
+        tool_name: Some(command),
+        command: Some(command),
+        args: &[],
+        exit_code: None,
+        cwd: None,
+        trusted_source: false,
+    })
+}
+
+fn looks_like_search_result_line(line: &str) -> bool {
+    let mut parts = line.splitn(3, ':');
+    let Some(file) = parts.next() else {
+        return false;
+    };
+    let Some(line_no) = parts.next() else {
+        return false;
+    };
+    let Some(rest) = parts.next() else {
+        return false;
+    };
+    !file.is_empty() && !rest.is_empty() && line_no.chars().all(|c| c.is_ascii_digit())
+}
+
 fn should_compress_string(text: &str, min_chars: usize) -> bool {
     if text.chars().count() < min_chars {
         return false;
@@ -108,30 +191,6 @@ fn should_compress_string(text: &str, min_chars: usize) -> bool {
     // JSON-looking tool output is usually intended to stay machine-readable.
     let trimmed = text.trim_start();
     !(trimmed.starts_with('{') || trimmed.starts_with('['))
-}
-
-fn summarize_text(text: &str, keep_chars: usize) -> String {
-    let char_count = text.chars().count();
-    if char_count <= keep_chars {
-        return text.to_string();
-    }
-
-    let head_chars = keep_chars / 2;
-    let tail_chars = keep_chars.saturating_sub(head_chars);
-    let head: String = text.chars().take(head_chars).collect();
-    let tail: String = text
-        .chars()
-        .rev()
-        .take(tail_chars)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-    let omitted = char_count.saturating_sub(head_chars + tail_chars);
-
-    format!(
-        "{head}\n\n[CCS Token Saver: omitted {omitted} chars from a long tool/text payload]\n\n{tail}"
-    )
 }
 
 fn is_protected_field(key: &str) -> bool {
@@ -200,7 +259,7 @@ mod tests {
         assert_eq!(block["tool_use_id"], "tool_123");
         assert_eq!(block["cache_control"]["type"], "ephemeral");
         let compressed = block["content"].as_str().unwrap();
-        assert!(compressed.contains("CCS Token Saver"));
+        assert!(compressed.contains("CCS TokenFilterEngine"));
         assert!(compressed.starts_with("abcde"));
         assert!(compressed.ends_with("56789"));
     }
@@ -246,7 +305,7 @@ mod tests {
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["messages"][0]["tool_call_id"], "call_1");
-        assert!(body["messages"][0]["content"].as_str().unwrap().contains("CCS Token Saver"));
+        assert!(body["messages"][0]["content"].as_str().unwrap().contains("CCS TokenFilterEngine"));
     }
 
     #[test]
@@ -263,7 +322,58 @@ mod tests {
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["input"][0]["call_id"], "call_1");
-        assert!(body["input"][0]["output"].as_str().unwrap().contains("CCS Token Saver"));
+        assert!(body["input"][0]["output"].as_str().unwrap().contains("CCS TokenFilterEngine"));
+    }
+
+
+    #[test]
+    fn compresses_cargo_output_with_filter_engine() {
+        let cargo = "Downloading crates
+Compiling demo v0.1.0
+running 1 test
+test foo ... FAILED
+test result: FAILED. 0 passed; 1 failed";
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": cargo
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        let compressed = body["messages"][0]["content"].as_str().unwrap();
+        assert!(compressed.contains("test foo ... FAILED"));
+        assert!(compressed.contains("test result: FAILED"));
+        assert!(!compressed.contains("Compiling demo"));
+    }
+
+    #[test]
+    fn compresses_search_results_with_per_file_cap() {
+        let results = "src/a.rs:1:one
+src/a.rs:2:two
+src/a.rs:3:three
+src/a.rs:4:four
+src/a.rs:5:five
+src/a.rs:6:six
+src/b.rs:1:seven";
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": results
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        let compressed = body["messages"][0]["content"].as_str().unwrap();
+        assert!(compressed.contains("src/a.rs:1:one"));
+        assert!(compressed.contains("src/a.rs:5:five"));
+        assert!(compressed.contains("src/b.rs:1:seven"));
+        assert!(!compressed.contains("src/a.rs:6:six"));
+        assert!(compressed.contains("omitted 1 search result"));
     }
 
     #[test]
@@ -303,7 +413,7 @@ mod tests {
 
         let content = &body["messages"][0]["content"][0]["content"];
         assert_eq!(content["metadata"], "abcdefghijklmnopqrstuvwxyz0123456789");
-        assert!(content["rendered"]["text"].as_str().unwrap().contains("CCS Token Saver"));
+        assert!(content["rendered"]["text"].as_str().unwrap().contains("CCS TokenFilterEngine"));
     }
 
     #[test]
