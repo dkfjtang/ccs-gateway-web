@@ -1,166 +1,93 @@
-<div align="center">
+# CCS Gateway Web
 
-# CC Switch Fork
+`ccs-gateway-web` 是基于上游 CC Switch 生态改造的本地 Web 管理与模型代理网关，用于统一管理 Claude Code、Claude Desktop、Codex、Gemini、OpenCode、OpenClaw、Hermes 等工具的供应商配置、模型路由、故障转移、使用量统计与本地代理能力。
 
-English | [中文](README_ZH.md) | [日本語](README_JA.md)
+当前仓库的定位不是替代上游项目，而是在保留 CC Switch 核心能力的基础上，面向 OpenClaw / WSL / Docker / NGINX 的长期本地部署场景做定制增强。
 
-This fork keeps the Web runtime as the only official GitHub Release deliverable.
+## 项目来源
 
-</div>
+本项目主要基于以下两个上游项目继续改造：
 
-## Scope
+- [farion1231/cc-switch](https://github.com/farion1231/cc-switch)：CC Switch 主项目，提供 Claude Code / Codex / Gemini 等多应用供应商切换、配置管理、代理、使用量统计、WebDAV 同步等核心能力。
+- [cp-yu/cc-switch-web](https://github.com/cp-yu/cc-switch-web)：Web 运行形态改造参考，为本项目的 Web Server / Web UI 方向提供了重要基础。
 
-This fork is used for local customization and ongoing development. The current codebase provides:
+本仓库继续保留对原项目能力和结构的尊重：上游的 Tauri 桌面代码、配置管理、代理转换、使用量统计、WebDAV 同步、Skills / MCP / Prompt 等能力仍是本项目的重要基础。
 
-- Configuration management for Claude Code, Codex, Gemini, OpenCode, and OpenClaw
-- MCP, prompts, skills, proxy, failover, and usage-related features
-- A single-binary Web runtime for official releases
-- Tauri desktop code kept in-repo for local development only
+## 当前项目定位
 
-## Screenshots
+当前 fork 主要服务于以下场景：
 
-|                  Main Interface                   |                  Add Provider                  |
-| :-----------------------------------------------: | :--------------------------------------------: |
-| ![Main Interface](assets/screenshots/main-en.png) | ![Add Provider](assets/screenshots/add-en.png) |
+- 在本地或 WSL/Ubuntu 中长期运行一个 Web 版 CC Switch 管理端。
+- 通过 Web UI 管理 Claude Code、Codex、Gemini、OpenCode、OpenClaw 等应用的供应商配置。
+- 为 OpenClaw 提供 OpenAI-compatible 本地代理入口，例如 `http://127.0.0.1:15721/v1`。
+- 通过 NGINX 暴露唯一 Web 管理入口，同时把模型代理端口限制在本机内部。
+- 使用 Docker 方式部署，并通过持久化目录保留供应商配置、SQLite 数据库、Web Auth、备份与同步状态。
+- 在保留上游能力的同时，逐步增强 Web runtime、生产部署、安全边界、OpenClaw 集成和本地运维体验。
 
-## Official Release Assets
+## 核心能力
 
-GitHub Releases publish the Web runtime only.
+- **多应用配置管理**：管理 Claude Code、Claude Desktop、Codex、Gemini、OpenCode、OpenClaw、Hermes 等工具配置。
+- **多供应商与模型路由**：维护供应商、模型、认证、模型映射、端点配置和故障转移队列。
+- **本地模型代理**：提供 OpenAI-compatible 本地代理端口，供 OpenClaw 或其他本地客户端调用。
+- **故障转移与熔断**：按供应商队列、健康状态和错误类型进行路由尝试与保护。
+- **Usage / Cost 统计**：支持请求日志、使用量统计、价格配置和多来源用量脚本。
+- **WebDAV 云同步**：支持将数据库和 Skills 等配置快照同步到 WebDAV 服务，例如坚果云、Nextcloud、群晖等。
+- **Web Auth**：Web 管理端支持登录鉴权，适合经 NGINX 暴露到局域网或受控网络。
+- **Docker + NGINX 部署**：容器只绑定本机回环端口，外部访问统一通过 NGINX 入口。
+- **OpenClaw 集成**：支持 OpenClaw 配置导入、模型供应商管理和本地代理链路验证。
 
-| Platform | Asset | Run |
-| --- | --- | --- |
-| Windows x86_64 | `cc-switch-web-v{version}-windows-x86_64.exe` | `./cc-switch-web-v{version}-windows-x86_64.exe` |
-| Linux x86_64 | `cc-switch-web-v{version}-linux-x86_64-ubuntu20.04` | `chmod +x ./cc-switch-web-v{version}-linux-x86_64-ubuntu20.04 && ./cc-switch-web-v{version}-linux-x86_64-ubuntu20.04` |
+## 与上游的主要差异
 
-### Runtime defaults
+本仓库目前重点维护 Web runtime 和 OpenClaw 本地部署链路：
 
-- URL: `http://127.0.0.1:17666`
-- Port override: `CC_SWITCH_PORT=8080`
-- Host override: `CC_SWITCH_HOST=0.0.0.0`
-- Linux compatibility baseline: Ubuntu 20.04+
+- GitHub Releases 侧重 Web 运行版本，而不是桌面端发布物。
+- 保留 Tauri 桌面代码，但主要作为上游兼容和本地开发基础。
+- 增加 `crates/server` / `crates/core` 的 Web Server 运行路径。
+- 增加 Docker 生产部署文件和 NGINX 反代运行手册。
+- 默认生产部署建议：
+  - Web UI/API：`127.0.0.1:17666`
+  - 模型代理：`127.0.0.1:15721`
+  - 外部入口：`30034 -> 127.0.0.1:17666`
+- 加强 Web Auth、端口边界、容器持久化、OpenClaw smoke test 和运维 runbook。
 
-### Platform notes
+更多生产部署细节见：[`docs/ccs-production-runbook.md`](docs/ccs-production-runbook.md)。
 
-- Windows: run the `.exe` directly in PowerShell or Command Prompt.
-- Linux: official assets are built on Ubuntu 20.04 to keep the minimum supported baseline explicit.
+## 运行方式
 
-### Docker + NGINX deployment
-
-For the production operation checklist, recovery steps, and verification gates, see [CCS Gateway Web Production Runbook](docs/ccs-production-runbook.md).
-
-The Docker deployment follows the same local-backend / edge-proxy rule used by the 9router deployment:
-
-- WSL/Ubuntu hosts OpenClaw, NGINX, and the Dockerized CCS Web runtime.
-- Docker uses bridge networking and publishes only loopback ports: `127.0.0.1:17666:17666` for Web UI/API and `127.0.0.1:15721:15721` for the OpenAI-compatible local proxy.
-- OpenClaw uses the internal route `http://127.0.0.1:15721/v1`; external clients must not be able to call the model proxy port directly.
-- The container sets `CC_SWITCH_START_PROXY=true` so the local proxy is restored automatically after container restarts.
-- External web access must go through NGINX only, for example `0.0.0.0:30034 -> http://127.0.0.1:17666`.
-- Web auth is required for the management UI/API. Create `/root/.cc-switch/web-auth.json` with a bcrypt `password_hash`; keep any bootstrap password outside Git.
-- Do not route production verification through the temporary `127.0.0.1:20128` test upstream.
-- Persistent data is bind-mounted from the host: `/root/.cc-switch:/root/.cc-switch` stores the CC-Switch SQLite DB, providers, proxy config, settings, auth config, backups, and local verification provider state.
-- OpenClaw config is mounted read-only: `/root/.openclaw:/root/.openclaw:ro`; CC-Switch may import providers but must not mutate OpenClaw's live config from this container.
-- Before destructive rebuilds, migrations, or config experiments, back up `/root/.cc-switch` and `/root/.openclaw/openclaw.json` under `/home/win-files/openclaw-backups/ccs-gateway-web-data/`.
-
-Build and start the local container:
-
-```bash
-stamp=$(date +%Y%m%d-%H%M%S)
-backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/$stamp"
-mkdir -p "$backup_dir/openclaw-config"
-tar -czf "$backup_dir/root-cc-switch.tar.gz" -C /root .cc-switch
-cp -a /root/.openclaw/openclaw.json "$backup_dir/openclaw-config/openclaw.json"
-
-docker compose -f docker-compose.ccs-web.yml build
-docker compose -f docker-compose.ccs-web.yml up -d
-```
-
-Expected smoke checks:
-
-```bash
-curl -fsS http://127.0.0.1:17666/health
-curl -fsS http://127.0.0.1:15721/status
-curl -sS http://127.0.0.1:15721/v1/responses \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"gpt-5.5","input":[{"role":"user","content":"Return exactly: CCS_PING_OK"}],"max_output_tokens":32}'
-curl -fsS http://127.0.0.1:30034/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30034/.env  # expected: 404
-curl -sS -H 'Content-Type: application/json' -X POST http://127.0.0.1:17666/api/invoke \
-  -d '{"command":"auth.status","payload":{}}'  # expected: {"enabled":true}
-curl -sS -i -H 'Content-Type: application/json' -X POST http://127.0.0.1:17666/api/invoke \
-  -d '{"command":"get_settings","payload":{}}'  # expected unauthenticated: 401
-```
-
-External surface checks from the WSL IP should show only NGINX reachable:
-
-```bash
-ip=$(hostname -I | awk '{print $1}')
-curl --connect-timeout 2 "http://$ip:17666/health"  # expected: connection failure
-curl --connect-timeout 2 "http://$ip:15721/health"  # expected: connection failure
-curl -fsS "http://$ip:30034/health"                 # expected: 200
-```
-
-## Local Development
-
-### Requirements
-
-- Node.js 18+
-- pnpm 8+ or npm
-- Rust 1.85+
-- Tauri CLI 2.8+ for desktop-only local development
-
-### Common Commands
-
-```bash
-# Install dependencies
-pnpm install
-
-# Web development
-pnpm dev:server
-pnpm dev:web
-
-# Type checking
-pnpm typecheck
-
-# Frontend unit tests
-pnpm test:unit
-
-# Build Web frontend (default build target)
-pnpm build
-
-# Desktop packaging when needed
-pnpm build:desktop
-```
-
-### Local Web Launch
+### 本地 Web 运行
 
 ```bash
 ./start-web.sh
 ```
 
-Then open:
+默认访问：
 
 ```text
-http://localhost:17666
+http://127.0.0.1:17666
 ```
 
-Stop the service:
+停止服务：
 
 ```bash
 ./stop-web.sh
 ```
 
-Runtime files are written to `./.run/web/` by default:
+运行时文件默认写入：
 
-- log: `backend.log`
-- pid: `backend.pid`
-
-To override the runtime directory:
-
-```bash
-CC_SWITCH_RUNTIME_DIR=/tmp/cc-switch-web ./start-web.sh
+```text
+.run/web/backend.log
+.run/web/backend.pid
 ```
 
-### Manual Web Build
+### 手动开发运行
+
+```bash
+pnpm install
+pnpm dev:server
+pnpm dev:web
+```
+
+### Web 构建
 
 ```bash
 pnpm build
@@ -168,53 +95,99 @@ cargo build --release --manifest-path crates/server/Cargo.toml
 ./crates/server/target/release/cc-switch-web
 ```
 
-### Local Linux release-parity build
+### Docker 部署
 
 ```bash
-./build-web-release.sh
+docker compose -f docker-compose.ccs-web.yml build
+docker compose -f docker-compose.ccs-web.yml up -d
 ```
 
-This script emits `release-web/cc-switch-web-v{version}-linux-x86_64-ubuntu20.04`.
+建议生产形态：
 
-### Release Workflow
+- 容器发布端口只绑定本机：
+  - `127.0.0.1:17666:17666`
+  - `127.0.0.1:15721:15721`
+- 外部只通过 NGINX 访问 Web UI/API。
+- 不要把 `15721` 模型代理端口暴露到公网或局域网。
+- 启用 `/root/.cc-switch/web-auth.json` 保护管理 UI/API。
+- 持久化 `/root/.cc-switch`，只读挂载 `/root/.openclaw`。
 
-Stage the changes you want in the release commit first, then run the helper:
+## 常用检查
 
 ```bash
-git add <your-files>
-pnpm release:cut -- 3.12.6 --push
+# Web UI/API 健康检查
+curl -fsS http://127.0.0.1:17666/health
+
+# 本地模型代理状态
+curl -fsS http://127.0.0.1:15721/status
+
+# NGINX 外部入口健康检查
+curl -fsS http://127.0.0.1:30034/health
+
+# Web Auth 状态
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://127.0.0.1:17666/api/invoke \
+  -d '{"command":"auth.status","payload":{}}'
 ```
 
-The helper synchronizes these version files before commit and tag creation:
+未登录时，受保护的管理 API 应返回 `401 Unauthorized`。
 
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `src-tauri/tauri.conf.json`
-
-To update version fields only:
-
-```bash
-pnpm release:sync-version -- 3.12.6
-```
-
-## Tech Stack
-
-- Frontend: React 18, TypeScript, Vite, TailwindCSS, TanStack Query
-- Backend: Tauri 2, Rust, tokio, serde
-- Testing: vitest, MSW, @testing-library/react
-
-## Project Layout
+## 目录结构
 
 ```text
-src/                 frontend code
-src-tauri/           Tauri desktop backend
-crates/server/       web server
-crates/core/         shared core logic
-tests/               frontend tests
-assets/              screenshots and assets
-docs/                supplementary documentation
+src/                 Web 前端代码（React / TypeScript / Vite）
+src-tauri/           上游 Tauri 桌面端与核心后端代码
+crates/core/         Web Server 与桌面端复用的核心封装
+crates/server/       独立 Web Server 运行时
+assets/              截图与静态资源
+docs/                部署、运维、规格和补充文档
+tests/               前端测试
+skills/              Skills 相关资源
 ```
 
-## License
+## 技术栈
 
-See [LICENSE](LICENSE).
+- 前端：React 18、TypeScript、Vite、Tailwind CSS、TanStack Query
+- 后端：Rust、Tauri 2、Axum、Tokio、Serde
+- 数据：SQLite、JSON settings、WebDAV sync snapshot
+- 代理：OpenAI-compatible proxy、Anthropic / OpenAI Responses / Gemini 等协议转换
+- 部署：Docker、NGINX、WSL/Ubuntu、本地持久化目录
+
+## 开发与验证
+
+常用命令：
+
+```bash
+pnpm typecheck
+pnpm test:unit
+pnpm build
+cargo test
+cargo build --release --manifest-path crates/server/Cargo.toml
+```
+
+如果当前机器缺少 Rust / Node / pnpm 工具链，请不要把静态检查误认为完整测试通过。涉及代理、鉴权、WebDAV、配置保存和模型路由的改动，建议至少经过：
+
+1. 单元测试或类型检查；
+2. Web 构建；
+3. 本地 Web/API smoke test；
+4. OpenClaw 通过 `ccs/gpt-5.5` 的最后一跳验证。
+
+## 安全说明
+
+- Web 管理端暴露到局域网或外部网络前，必须启用 Web Auth。
+- 不要提交 `/root/.cc-switch/web-auth-password.txt`、API Key、供应商 Token、WebDAV 密码等敏感信息。
+- 生产部署中不要暴露 `15721` 模型代理端口。
+- Docker 重建、迁移或清理前，先备份 `/root/.cc-switch` 和关键 OpenClaw 配置。
+- WebDAV 同步会上传数据库和 Skills 快照，请确认远端目录和账号权限。
+
+## 许可证
+
+本项目沿用上游许可，详见 [`LICENSE`](LICENSE)。
+
+## 致谢
+
+感谢 [farion1231/cc-switch](https://github.com/farion1231/cc-switch) 原项目长期构建和维护的 CC Switch 能力体系，包括多应用供应商管理、代理转换、使用量统计、同步与桌面端体验。
+
+感谢 [cp-yu/cc-switch-web](https://github.com/cp-yu/cc-switch-web) 对 Web 运行形态的探索和实现，为本仓库继续推进 Web Server、Docker 部署和 OpenClaw 集成提供了重要基础。
+
+本项目能够继续演进，建立在两个上游项目及其贡献者的工作之上。谢谢你们的付出。
