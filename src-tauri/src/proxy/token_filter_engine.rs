@@ -16,6 +16,7 @@ pub enum FieldKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterCategory {
     CargoTestOrBuild,
+    JavaScriptTestOrBuild,
     TypeScriptCompiler,
     GitStatusOrLog,
     GitDiff,
@@ -28,6 +29,7 @@ pub enum FilterCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FilterProfile {
     Cargo,
+    JavaScriptTest,
     TypeScript,
     GitStatus,
     GitDiffPassthrough,
@@ -99,22 +101,34 @@ pub fn filter(input: FilterInput<'_>, limits: FilterLimits) -> FilterOutput {
         FilterCategory::CargoTestOrBuild => {
             (FilterProfile::Cargo, filter_cargo(input.text, limits))
         }
+        FilterCategory::JavaScriptTestOrBuild => (
+            FilterProfile::JavaScriptTest,
+            filter_javascript_test(input.text, limits),
+        ),
         FilterCategory::TypeScriptCompiler => {
             (FilterProfile::TypeScript, filter_tsc(input.text, limits))
         }
-        FilterCategory::GitStatusOrLog => {
-            (FilterProfile::GitStatus, filter_git_status_or_log(input.text, limits))
-        }
+        FilterCategory::GitStatusOrLog => (
+            FilterProfile::GitStatus,
+            filter_git_status_or_log(input.text, limits),
+        ),
         FilterCategory::GitDiff => (FilterProfile::GitDiffPassthrough, input.text.to_string()),
-        FilterCategory::SearchResults => {
-            (FilterProfile::SearchResults, filter_search_results(input.text, limits))
-        }
-        FilterCategory::PlainLog => (FilterProfile::PlainLog, filter_plain_log(input.text, limits)),
+        FilterCategory::SearchResults => (
+            FilterProfile::SearchResults,
+            filter_search_results(input.text, limits),
+        ),
+        FilterCategory::PlainLog => (
+            FilterProfile::PlainLog,
+            filter_plain_log(input.text, limits),
+        ),
         // V0 deliberately does not filter file reads until fixtures prove safety.
-        FilterCategory::FileReadOrSourceText => (FilterProfile::Passthrough, input.text.to_string()),
-        FilterCategory::UnknownText => {
-            (FilterProfile::HeadTail, head_tail(input.text, limits.keep_chars))
+        FilterCategory::FileReadOrSourceText => {
+            (FilterProfile::Passthrough, input.text.to_string())
         }
+        FilterCategory::UnknownText => (
+            FilterProfile::HeadTail,
+            head_tail(input.text, limits.keep_chars),
+        ),
     };
 
     let fallback_used = !input.text.is_empty() && filtered.trim().is_empty();
@@ -148,10 +162,22 @@ fn classify(input: &FilterInput<'_>) -> (FilterCategory, FilterConfidence) {
 
     let text = input.text;
     if looks_like_cargo(text) {
-        return (FilterCategory::CargoTestOrBuild, FilterConfidence::Heuristic);
+        return (
+            FilterCategory::CargoTestOrBuild,
+            FilterConfidence::Heuristic,
+        );
+    }
+    if looks_like_javascript_test(text) {
+        return (
+            FilterCategory::JavaScriptTestOrBuild,
+            FilterConfidence::Heuristic,
+        );
     }
     if looks_like_tsc(text) {
-        return (FilterCategory::TypeScriptCompiler, FilterConfidence::Heuristic);
+        return (
+            FilterCategory::TypeScriptCompiler,
+            FilterConfidence::Heuristic,
+        );
     }
     if looks_like_git_status_or_log(text) {
         return (FilterCategory::GitStatusOrLog, FilterConfidence::Heuristic);
@@ -173,6 +199,17 @@ fn classify_command(ctx: CommandContext<'_>) -> Option<FilterCategory> {
 
     match first {
         "cargo" => Some(FilterCategory::CargoTestOrBuild),
+        "npm" | "pnpm" | "yarn" | "bun" => {
+            if args
+                .iter()
+                .any(|arg| matches!(*arg, "test" | "vitest" | "jest"))
+            {
+                Some(FilterCategory::JavaScriptTestOrBuild)
+            } else {
+                None
+            }
+        }
+        "vitest" | "jest" => Some(FilterCategory::JavaScriptTestOrBuild),
         "tsc" => Some(FilterCategory::TypeScriptCompiler),
         "rg" | "grep" => Some(FilterCategory::SearchResults),
         "cat" | "read" => Some(FilterCategory::FileReadOrSourceText),
@@ -264,6 +301,56 @@ fn filter_tsc(text: &str, limits: FilterLimits) -> String {
     cap_lines(lines, limits.max_lines).join("\n")
 }
 
+fn filter_javascript_test(text: &str, limits: FilterLimits) -> String {
+    let mut kept = Vec::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || is_javascript_test_noise(trimmed) {
+            continue;
+        }
+
+        if is_javascript_test_signal(trimmed) {
+            kept.push(truncate_line(trimmed, limits.max_line_chars));
+        }
+    }
+
+    cap_lines(kept, limits.max_lines).join("\n")
+}
+
+fn is_javascript_test_signal(line: &str) -> bool {
+    line.starts_with("FAIL")
+        || line.starts_with("Failed")
+        || line.starts_with("Error:")
+        || line.starts_with("TypeError:")
+        || line.starts_with("AssertionError")
+        || line.starts_with("Test Files")
+        || line.starts_with("Tests")
+        || line.starts_with("Snapshots")
+        || line.starts_with("Duration")
+        || line.starts_with("npm ERR!")
+        || line.starts_with("ERR_PNPM")
+        || line.contains("ELIFECYCLE")
+        || line.contains(" failed")
+        || looks_like_js_test_location(line)
+}
+
+fn is_javascript_test_noise(line: &str) -> bool {
+    line.starts_with("PASS")
+        || line.starts_with("RUN")
+        || line.starts_with("Watch Usage")
+        || (line.starts_with("Test Suites:") && line.contains("passed") && !line.contains("failed"))
+}
+
+fn looks_like_js_test_location(line: &str) -> bool {
+    let has_test_file = line.contains(".test.") || line.contains(".spec.");
+    has_test_file
+        && line
+            .split(':')
+            .nth(1)
+            .is_some_and(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
 fn filter_git_status_or_log(text: &str, limits: FilterLimits) -> String {
     let lines = text
         .lines()
@@ -297,7 +384,9 @@ fn filter_search_results(text: &str, limits: FilterLimits) -> String {
     }
 
     if omitted > 0 {
-        kept.push(format!("[CCS TokenFilterEngine: omitted {omitted} search result lines]"));
+        kept.push(format!(
+            "[CCS TokenFilterEngine: omitted {omitted} search result lines]"
+        ));
     }
     kept.join("\n")
 }
@@ -349,12 +438,33 @@ fn looks_like_tsc(text: &str) -> bool {
     text.contains("error TS") || text.contains("warning TS")
 }
 
+fn looks_like_javascript_test(text: &str) -> bool {
+    if text.contains("Test Files")
+        || text.contains("npm ERR!")
+        || text.contains("ERR_PNPM")
+        || text.contains("Vitest")
+    {
+        return true;
+    }
+
+    let has_test_file_marker = text.contains(".test.") || text.contains(".spec.");
+    has_test_file_marker
+        && text.lines().any(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("FAIL") || trimmed.starts_with("AssertionError")
+        })
+}
+
 fn looks_like_git_status_or_log(text: &str) -> bool {
     text.contains("On branch ") || text.lines().any(is_git_log_line)
 }
 
 fn looks_like_search_results(text: &str) -> bool {
-    text.lines().take(8).filter(|line| split_search_line(line).is_some()).count() >= 2
+    text.lines()
+        .take(8)
+        .filter(|line| split_search_line(line).is_some())
+        .count()
+        >= 2
 }
 
 fn looks_like_plain_log(text: &str) -> bool {
@@ -465,9 +575,57 @@ mod tests {
     }
 
     #[test]
+    fn filters_javascript_test_output_to_failures_and_summary() {
+        let text = "RUN  v2.1.1 /repo\nPASS src/ok.test.ts\nFAIL src/bad.test.ts > suite > fails\nAssertionError: expected 1 to be 2\nsrc/bad.test.ts:12:5\nTest Files  1 failed | 1 passed (2)\nTests  1 failed | 3 passed (4)\nDuration  1.23s";
+        let out = filter(input(text), FilterLimits::default());
+        assert_eq!(out.category, FilterCategory::JavaScriptTestOrBuild);
+        assert!(out.text.contains("FAIL src/bad.test.ts"));
+        assert!(out.text.contains("AssertionError"));
+        assert!(out.text.contains("src/bad.test.ts:12:5"));
+        assert!(out.text.contains("Test Files"));
+        assert!(!out.text.contains("PASS src/ok.test.ts"));
+        assert!(!out.text.contains("RUN  v2.1.1"));
+    }
+
+    #[test]
+    fn trusted_pnpm_test_uses_javascript_profile() {
+        let args = ["test"];
+        let input = FilterInput {
+            text: "PASS src/ok.test.ts\nFAIL src/bad.test.ts\nTests  1 failed",
+            field_kind: FieldKind::OpenAiChatToolContent,
+            command_context: Some(CommandContext {
+                tool_name: Some("pnpm"),
+                command: Some("pnpm"),
+                args: &args,
+                exit_code: Some(1),
+                cwd: None,
+                trusted_source: true,
+            }),
+        };
+        let out = filter(input, FilterLimits::default());
+        assert_eq!(out.category, FilterCategory::JavaScriptTestOrBuild);
+        assert_eq!(out.profile, FilterProfile::JavaScriptTest);
+        assert!(out.text.contains("FAIL src/bad.test.ts"));
+        assert!(!out.text.contains("PASS src/ok.test.ts"));
+    }
+
+    #[test]
+    fn generic_fail_log_does_not_use_javascript_profile() {
+        let text =
+            "FAIL: health probe unavailable\nAssertionError: generic service assertion failed";
+        let out = filter(input(text), FilterLimits::default());
+        assert_eq!(out.category, FilterCategory::UnknownText);
+        assert_eq!(out.profile, FilterProfile::HeadTail);
+    }
+
+    #[test]
     fn search_results_apply_per_file_cap() {
         let text = "src/a.rs:1:one\nsrc/a.rs:2:two\nsrc/a.rs:3:three\nsrc/b.rs:1:four";
-        let limits = FilterLimits { search_per_file: 2, max_lines: 10, ..Default::default() };
+        let limits = FilterLimits {
+            search_per_file: 2,
+            max_lines: 10,
+            ..Default::default()
+        };
         let out = filter(input(text), limits);
         assert_eq!(out.category, FilterCategory::SearchResults);
         assert!(out.text.contains("src/a.rs:1:one"));
@@ -479,7 +637,13 @@ mod tests {
     #[test]
     fn git_diff_without_trusted_metadata_is_not_special_cased() {
         let text = "diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n-old\n+new";
-        let out = filter(input(text), FilterLimits { keep_chars: 20, ..Default::default() });
+        let out = filter(
+            input(text),
+            FilterLimits {
+                keep_chars: 20,
+                ..Default::default()
+            },
+        );
         assert_eq!(out.category, FilterCategory::UnknownText);
         assert_eq!(out.profile, FilterProfile::HeadTail);
     }
@@ -487,7 +651,10 @@ mod tests {
     #[test]
     fn trusted_git_diff_is_passthrough_in_v0() {
         let args = ["diff"];
-        let large_diff = format!("diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n{}", "-old\n+new\n".repeat(200));
+        let large_diff = format!(
+            "diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n{}",
+            "-old\n+new\n".repeat(200)
+        );
         let input = FilterInput {
             text: &large_diff,
             field_kind: FieldKind::AnthropicToolResult,
@@ -500,7 +667,13 @@ mod tests {
                 trusted_source: true,
             }),
         };
-        let out = filter(input, FilterLimits { keep_chars: 20, ..Default::default() });
+        let out = filter(
+            input,
+            FilterLimits {
+                keep_chars: 20,
+                ..Default::default()
+            },
+        );
         assert_eq!(out.category, FilterCategory::GitDiff);
         assert_eq!(out.profile, FilterProfile::GitDiffPassthrough);
         assert_eq!(out.text, large_diff);
@@ -509,7 +682,13 @@ mod tests {
     #[test]
     fn unknown_text_uses_head_tail_fallback() {
         let text = "abcdefghijklmnopqrstuvwxyz0123456789";
-        let out = filter(input(text), FilterLimits { keep_chars: 10, ..Default::default() });
+        let out = filter(
+            input(text),
+            FilterLimits {
+                keep_chars: 10,
+                ..Default::default()
+            },
+        );
         assert_eq!(out.category, FilterCategory::UnknownText);
         assert!(out.text.contains("omitted"));
         assert!(!out.fallback_used);

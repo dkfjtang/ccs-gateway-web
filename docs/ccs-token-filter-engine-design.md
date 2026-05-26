@@ -2,7 +2,7 @@
 
 ## Status
 
-Revised draft after independent architecture review. No runtime implementation yet.
+Runtime v0 is implemented and remains default-off. Current v0 covers Cargo, TypeScript compiler, JavaScript test/build summaries, git status/log, search results, plain logs, unknown-text fallback, and explicit passthrough for trusted git diff and file-read/source text.
 
 ## Goal
 
@@ -110,18 +110,20 @@ Rules:
 The engine should classify safe text into one of these categories:
 
 1. `CargoTestOrBuild`
-2. `TypeScriptCompiler`
-3. `GitStatusOrLog`
-4. `SearchResults`
-5. `PlainLog`
-6. `FileReadOrSourceText`
-7. `UnknownText`
+2. `JavaScriptTestOrBuild`
+3. `TypeScriptCompiler`
+4. `GitStatusOrLog`
+5. `SearchResults`
+6. `PlainLog`
+7. `FileReadOrSourceText`
+8. `UnknownText`
 
 V0 classification should be heuristic and conservative:
 
 | Category | Trigger examples | Notes |
 |---|---|---|
 | `CargoTestOrBuild` | `Compiling`, `Finished`, `error[E`, `running N tests`, `test result:` | Keep errors/failures/summaries. |
+| `JavaScriptTestOrBuild` | trusted `npm/pnpm/yarn/bun test`, `vitest`, `jest`, or `FAIL` / `Test Files` markers | Keep failures, assertion/errors, test file locations and summary lines; drop pass/run noise. |
 | `TypeScriptCompiler` | `error TS`, `file.ts(line,col)` | Group by file/code later; v0 keep matching lines. |
 | `GitStatusOrLog` | trusted `git status` / `git log`, or clear status/log markers | Compact list format later. |
 | `SearchResults` | trusted `rg` / `grep`, or `path:line:match` output | V0 must cap per file and globally. |
@@ -164,6 +166,22 @@ Drop:
 
 - `Compiling`, `Checking`, `Downloading`, `Downloaded` progress lines;
 - duplicate warning summary lines.
+
+#### JavaScriptTestOrBuild
+
+Keep:
+
+- failed test lines;
+- assertion and error lines;
+- test file locations such as `*.test.*:line:col` / `*.spec.*:line:col`;
+- summary lines (`Test Files`, `Tests`, `Snapshots`, `Duration`);
+- package-manager failure lines (`npm ERR!`, `ERR_PNPM`, `ELIFECYCLE`).
+
+Drop:
+
+- successful `PASS` lines;
+- `RUN` / watch usage noise;
+- passed-only suite summaries.
 
 #### TypeScriptCompiler
 
@@ -278,6 +296,7 @@ Still protected:
 - Anthropic `tool_result.content` cargo output;
 - OpenAI Responses `function_call_output.output` tsc output;
 - OpenAI Chat `role=tool.content` rg output with per-file cap;
+- JavaScript/Vitest/Jest output keeps failures and summaries while dropping pass/run noise;
 - GitDiff passthrough when metadata is absent/untrusted;
 - unknown long text fallback;
 - default-off no-op.

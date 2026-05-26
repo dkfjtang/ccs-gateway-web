@@ -18,7 +18,10 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
     }
 
     let min_chars = config.token_saver_min_chars.max(1);
-    let keep_chars = config.token_saver_keep_chars.max(80).min(min_chars.saturating_sub(1));
+    let keep_chars = config
+        .token_saver_keep_chars
+        .max(80)
+        .min(min_chars.saturating_sub(1));
     compress_value(body, min_chars, keep_chars);
 }
 
@@ -139,14 +142,28 @@ fn filter_safe_text(text: &str, keep_chars: usize, field_kind: FieldKind) -> Str
 }
 
 fn infer_command_context(text: &str) -> Option<CommandContext<'_>> {
-    let first = text.lines().find(|line| !line.trim().is_empty())?.trim_start();
+    let first = text
+        .lines()
+        .find(|line| !line.trim().is_empty())?
+        .trim_start();
     let command = if first.starts_with("Compiling ")
         || first.contains("error[E")
         || first.contains("test result:")
     {
         Some("cargo")
-    } else if first.contains("error TS") || first.contains("warning TS") || text.contains("error TS") {
+    } else if first.contains("error TS")
+        || first.contains("warning TS")
+        || text.contains("error TS")
+    {
         Some("tsc")
+    } else if first.starts_with("FAIL")
+        || first.contains("AssertionError")
+        || first.contains("Vitest")
+        || text.contains("Test Files")
+        || text.contains("npm ERR!")
+        || text.contains("ERR_PNPM")
+    {
+        Some("vitest")
     } else if text
         .lines()
         .take(8)
@@ -196,8 +213,7 @@ fn should_compress_string(text: &str, min_chars: usize) -> bool {
 fn is_protected_field(key: &str) -> bool {
     matches!(
         key,
-        "id"
-            | "call_id"
+        "id" | "call_id"
             | "tool_call_id"
             | "tool_use_id"
             | "previous_response_id"
@@ -300,7 +316,6 @@ mod tests {
         assert_eq!(body["input"][1]["arguments"], arguments);
     }
 
-
     #[test]
     fn compresses_openai_tool_message_content() {
         let long = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -315,7 +330,10 @@ mod tests {
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["messages"][0]["tool_call_id"], "call_1");
-        assert!(body["messages"][0]["content"].as_str().unwrap().contains("CCS TokenFilterEngine"));
+        assert!(body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("CCS TokenFilterEngine"));
     }
 
     #[test]
@@ -332,9 +350,11 @@ mod tests {
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["input"][0]["call_id"], "call_1");
-        assert!(body["input"][0]["output"].as_str().unwrap().contains("CCS TokenFilterEngine"));
+        assert!(body["input"][0]["output"]
+            .as_str()
+            .unwrap()
+            .contains("CCS TokenFilterEngine"));
     }
-
 
     #[test]
     fn compresses_cargo_output_with_filter_engine() {
@@ -357,6 +377,33 @@ test result: FAILED. 0 passed; 1 failed";
         assert!(compressed.contains("test foo ... FAILED"));
         assert!(compressed.contains("test result: FAILED"));
         assert!(!compressed.contains("Compiling demo"));
+    }
+
+    #[test]
+    fn compresses_javascript_test_output_with_filter_engine() {
+        let js_test = "RUN  v2.1.1 /repo
+PASS src/ok.test.ts
+FAIL src/bad.test.ts > suite > fails
+AssertionError: expected 1 to be 2
+src/bad.test.ts:12:5
+Test Files  1 failed | 1 passed (2)
+Tests  1 failed | 3 passed (4)";
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": js_test
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        let compressed = body["messages"][0]["content"].as_str().unwrap();
+        assert!(compressed.contains("FAIL src/bad.test.ts"));
+        assert!(compressed.contains("AssertionError"));
+        assert!(compressed.contains("Test Files"));
+        assert!(!compressed.contains("PASS src/ok.test.ts"));
+        assert!(!compressed.contains("RUN  v2.1.1"));
     }
 
     #[test]
@@ -388,7 +435,8 @@ src/b.rs:1:seven";
 
     #[test]
     fn skips_json_string_tool_outputs() {
-        let json_output = r#"{"records":[{"id":1,"value":"abcdefghijklmnopqrstuvwxyz0123456789"}]}"#;
+        let json_output =
+            r#"{"records":[{"id":1,"value":"abcdefghijklmnopqrstuvwxyz0123456789"}]}"#;
         let mut body = json!({
             "input": [{
                 "type": "function_call_output",
@@ -483,7 +531,10 @@ src/b.rs:1:seven";
 
         let content = &body["messages"][0]["content"][0]["content"];
         assert_eq!(content["metadata"], "abcdefghijklmnopqrstuvwxyz0123456789");
-        assert!(content["rendered"]["text"].as_str().unwrap().contains("CCS TokenFilterEngine"));
+        assert!(content["rendered"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("CCS TokenFilterEngine"));
     }
 
     #[test]

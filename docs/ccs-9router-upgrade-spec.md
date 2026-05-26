@@ -4,10 +4,11 @@
 
 This track borrows selected 9Router strengths into CCS Gateway Web without replacing the existing CCS request rectifier, provider transforms, Responses compatibility, or prompt-cache wiring.
 
-Current implementation covers `ccs-9router-2+3`:
+Current implementation covers `ccs-9router-2+3` plus a v0 RTK-style `TokenFilterEngine`:
 
 - Define the configuration and UI surface for RTK/Caveman-inspired compression.
-- Implement the first request-side Token Saver pass.
+- Implement request-side Token Saver and route safe text through command-aware built-in filters.
+- Cover Cargo, TypeScript compiler, JavaScript test/build output, search results, git status/log, plain logs, and conservative fallback.
 - Keep the feature disabled by default.
 
 ## Borrowed capabilities
@@ -20,6 +21,7 @@ The first CCS implementation only compresses large textual payload fields:
 
 - Anthropic-style string `tool_result.content`.
 - OpenAI Responses-style string `function_call_output.output`.
+- OpenAI Chat `role=tool.content`.
 - Large generic text blocks when their block type is explicitly safe (`text` / `output_text`).
 
 JSON-looking strings and structured object outputs are skipped by default because tool outputs are often machine-readable and should not be truncated blindly.
@@ -132,11 +134,11 @@ Audit docs:
 - [CCS RTK Source Audit](ccs-rtk-source-audit.md)
 - [CCS Caveman Source Audit](ccs-caveman-source-audit.md)
 
-Current Token Saver v1 remains an experimental, default-off safety baseline. It should not be described as full RTK parity.
+Current Token Saver + TokenFilterEngine remains an experimental, default-off safety baseline. It should not be described as full RTK parity.
 
 Next implementation direction:
 
-1. Build a command-aware RTK-style filter engine rather than expanding blind text truncation.
-2. Start with built-in filters only; defer user/project TOML filters until trust gates exist.
+1. Expand built-in command-aware filters only where fixtures prove safety, with JS/Vitest/Jest now included in v0.1.
+2. Defer user/project TOML filters until trust gates exist.
 3. Treat Caveman as an agent style profile or prose-file compressor, not as a proxy response transformer.
 4. Keep Caveman runtime output rewriting disabled until a source-backed design exists.
