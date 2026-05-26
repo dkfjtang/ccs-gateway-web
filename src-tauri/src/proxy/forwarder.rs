@@ -32,6 +32,7 @@ use crate::{app_config::AppType, provider::Provider};
 use futures::StreamExt;
 use http::Extensions;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(feature = "desktop")]
 use tauri::Manager;
@@ -93,7 +94,9 @@ pub struct RequestForwarder {
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
     status: Arc<RwLock<ProxyStatus>>,
-    current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    current_providers: Arc<RwLock<HashMap<String, (String, String)>>>,
+    responses_session_providers: Arc<RwLock<HashMap<String, String>>>,
+    responses_response_providers: Arc<RwLock<HashMap<String, String>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
@@ -129,7 +132,9 @@ impl RequestForwarder {
         router: Arc<ProviderRouter>,
         non_streaming_timeout: u64,
         status: Arc<RwLock<ProxyStatus>>,
-        current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+        current_providers: Arc<RwLock<HashMap<String, (String, String)>>>,
+        responses_session_providers: Arc<RwLock<HashMap<String, String>>>,
+        responses_response_providers: Arc<RwLock<HashMap<String, String>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<UiAppHandle>,
@@ -150,6 +155,8 @@ impl RequestForwarder {
             router,
             status,
             current_providers,
+            responses_session_providers,
+            responses_response_providers,
             gemini_shadow,
             failover_manager,
             app_handle,
@@ -333,6 +340,10 @@ impl RequestForwarder {
             });
         }
 
+        let providers = self
+            .apply_responses_session_stickiness(app_type_str, endpoint, &body, providers)
+            .await?;
+
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
@@ -460,6 +471,16 @@ impl RequestForwarder {
                                 * 100.0;
                         }
                     }
+
+                    self
+                        .record_responses_session_provider_if_needed(
+                            app_type_str,
+                            endpoint,
+                            &body,
+                            provider,
+                            claude_api_format.as_deref(),
+                        )
+                        .await;
 
                     return Ok(ForwardResult {
                         response,
@@ -593,6 +614,16 @@ impl RequestForwarder {
                                                     * 100.0;
                                             }
                                         }
+
+                                        self
+                                            .record_responses_session_provider_if_needed(
+                                                app_type_str,
+                                                endpoint,
+                                                &body,
+                                                provider,
+                                                claude_api_format.as_deref(),
+                                            )
+                                            .await;
 
                                         return Ok(ForwardResult {
                                             response,
@@ -753,6 +784,16 @@ impl RequestForwarder {
                                         }
                                     }
 
+                                    self
+                                        .record_responses_session_provider_if_needed(
+                                            app_type_str,
+                                            endpoint,
+                                            &body,
+                                            provider,
+                                            claude_api_format.as_deref(),
+                                        )
+                                        .await;
+
                                     return Ok(ForwardResult {
                                         response,
                                         provider: provider.clone(),
@@ -911,6 +952,119 @@ impl RequestForwarder {
             error: last_error.unwrap_or(ProxyError::MaxRetriesExceeded),
             provider: last_provider,
         })
+    }
+
+    async fn apply_responses_session_stickiness(
+        &self,
+        app_type_str: &str,
+        endpoint: &str,
+        body: &Value,
+        providers: Vec<Provider>,
+    ) -> Result<Vec<Provider>, ForwardError> {
+        if !is_responses_session_sticky_request(app_type_str, endpoint, body) {
+            return Ok(providers);
+        }
+
+        let sticky_provider_id = if let Some(previous_response_id) = previous_response_id(body) {
+            self.responses_response_providers
+                .read()
+                .await
+                .get(previous_response_id)
+                .cloned()
+        } else {
+            None
+        };
+
+        let sticky_provider_id = match sticky_provider_id {
+            Some(provider_id) => Some(provider_id),
+            None => self
+                .responses_session_providers
+                .read()
+                .await
+                .get(&self.session_id)
+                .cloned(),
+        };
+
+        let Some(sticky_provider_id) = sticky_provider_id else {
+            log::debug!(
+                "[{app_type_str}] [sticky_missed] Responses session {} has no provider pin",
+                self.session_id
+            );
+            return Ok(providers);
+        };
+
+        let Some(provider) = providers
+            .iter()
+            .find(|provider| provider.id == sticky_provider_id)
+            .cloned()
+        else {
+            log::warn!(
+                "[{app_type_str}] [sticky_blocked_unavailable] Responses session {} is pinned to provider {}, but it is unavailable",
+                self.session_id,
+                sticky_provider_id
+            );
+            return Err(ForwardError {
+                error: ProxyError::InvalidRequest(format!(
+                    "Responses session is pinned to provider {sticky_provider_id}; failover is blocked because encrypted Responses state may be provider-bound. Start a new session or restore the pinned provider."
+                )),
+                provider: None,
+            });
+        };
+
+        log::info!(
+            "[{app_type_str}] [sticky_applied] Responses session {} pinned to provider {}",
+            self.session_id,
+            provider.name
+        );
+        Ok(vec![provider])
+    }
+
+    pub(crate) async fn record_responses_session_provider_if_needed(
+        &self,
+        app_type_str: &str,
+        endpoint: &str,
+        body: &Value,
+        provider: &Provider,
+        api_format: Option<&str>,
+    ) {
+        if !is_responses_endpoint_or_format(endpoint, api_format)
+            && !is_responses_session_sticky_request(app_type_str, endpoint, body)
+        {
+            return;
+        }
+
+        insert_bounded_sticky_entry(
+            &self.responses_session_providers,
+            self.session_id.clone(),
+            provider.id.clone(),
+            "sticky_recorded_session",
+            true,
+        )
+        .await;
+    }
+
+    pub(crate) async fn record_responses_response_provider(
+        state: &crate::proxy::server::ProxyState,
+        response_id: &str,
+        provider_id: &str,
+        app_type_str: &str,
+    ) {
+        if response_id.trim().is_empty() {
+            return;
+        }
+        insert_bounded_sticky_entry(
+            &state.responses_response_providers,
+            response_id.to_string(),
+            provider_id.to_string(),
+            "sticky_recorded_response",
+            false,
+        )
+        .await;
+        log::debug!(
+            "[{app_type_str}] [sticky_recorded_response] response_id={} provider_id={}",
+            response_id,
+            provider_id
+        );
     }
 
     /// 转发单个请求（使用适配器）
@@ -2064,10 +2218,7 @@ fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
 
-fn should_apply_openai_responses_compatibility(
-    endpoint: &str,
-    api_format: Option<&str>,
-) -> bool {
+fn is_responses_endpoint_or_format(endpoint: &str, api_format: Option<&str>) -> bool {
     if api_format == Some("openai_responses") {
         return true;
     }
@@ -2075,6 +2226,79 @@ fn should_apply_openai_responses_compatibility(
     let (path, _) = split_endpoint_and_query(endpoint);
     let path = path.trim_end_matches('/');
     path.ends_with("/responses") || path.ends_with("/responses/compact")
+}
+
+fn should_apply_openai_responses_compatibility(
+    endpoint: &str,
+    api_format: Option<&str>,
+) -> bool {
+    is_responses_endpoint_or_format(endpoint, api_format)
+}
+
+const RESPONSES_STICKY_MAP_CAP: usize = 4096;
+
+async fn insert_bounded_sticky_entry(
+    map: &Arc<RwLock<HashMap<String, String>>>,
+    key: String,
+    value: String,
+    log_code: &str,
+    overwrite_existing: bool,
+) {
+    let mut map = map.write().await;
+    if map.len() >= RESPONSES_STICKY_MAP_CAP && !map.contains_key(&key) {
+        if let Some(evicted_key) = map.keys().next().cloned() {
+            map.remove(&evicted_key);
+            log::info!("[{log_code}] [sticky_evicted] evicted key={evicted_key}");
+        }
+    }
+    if overwrite_existing {
+        map.insert(key, value);
+    } else {
+        map.entry(key).or_insert(value);
+    }
+}
+
+fn previous_response_id(body: &Value) -> Option<&str> {
+    body.get("previous_response_id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+}
+
+fn is_responses_session_sticky_request(app_type: &str, endpoint: &str, body: &Value) -> bool {
+    if app_type != "codex" {
+        return false;
+    }
+
+    let (path, _) = split_endpoint_and_query(endpoint);
+    let path = path.trim_end_matches('/');
+    if !(path.ends_with("/responses") || path.ends_with("/responses/compact")) {
+        return false;
+    }
+
+    previous_response_id(body).is_some() || body_contains_reasoning_item(body)
+}
+
+fn body_contains_reasoning_item(body: &Value) -> bool {
+    contains_key_recursive(body, "encrypted_content")
+        || body
+            .get("input")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items.iter().any(|item| {
+                    item.get("type").and_then(|value| value.as_str()) == Some("reasoning")
+                })
+            })
+            .unwrap_or(false)
+}
+
+fn contains_key_recursive(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => map
+            .iter()
+            .any(|(item_key, item_value)| item_key == key || contains_key_recursive(item_value, key)),
+        Value::Array(items) => items.iter().any(|item| contains_key_recursive(item, key)),
+        _ => false,
+    }
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -2367,6 +2591,8 @@ mod tests {
             router: Arc::new(ProviderRouter::new(db.clone())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
+            responses_session_providers: Arc::new(RwLock::new(HashMap::new())),
+            responses_response_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
@@ -2728,6 +2954,117 @@ mod tests {
         assert!(!should_apply_openai_responses_compatibility(
             "/v1/chat/completions",
             Some("openai_chat")
+        ));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_detects_previous_response_id() {
+        assert!(is_responses_session_sticky_request(
+            "codex",
+            "/v1/responses",
+            &json!({ "previous_response_id": "resp_abc" })
+        ));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_detects_reasoning_items() {
+        assert!(is_responses_session_sticky_request(
+            "codex",
+            "/v1/responses",
+            &json!({ "input": [{ "type": "reasoning", "encrypted_content": "abc" }] })
+        ));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_detects_nested_encrypted_content() {
+        assert!(is_responses_session_sticky_request(
+            "codex",
+            "/v1/responses",
+            &json!({ "input": [{ "type": "message", "content": [{ "encrypted_content": "abc" }] }] })
+        ));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_detects_compact_previous_response_id() {
+        assert!(is_responses_session_sticky_request(
+            "codex",
+            "/v1/responses/compact",
+            &json!({ "previous_response_id": "resp_abc" })
+        ));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_detects_body_level_encrypted_content() {
+        assert!(is_responses_session_sticky_request(
+            "codex",
+            "/v1/responses/compact",
+            &json!({ "summary": { "encrypted_content": "abc" } })
+        ));
+    }
+
+    #[tokio::test]
+    async fn bounded_sticky_entry_overwrites_session_pins_when_requested() {
+        let map = Arc::new(RwLock::new(HashMap::new()));
+
+        insert_bounded_sticky_entry(
+            &map,
+            "session-1".to_string(),
+            "provider-a".to_string(),
+            "test",
+            true,
+        )
+        .await;
+        insert_bounded_sticky_entry(
+            &map,
+            "session-1".to_string(),
+            "provider-b".to_string(),
+            "test",
+            true,
+        )
+        .await;
+
+        assert_eq!(map.read().await.get("session-1").map(String::as_str), Some("provider-b"));
+    }
+
+    #[tokio::test]
+    async fn bounded_sticky_entry_keeps_first_response_pin_when_not_overwriting() {
+        let map = Arc::new(RwLock::new(HashMap::new()));
+
+        insert_bounded_sticky_entry(
+            &map,
+            "resp-1".to_string(),
+            "provider-a".to_string(),
+            "test",
+            false,
+        )
+        .await;
+        insert_bounded_sticky_entry(
+            &map,
+            "resp-1".to_string(),
+            "provider-b".to_string(),
+            "test",
+            false,
+        )
+        .await;
+
+        assert_eq!(map.read().await.get("resp-1").map(String::as_str), Some("provider-a"));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_skips_fresh_requests() {
+        assert!(!is_responses_session_sticky_request(
+            "codex",
+            "/v1/responses",
+            &json!({ "input": [{ "role": "user", "content": "hi" }] })
+        ));
+    }
+
+    #[test]
+    fn responses_session_sticky_request_skips_non_responses_paths() {
+        assert!(!is_responses_session_sticky_request(
+            "codex",
+            "/v1/chat/completions",
+            &json!({ "previous_response_id": "resp_abc" })
         ));
     }
 

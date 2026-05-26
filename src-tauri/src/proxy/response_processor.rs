@@ -265,9 +265,14 @@ pub async fn handle_non_streaming(
         String::from_utf8_lossy(&body_bytes)
     );
 
-    // 解析并记录使用量。关闭 usage logging 时直接跳过，避免非流式响应整包 JSON parse。
+    let parsed_json = serde_json::from_slice::<Value>(&body_bytes).ok();
+    if let Some(json_value) = parsed_json.as_ref() {
+        record_response_id_if_present(state, ctx, json_value).await;
+    }
+
+    // 解析并记录使用量。关闭 usage logging 时直接跳过 usage 记录，但 response_id 粘性已在上方处理。
     if usage_logging_enabled(state) {
-        if let Ok(json_value) = serde_json::from_slice::<Value>(&body_bytes) {
+        if let Some(json_value) = parsed_json.as_ref() {
             // 解析使用量
             if let Some(usage) = (parser_config.response_parser)(&json_value) {
                 // 优先使用 usage 中解析出的模型名称，其次使用响应中的 model 字段，最后回退到请求模型
@@ -363,6 +368,7 @@ pub async fn process_response(
 // ============================================================================
 
 type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
+type EventCallback = Arc<dyn Fn(Value) + Send + Sync + 'static>;
 
 /// SSE 使用量收集器
 #[derive(Clone)]
@@ -376,6 +382,7 @@ struct SseUsageCollectorInner {
     first_event_set: AtomicBool,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
+    on_event: Option<EventCallback>,
     should_collect: Option<StreamUsageEventFilter>,
     finished: AtomicBool,
 }
@@ -387,7 +394,17 @@ impl SseUsageCollector {
         should_collect: Option<StreamUsageEventFilter>,
         callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
     ) -> Self {
+        Self::new_with_event_callback(start_time, should_collect, None::<fn(Value)>, callback)
+    }
+
+    pub fn new_with_event_callback(
+        start_time: std::time::Instant,
+        should_collect: Option<StreamUsageEventFilter>,
+        event_callback: Option<impl Fn(Value) + Send + Sync + 'static>,
+        callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
+    ) -> Self {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
+        let on_event: Option<EventCallback> = event_callback.map(|callback| Arc::new(callback) as EventCallback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
                 events: Mutex::new(Vec::new()),
@@ -395,6 +412,7 @@ impl SseUsageCollector {
                 first_event_set: AtomicBool::new(false),
                 start_time,
                 on_complete,
+                on_event,
                 should_collect,
                 finished: AtomicBool::new(false),
             }),
@@ -423,6 +441,9 @@ impl SseUsageCollector {
     /// 推送 SSE 事件
     pub async fn push(&self, event: Value) {
         self.mark_first_collected_event_time().await;
+        if let Some(on_event) = &self.inner.on_event {
+            on_event(event.clone());
+        }
         let mut events = self.inner.events.lock().await;
         events.push(event);
     }
@@ -481,6 +502,37 @@ impl Drop for SseUsageFinishGuard {
 // 内部辅助函数
 // ============================================================================
 
+fn extract_response_id(value: &Value) -> Option<&str> {
+    value
+        .get("id")
+        .and_then(|id| id.as_str())
+        .or_else(|| {
+            value
+                .get("response")
+                .and_then(|response| response.get("id"))
+                .and_then(|id| id.as_str())
+        })
+}
+
+async fn record_response_id_if_present(
+    state: &ProxyState,
+    ctx: &RequestContext,
+    value: &Value,
+) {
+    if ctx.app_type_str != "codex" {
+        return;
+    }
+    if let Some(response_id) = extract_response_id(value) {
+        crate::proxy::forwarder::RequestForwarder::record_responses_response_provider(
+            state,
+            response_id,
+            &ctx.provider.id,
+            ctx.app_type_str,
+        )
+        .await;
+    }
+}
+
 /// 创建使用量收集器
 fn create_usage_collector(
     ctx: &RequestContext,
@@ -493,7 +545,8 @@ fn create_usage_collector(
         .try_read()
         .map(|c| c.enable_logging)
         .unwrap_or(true);
-    if !logging_enabled {
+    let sticky_enabled = ctx.app_type_str == "codex";
+    if !logging_enabled && !sticky_enabled {
         return None;
     }
 
@@ -507,10 +560,32 @@ fn create_usage_collector(
     let model_extractor = parser_config.model_extractor;
     let session_id = ctx.session_id.clone();
 
-    Some(SseUsageCollector::new(
+    let sticky_state = state.clone();
+    let sticky_provider_id = provider_id.clone();
+
+    Some(SseUsageCollector::new_with_event_callback(
         start_time,
         parser_config.stream_event_filter,
+        Some(move |event: Value| {
+            if let Some(response_id) = extract_response_id(&event).map(ToString::to_string) {
+                let state_for_sticky = sticky_state.clone();
+                let provider_id_for_sticky = sticky_provider_id.clone();
+                tokio::spawn(async move {
+                    crate::proxy::forwarder::RequestForwarder::record_responses_response_provider(
+                        &state_for_sticky,
+                        &response_id,
+                        &provider_id_for_sticky,
+                        app_type_str,
+                    )
+                    .await;
+                });
+            }
+        }),
         move |events, first_token_ms| {
+            if !logging_enabled {
+                return;
+            }
+
             if let Some(usage) = stream_parser(&events) {
                 let model = model_extractor(&events, &request_model);
                 let latency_ms = start_time.elapsed().as_millis() as u64;
@@ -938,11 +1013,39 @@ mod tests {
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
+            responses_session_providers: Arc::new(RwLock::new(HashMap::new())),
+            responses_response_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
         }
+    }
+
+    #[test]
+    fn extract_response_id_reads_top_level_and_nested_response_ids() {
+        assert_eq!(
+            extract_response_id(&serde_json::json!({ "id": "resp_top" })),
+            Some("resp_top")
+        );
+        assert_eq!(
+            extract_response_id(&serde_json::json!({
+                "type": "response.created",
+                "response": { "id": "resp_nested" }
+            })),
+            Some("resp_nested")
+        );
+    }
+
+    #[test]
+    fn extract_response_id_skips_events_without_response_id() {
+        assert_eq!(
+            extract_response_id(&serde_json::json!({
+                "type": "response.output_text.delta",
+                "delta": "hello"
+            })),
+            None
+        );
     }
 
     fn seed_pricing(db: &Database) -> Result<(), AppError> {

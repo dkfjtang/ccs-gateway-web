@@ -222,6 +222,8 @@ impl RequestContext {
             non_streaming_timeout,
             state.status.clone(),
             state.current_providers.clone(),
+            state.responses_session_providers.clone(),
+            state.responses_response_providers.clone(),
             state.gemini_shadow.clone(),
             state.failover_manager.clone(),
             state.app_handle.clone(),

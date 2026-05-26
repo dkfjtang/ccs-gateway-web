@@ -35,6 +35,10 @@ pub struct ProxyState {
     pub start_time: Arc<RwLock<Option<std::time::Instant>>>,
     /// 每个应用类型当前使用的 provider (app_type -> (provider_id, provider_name))
     pub current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
+    /// OpenAI Responses session provider stickiness (session_id -> provider_id).
+    pub responses_session_providers: Arc<RwLock<std::collections::HashMap<String, String>>>,
+    /// OpenAI Responses response provider stickiness (response_id -> provider_id).
+    pub responses_response_providers: Arc<RwLock<std::collections::HashMap<String, String>>>,
     /// 共享的 ProviderRouter（持有熔断器状态，跨请求保持）
     pub provider_router: Arc<ProviderRouter>,
     /// Gemini Native shadow state，用于 thoughtSignature / tool call 回放
@@ -67,6 +71,8 @@ impl ProxyServer {
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             start_time: Arc::new(RwLock::new(None)),
             current_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            responses_session_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            responses_response_providers: Arc::new(RwLock::new(std::collections::HashMap::new())),
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             app_handle,
