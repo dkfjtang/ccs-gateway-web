@@ -364,7 +364,7 @@ impl StreamCheckService {
         let is_codex_oauth = provider.is_codex_oauth();
         let codex_fast_mode = provider.codex_fast_mode_enabled();
 
-        let body = if is_openai_responses {
+        let mut body = if is_openai_responses {
             anthropic_to_responses(
                 anthropic_body,
                 Some(&provider.id),
@@ -381,6 +381,10 @@ impl StreamCheckService {
         } else {
             anthropic_body
         };
+
+        if is_openai_responses {
+            body = provider.apply_openai_responses_compatibility(body);
+        }
 
         let mut request_builder = client.post(&url);
 
@@ -552,6 +556,8 @@ impl StreamCheckService {
         if let Some(effort) = reasoning_effort {
             body["reasoning"] = json!({ "effort": effort });
         }
+
+        let body = provider.apply_openai_responses_compatibility(body);
 
         for (i, url) in urls.iter().enumerate() {
             // 严格按照 Codex CLI 请求格式设置 headers

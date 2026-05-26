@@ -77,6 +77,23 @@ impl Provider {
             .unwrap_or(false)
     }
 
+    pub fn omit_max_output_tokens_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.omit_max_output_tokens_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn apply_openai_responses_compatibility(&self, mut body: Value) -> Value {
+        if self.omit_max_output_tokens_enabled() {
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("max_output_tokens");
+            }
+        }
+
+        body
+    }
+
     pub fn has_usage_script_enabled(&self) -> bool {
         self.meta
             .as_ref()
@@ -316,6 +333,9 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// OpenAI Responses compatibility switch: omit `max_output_tokens` before forwarding.
+    #[serde(rename = "omitMaxOutputTokens", skip_serializing_if = "Option::is_none")]
+    pub omit_max_output_tokens: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -335,6 +355,10 @@ impl ProviderMeta {
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    pub fn omit_max_output_tokens_enabled(&self) -> bool {
+        self.omit_max_output_tokens.unwrap_or(false)
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。
@@ -780,6 +804,100 @@ mod tests {
         let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
 
         assert!(value.get("pricingModelSource").is_none());
+    }
+
+    #[test]
+    fn provider_meta_omits_omit_max_output_tokens_when_none() {
+        let meta = ProviderMeta::default();
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert!(value.get("omitMaxOutputTokens").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_omit_max_output_tokens() {
+        let mut meta = ProviderMeta::default();
+        meta.omit_max_output_tokens = Some(true);
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("omitMaxOutputTokens")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+        assert!(value.get("omit_max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn provider_omit_max_output_tokens_defaults_to_false() {
+        let provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+
+        assert!(!provider.omit_max_output_tokens_enabled());
+    }
+
+    #[test]
+    fn provider_compatibility_omits_max_output_tokens_when_enabled() {
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+        let mut meta = ProviderMeta::default();
+        meta.omit_max_output_tokens = Some(true);
+        provider.meta = Some(meta);
+
+        let body = provider.apply_openai_responses_compatibility(json!({
+            "model": "gpt-5.5",
+            "input": "ping",
+            "max_output_tokens": 128
+        }));
+
+        assert!(body.get("max_output_tokens").is_none());
+        assert_eq!(body["model"], "gpt-5.5");
+    }
+
+    #[test]
+    fn provider_compatibility_keeps_max_output_tokens_when_disabled() {
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+        let mut meta = ProviderMeta::default();
+        meta.omit_max_output_tokens = Some(false);
+        provider.meta = Some(meta);
+
+        let body = provider.apply_openai_responses_compatibility(json!({
+            "max_output_tokens": 128
+        }));
+
+        assert_eq!(body["max_output_tokens"], json!(128));
+    }
+
+    #[test]
+    fn provider_compatibility_leaves_non_object_bodies_unchanged() {
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+        let mut meta = ProviderMeta::default();
+        meta.omit_max_output_tokens = Some(true);
+        provider.meta = Some(meta);
+
+        let body = provider.apply_openai_responses_compatibility(json!(["max_output_tokens"]));
+
+        assert_eq!(body, json!(["max_output_tokens"]));
     }
 
     #[test]

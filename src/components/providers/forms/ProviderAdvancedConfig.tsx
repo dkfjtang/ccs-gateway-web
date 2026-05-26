@@ -1,6 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, FlaskConical, Coins } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FlaskConical,
+  Coins,
+  Wrench,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -25,21 +31,38 @@ interface ProviderPricingConfig {
 interface ProviderAdvancedConfigProps {
   testConfig: ProviderTestConfig;
   pricingConfig: ProviderPricingConfig;
+  omitMaxOutputTokens: boolean;
+  omitMaxOutputTokensAvailable: boolean;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
+  onOmitMaxOutputTokensChange: (enabled: boolean) => void;
 }
 
 export function ProviderAdvancedConfig({
   testConfig,
   pricingConfig,
+  omitMaxOutputTokens,
+  omitMaxOutputTokensAvailable,
   onTestConfigChange,
   onPricingConfigChange,
+  onOmitMaxOutputTokensChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
+  const [isCompatibilityConfigOpen, setIsCompatibilityConfigOpen] =
+    useState(omitMaxOutputTokens);
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
   const [isPricingConfigOpen, setIsPricingConfigOpen] = useState(
     pricingConfig.enabled,
   );
+
+  const shouldShowCompatibilityConfig =
+    omitMaxOutputTokensAvailable || omitMaxOutputTokens;
+
+  useEffect(() => {
+    if (omitMaxOutputTokens) {
+      setIsCompatibilityConfigOpen(true);
+    }
+  }, [omitMaxOutputTokens]);
 
   useEffect(() => {
     setIsTestConfigOpen(testConfig.enabled);
@@ -51,6 +74,87 @@ export function ProviderAdvancedConfig({
 
   return (
     <div className="space-y-4">
+      {shouldShowCompatibilityConfig && (
+        <div className="rounded-lg border border-border/50 bg-muted/20">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between p-4 hover:bg-muted/30 transition-colors"
+            aria-expanded={isCompatibilityConfigOpen}
+            aria-controls="provider-compatibility-config"
+            onClick={() =>
+              setIsCompatibilityConfigOpen(!isCompatibilityConfigOpen)
+            }
+          >
+            <div className="flex items-center gap-3">
+              <Wrench className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">
+                {t("providerAdvanced.compatibilityConfig", {
+                  defaultValue: "兼容性选项",
+                })}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {omitMaxOutputTokens && (
+                <span className="text-xs text-muted-foreground">
+                  {t("providerAdvanced.compatibilityConfigEnabled", {
+                    defaultValue: "已启用",
+                  })}
+                </span>
+              )}
+              {isCompatibilityConfigOpen ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+            </div>
+          </button>
+          <div
+            id="provider-compatibility-config"
+            className={cn(
+              "overflow-hidden transition-all duration-200",
+              isCompatibilityConfigOpen
+                ? "max-h-[320px] opacity-100"
+                : "max-h-0 opacity-0",
+            )}
+          >
+            <div className="border-t border-border/50 p-4 space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="omit-max-output-tokens"
+                    className="font-medium"
+                  >
+                    {t("providerAdvanced.omitMaxOutputTokens", {
+                      defaultValue: "不发送 max_output_tokens",
+                    })}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t("providerAdvanced.omitMaxOutputTokensDesc", {
+                      defaultValue:
+                        "仅当 OpenAI Responses 兼容上游返回 unsupported parameter: max_output_tokens 时启用。启用后不会发送输出长度上限，长回答或长代码生成可能提前停止或变短。",
+                    })}
+                  </p>
+                  {!omitMaxOutputTokensAvailable && (
+                    <p className="text-xs text-muted-foreground">
+                      {t("providerAdvanced.omitMaxOutputTokensUnavailable", {
+                        defaultValue:
+                          "当前 provider 格式不是 OpenAI Responses，此开关保持现有值但不可编辑。",
+                      })}
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  id="omit-max-output-tokens"
+                  checked={omitMaxOutputTokens}
+                  onCheckedChange={onOmitMaxOutputTokensChange}
+                  disabled={!omitMaxOutputTokensAvailable}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="rounded-lg border border-border/50 bg-muted/20">
         <button
           type="button"

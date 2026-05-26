@@ -1162,7 +1162,15 @@ impl RequestForwarder {
         };
         // Run final provider-specific outbound sanitizers after generic mapping and
         // provider-specific format transforms. This hook must not re-enter format conversion.
-        let mut request_body = adapter.sanitize_outbound_request(request_body, provider)?;
+        let request_body = adapter.sanitize_outbound_request(request_body, provider)?;
+        let mut request_body = if should_apply_openai_responses_compatibility(
+            &effective_endpoint,
+            resolved_claude_api_format.as_deref(),
+        ) {
+            provider.apply_openai_responses_compatibility(request_body)
+        } else {
+            request_body
+        };
 
         if self.optimizer_config.enabled && self.optimizer_config.token_saver {
             super::token_saver::optimize(&mut request_body, &self.optimizer_config);
@@ -2056,6 +2064,19 @@ fn is_claude_messages_path(path: &str) -> bool {
     matches!(path, "/v1/messages" | "/claude/v1/messages")
 }
 
+fn should_apply_openai_responses_compatibility(
+    endpoint: &str,
+    api_format: Option<&str>,
+) -> bool {
+    if api_format == Some("openai_responses") {
+        return true;
+    }
+
+    let (path, _) = split_endpoint_and_query(endpoint);
+    let path = path.trim_end_matches('/');
+    path.ends_with("/responses") || path.ends_with("/responses/compact")
+}
+
 fn rewrite_claude_transform_endpoint(
     endpoint: &str,
     api_format: &str,
@@ -2672,6 +2693,42 @@ mod tests {
 
         assert_eq!(endpoint, "/v1/chat/completions?foo=bar");
         assert_eq!(passthrough_query.as_deref(), Some("foo=bar"));
+    }
+
+    #[test]
+    fn openai_responses_compatibility_applies_to_responses_api_format() {
+        assert!(should_apply_openai_responses_compatibility(
+            "/v1/messages",
+            Some("openai_responses")
+        ));
+    }
+
+    #[test]
+    fn openai_responses_compatibility_applies_to_responses_endpoints() {
+        assert!(should_apply_openai_responses_compatibility(
+            "/v1/responses?x=1",
+            None
+        ));
+        assert!(should_apply_openai_responses_compatibility(
+            "/v1/responses/",
+            None
+        ));
+        assert!(should_apply_openai_responses_compatibility(
+            "/v1/responses/compact",
+            None
+        ));
+        assert!(should_apply_openai_responses_compatibility(
+            "/v1/responses/compact/",
+            None
+        ));
+    }
+
+    #[test]
+    fn openai_responses_compatibility_skips_chat_completions() {
+        assert!(!should_apply_openai_responses_compatibility(
+            "/v1/chat/completions",
+            Some("openai_chat")
+        ));
     }
 
     #[test]

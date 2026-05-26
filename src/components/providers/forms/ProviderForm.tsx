@@ -226,6 +226,9 @@ function ProviderFormFull({
       initialData?.meta?.pricingModelSource,
     ),
   }));
+  const [omitMaxOutputTokens, setOmitMaxOutputTokens] = useState<boolean>(
+    () => initialData?.meta?.omitMaxOutputTokens ?? false,
+  );
 
   const { category } = useProviderCategory({
     appId,
@@ -258,6 +261,7 @@ function ProviderFormFull({
         initialData?.meta?.pricingModelSource,
       ),
     });
+    setOmitMaxOutputTokens(initialData?.meta?.omitMaxOutputTokens ?? false);
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -509,6 +513,18 @@ function ProviderFormFull({
     settingsConfig: form.getValues("settingsConfig"),
     onConfigChange: handleSettingsConfigChange,
   });
+
+  const effectiveProviderType =
+    templatePreset?.providerType ?? initialData?.meta?.providerType;
+  const omitMaxOutputTokensControlAvailable =
+    appId === "codex" ||
+    effectiveProviderType === "codex_oauth" ||
+    (appId === "claude" &&
+      category !== "official" &&
+      localApiFormat === "openai_responses");
+  const effectiveOmitMaxOutputTokens = omitMaxOutputTokensControlAvailable
+    ? omitMaxOutputTokens
+    : (initialData?.meta?.omitMaxOutputTokens ?? false);
 
   const {
     useCommonConfig,
@@ -1164,8 +1180,7 @@ function ProviderFormFull({
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
-    const providerType =
-      templatePreset?.providerType || initialData?.meta?.providerType;
+    const providerType = effectiveProviderType;
 
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
@@ -1208,6 +1223,11 @@ function ProviderFormFull({
         pricingConfig.enabled && pricingConfig.pricingModelSource !== "inherit"
           ? pricingConfig.pricingModelSource
           : undefined,
+      omitMaxOutputTokens: omitMaxOutputTokensControlAvailable
+        ? omitMaxOutputTokens
+          ? true
+          : undefined
+        : baseMeta?.omitMaxOutputTokens,
       apiFormat:
         appId === "claude" && category !== "official"
           ? localApiFormat
@@ -2120,8 +2140,13 @@ function ProviderFormFull({
               <ProviderAdvancedConfig
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}
+                omitMaxOutputTokens={effectiveOmitMaxOutputTokens}
+                omitMaxOutputTokensAvailable={
+                  omitMaxOutputTokensControlAvailable
+                }
                 onTestConfigChange={setTestConfig}
                 onPricingConfigChange={setPricingConfig}
+                onOmitMaxOutputTokensChange={setOmitMaxOutputTokens}
               />
             )}
 
