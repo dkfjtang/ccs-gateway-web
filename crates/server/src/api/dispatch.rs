@@ -255,6 +255,7 @@ rpc_business_methods!(
     "enable_prompt",
     "import_prompt_from_file",
     "get_current_prompt_file_content",
+    "create_caveman_style_profile",
     "check_env_conflicts",
     "delete_env_vars",
     "restore_env_backup",
@@ -2930,6 +2931,23 @@ pub async fn dispatch_command(
                 .map_err(RpcError::app_error)?;
 
             Ok(serde_json::json!(content))
+        }
+
+        "create_caveman_style_profile" => {
+            let app = params
+                .get("app")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude");
+
+            let profile = params
+                .get("profile")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| RpcError::invalid_params("missing 'profile' field"))?;
+
+            let id = cc_switch_core::create_caveman_style_profile(core, app, profile)
+                .map_err(RpcError::app_error)?;
+
+            Ok(serde_json::json!(id))
         }
 
         // ========================

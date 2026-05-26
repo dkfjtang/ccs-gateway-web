@@ -69,7 +69,7 @@ pub use mcp::{
     sync_enabled_to_codex, sync_enabled_to_gemini, sync_single_server_to_claude,
     sync_single_server_to_codex, sync_single_server_to_gemini,
 };
-pub use prompt::Prompt;
+pub use prompt::{CavemanStyleProfile, Prompt};
 pub use provider::{
     ClaudeDesktopMode, ClaudeDesktopModelRoute, Provider, ProviderMeta, UniversalProvider,
     UsageData, UsageResult,

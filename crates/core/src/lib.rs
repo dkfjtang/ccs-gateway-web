@@ -1198,8 +1198,8 @@ pub fn get_request_detail(
 }
 
 pub fn sync_session_usage(ctx: &CoreContext) -> Result<SessionSyncResult, String> {
-    let result =
-        cc_switch::sync_all_session_usage(ctx.app_state().db.as_ref()).map_err(|e| e.to_string())?;
+    let result = cc_switch::sync_all_session_usage(ctx.app_state().db.as_ref())
+        .map_err(|e| e.to_string())?;
 
     if let Some(error) = result.errors.first() {
         log::warn!(
@@ -1294,10 +1294,7 @@ fn settings_for_frontend(mut settings: AppSettings) -> AppSettings {
     settings
 }
 
-fn merge_settings_for_save(
-    mut incoming: AppSettings,
-    existing: &AppSettings,
-) -> AppSettings {
+fn merge_settings_for_save(mut incoming: AppSettings, existing: &AppSettings) -> AppSettings {
     match (&mut incoming.webdav_sync, &existing.webdav_sync) {
         (None, _) => incoming.webdav_sync = existing.webdav_sync.clone(),
         (Some(incoming_sync), Some(existing_sync))
@@ -1340,7 +1337,9 @@ mod settings_tests {
 
         let frontend = settings_for_frontend(settings);
 
-        let sync = frontend.webdav_sync.expect("webdav config should remain visible");
+        let sync = frontend
+            .webdav_sync
+            .expect("webdav config should remain visible");
         assert_eq!(sync.base_url, "https://dav.example.com");
         assert_eq!(sync.username, "alice");
         assert_eq!(sync.password, "");
@@ -1359,7 +1358,9 @@ mod settings_tests {
         let incoming = AppSettings::default();
         let merged = merge_settings_for_save(incoming, &existing);
 
-        let sync = merged.webdav_sync.expect("existing webdav config should be preserved");
+        let sync = merged
+            .webdav_sync
+            .expect("existing webdav config should be preserved");
         assert_eq!(sync.base_url, "https://dav.example.com");
         assert_eq!(sync.password, "secret");
     }
@@ -1406,7 +1407,9 @@ mod settings_tests {
         });
 
         let merged = merge_settings_for_save(incoming, &existing);
-        let sync = merged.webdav_sync.expect("incoming webdav config should be used");
+        let sync = merged
+            .webdav_sync
+            .expect("incoming webdav config should be used");
         assert_eq!(sync.base_url, "https://dav.new.example.com");
         assert_eq!(sync.username, "new");
         assert_eq!(sync.password, "new-pass");
@@ -1480,7 +1483,10 @@ pub fn set_optimizer_config(ctx: &CoreContext, config: OptimizerConfig) -> Resul
     }
 
     if config.token_saver_keep_chars >= config.token_saver_min_chars {
-        return Err("Invalid token_saver_keep_chars value: must be smaller than token_saver_min_chars".to_string());
+        return Err(
+            "Invalid token_saver_keep_chars value: must be smaller than token_saver_min_chars"
+                .to_string(),
+        );
     }
 
     ctx.app_state()
@@ -3048,7 +3054,7 @@ pub fn toggle_mcp_app(
 // ========================
 
 /// 导出 Prompt 类型
-pub use cc_switch::Prompt;
+pub use cc_switch::{CavemanStyleProfile, Prompt};
 
 /// 获取所有提示词
 pub fn get_prompts(
@@ -3095,6 +3101,23 @@ pub fn import_prompt_from_file(ctx: &CoreContext, app: &str) -> Result<String, S
 pub fn get_current_prompt_file_content(app: &str) -> Result<Option<String>, String> {
     let app_type = AppType::from_str(app).map_err(|e| e.to_string())?;
     cc_switch::PromptService::get_current_file_content(app_type).map_err(|e| e.to_string())
+}
+
+/// 创建默认禁用的 Caveman 风格提示词预设
+pub fn create_caveman_style_profile(
+    ctx: &CoreContext,
+    app: &str,
+    profile: &str,
+) -> Result<String, String> {
+    let app_type = AppType::from_str(app).map_err(|e| e.to_string())?;
+    let profile = match profile {
+        "lite" => CavemanStyleProfile::Lite,
+        "full" => CavemanStyleProfile::Full,
+        "ultra" => CavemanStyleProfile::Ultra,
+        other => return Err(format!("Invalid Caveman style profile: {other}")),
+    };
+    cc_switch::PromptService::create_caveman_style_profile(ctx.app_state(), app_type, profile)
+        .map_err(|e| e.to_string())
 }
 
 // ========================
