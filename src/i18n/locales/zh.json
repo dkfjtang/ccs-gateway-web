@@ -1551,6 +1551,12 @@
     "disableFailed": "禁用失败",
     "importSuccess": "导入成功",
     "importFailed": "导入失败",
+    "caveman": {
+      "createLite": "Caveman Lite",
+      "createFull": "Caveman Full",
+      "createUltra": "Caveman Ultra",
+      "description": "创建默认禁用的可选提示词预设；需手动启用，CCS 不会改写代理响应。"
+    },
     "confirm": {
       "deleteTitle": "确认删除",
       "deleteMessage": "确定要删除提示词 \"{{name}}\" 吗？"

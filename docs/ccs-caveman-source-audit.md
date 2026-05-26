@@ -130,27 +130,26 @@ Implication for CCS:
 
 ## Current CCS Caveman Status
 
-Current CCS commit keeps Caveman as a reserved UI/docs concept only:
+Current CCS implementation keeps proxy-layer Caveman output compression reserved, but adds an opt-in prompt preset path for style profiles:
 
 - no runtime output compression
-- no enable switch
 - no SSE mutation
 - no Responses item mutation
 - no usage parsing changes
+- prompt preset creation exists for `lite`, `full`, and `ultra`
+- created presets are disabled by default and must be manually enabled per app
 
-This is correct given source audit findings.
+This is correct given source audit findings because Caveman is applied at the prompt/style layer, not as a post-hoc response transformer.
 
 ## Recommended CCS Integration
 
 ### Caveman-1: Agent style profile, not proxy output transformer
 
-Add a profile concept such as:
+Implemented first as disabled prompt presets:
 
-- `normal`
 - `caveman-lite`
 - `caveman-full`
 - `caveman-ultra`
-- optional `wenyan-*`
 
 Apply it at the agent instruction / prompt layer where supported:
 
@@ -158,7 +157,7 @@ Apply it at the agent instruction / prompt layer where supported:
 - provider-specific system prompt augmentation where safe
 - user-visible opt-in setting
 
-Do not mutate streamed response chunks or OpenAI Responses items after generation.
+Do not mutate streamed response chunks or OpenAI Responses items after generation. The current UI creates disabled prompt presets; users must manually enable one for the selected app.
 
 ### Caveman-2: Auto-Clarity rules
 

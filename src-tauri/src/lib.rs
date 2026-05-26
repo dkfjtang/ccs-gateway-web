@@ -336,6 +336,7 @@ pub const WEB_COMPAT_TAURI_COMMANDS: &[&str] = &[
     "enable_prompt",
     "import_prompt_from_file",
     "get_current_prompt_file_content",
+    "create_caveman_style_profile",
     "test_api_endpoints",
     "get_custom_endpoints",
     "add_custom_endpoint",
@@ -1617,6 +1618,7 @@ pub fn run() {
             commands::enable_prompt,
             commands::import_prompt_from_file,
             commands::get_current_prompt_file_content,
+            commands::create_caveman_style_profile,
             // model list fetch (OpenAI-compatible /v1/models)
             commands::fetch_models_for_config,
             // ours: endpoint speed test + custom endpoint management

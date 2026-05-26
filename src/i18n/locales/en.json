@@ -1551,6 +1551,12 @@
     "disableFailed": "Failed to disable",
     "importSuccess": "Imported successfully",
     "importFailed": "Failed to import",
+    "caveman": {
+      "createLite": "Caveman Lite",
+      "createFull": "Caveman Full",
+      "createUltra": "Caveman Ultra",
+      "description": "Creates disabled opt-in prompt presets. Enable one manually; CCS never rewrites proxy responses."
+    },
     "confirm": {
       "deleteTitle": "Confirm Delete",
       "deleteMessage": "Are you sure you want to delete prompt \"{{name}}\"?"

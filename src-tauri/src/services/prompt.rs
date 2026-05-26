@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use crate::app_config::AppType;
 use crate::config::write_text_file;
 use crate::error::AppError;
-use crate::prompt::Prompt;
+use crate::prompt::{caveman_prompt, CavemanStyleProfile, Prompt};
 use crate::prompt_files::prompt_file_path;
 use crate::store::AppState;
 
@@ -18,6 +18,21 @@ fn get_unix_timestamp() -> Result<i64, AppError> {
 pub struct PromptService;
 
 impl PromptService {
+    pub fn create_caveman_style_profile(
+        state: &AppState,
+        app: AppType,
+        profile: CavemanStyleProfile,
+    ) -> Result<String, AppError> {
+        let prompt = caveman_prompt(profile);
+        let id = prompt.id.clone();
+        let existing = state.db.get_prompts(app.as_str())?;
+        if existing.contains_key(&id) {
+            return Ok(id);
+        }
+
+        state.db.save_prompt(app.as_str(), &prompt)?;
+        Ok(id)
+    }
     pub fn get_prompts(
         state: &AppState,
         app: AppType,

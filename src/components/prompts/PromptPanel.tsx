@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText } from "lucide-react";
-import { type AppId } from "@/lib/api";
+import { promptsApi, type AppId } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import PromptListItem from "./PromptListItem";
 import PromptFormPanel from "./PromptFormPanel";
@@ -64,6 +64,17 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       setIsFormOpen(true);
     };
 
+    const createCavemanProfile = async (
+      profile: "lite" | "full" | "ultra",
+    ) => {
+      try {
+        await promptsApi.createCavemanStyleProfile(appId, profile);
+        await reload();
+      } catch (error) {
+        console.error("Failed to create Caveman style profile:", error);
+      }
+    };
+
     React.useImperativeHandle(ref, () => ({
       openAdd: handleAdd,
     }));
@@ -98,12 +109,40 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     return (
       <div className="flex flex-col flex-1 min-h-0 px-6">
         <div className="flex-shrink-0 py-4 glass rounded-xl border border-white/10 mb-4 px-6">
-          <div className="text-sm text-muted-foreground">
-            {t("prompts.count", { count: promptEntries.length })} ·{" "}
-            {enabledPrompt
-              ? t("prompts.enabledName", { name: enabledPrompt[1].name })
-              : t("prompts.noneEnabled")}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-muted-foreground">
+              {t("prompts.count", { count: promptEntries.length })} ·{" "}
+              {enabledPrompt
+                ? t("prompts.enabledName", { name: enabledPrompt[1].name })
+                : t("prompts.noneEnabled")}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => createCavemanProfile("lite")}
+              >
+                {t("prompts.caveman.createLite")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => createCavemanProfile("full")}
+              >
+                {t("prompts.caveman.createFull")}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => createCavemanProfile("ultra")}
+              >
+                {t("prompts.caveman.createUltra")}
+              </button>
+            </div>
           </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t("prompts.caveman.description")}
+          </p>
         </div>
 
         <div className="flex-1 overflow-y-auto pb-16">

@@ -35,4 +35,11 @@ export const promptsApi = {
   async getCurrentFileContent(app: AppId): Promise<string | null> {
     return await invoke("get_current_prompt_file_content", { app });
   },
+
+  async createCavemanStyleProfile(
+    app: AppId,
+    profile: "lite" | "full" | "ultra",
+  ): Promise<string> {
+    return await invoke("create_caveman_style_profile", { app, profile });
+  },
 };
