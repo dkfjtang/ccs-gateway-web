@@ -370,7 +370,9 @@
         "tokenSaverMinChars": "Trigger threshold (chars)",
         "tokenSaverKeepChars": "Kept context (chars)",
         "cavemanOutputCompression": "Caveman Output Compression (Reserved)",
-        "cavemanOutputCompressionDescription": "Documentation-only placeholder for a future capability. Runtime output is not rewritten and no enable switch is exposed yet."
+        "cavemanOutputCompressionDescription": "Documentation-only placeholder for a future capability. Runtime output is not rewritten and no enable switch is exposed yet.",
+        "passthroughServiceTier": "Pass through service_tier",
+        "passthroughServiceTierDescription": "Enabled by default: preserve client-provided service_tier=\"priority\" for OpenClaw Fast mode and similar flows. Disable if an upstream rejects the field."
       },
       "logConfig": {
         "title": "Log Management",

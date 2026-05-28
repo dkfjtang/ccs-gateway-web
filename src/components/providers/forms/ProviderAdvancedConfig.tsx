@@ -32,37 +32,44 @@ interface ProviderAdvancedConfigProps {
   testConfig: ProviderTestConfig;
   pricingConfig: ProviderPricingConfig;
   omitMaxOutputTokens: boolean;
+  requireResponsesInstructions: boolean;
   omitMaxOutputTokensAvailable: boolean;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
   onOmitMaxOutputTokensChange: (enabled: boolean) => void;
+  onRequireResponsesInstructionsChange: (enabled: boolean) => void;
 }
 
 export function ProviderAdvancedConfig({
   testConfig,
   pricingConfig,
   omitMaxOutputTokens,
+  requireResponsesInstructions,
   omitMaxOutputTokensAvailable,
   onTestConfigChange,
   onPricingConfigChange,
   onOmitMaxOutputTokensChange,
+  onRequireResponsesInstructionsChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
-  const [isCompatibilityConfigOpen, setIsCompatibilityConfigOpen] =
-    useState(omitMaxOutputTokens);
+  const [isCompatibilityConfigOpen, setIsCompatibilityConfigOpen] = useState(
+    omitMaxOutputTokens || requireResponsesInstructions,
+  );
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
   const [isPricingConfigOpen, setIsPricingConfigOpen] = useState(
     pricingConfig.enabled,
   );
 
   const shouldShowCompatibilityConfig =
-    omitMaxOutputTokensAvailable || omitMaxOutputTokens;
+    omitMaxOutputTokensAvailable ||
+    omitMaxOutputTokens ||
+    requireResponsesInstructions;
 
   useEffect(() => {
-    if (omitMaxOutputTokens) {
+    if (omitMaxOutputTokens || requireResponsesInstructions) {
       setIsCompatibilityConfigOpen(true);
     }
-  }, [omitMaxOutputTokens]);
+  }, [omitMaxOutputTokens, requireResponsesInstructions]);
 
   useEffect(() => {
     setIsTestConfigOpen(testConfig.enabled);
@@ -94,7 +101,7 @@ export function ProviderAdvancedConfig({
               </span>
             </div>
             <div className="flex items-center gap-3">
-              {omitMaxOutputTokens && (
+              {(omitMaxOutputTokens || requireResponsesInstructions) && (
                 <span className="text-xs text-muted-foreground">
                   {t("providerAdvanced.compatibilityConfigEnabled", {
                     defaultValue: "已启用",
@@ -147,6 +154,42 @@ export function ProviderAdvancedConfig({
                   id="omit-max-output-tokens"
                   checked={omitMaxOutputTokens}
                   onCheckedChange={onOmitMaxOutputTokensChange}
+                  disabled={!omitMaxOutputTokensAvailable}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="require-responses-instructions"
+                    className="font-medium"
+                  >
+                    {t("providerAdvanced.requireResponsesInstructions", {
+                      defaultValue: "发送空白 instructions 字段",
+                    })}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t("providerAdvanced.requireResponsesInstructionsDesc", {
+                      defaultValue:
+                        "仅当 OpenAI Responses 兼容上游在缺少 instructions 时返回 Instructions are required 时启用。启用后只补单个空格，不注入任何提示词，避免改变请求词意或回答质量。",
+                    })}
+                  </p>
+                  {!omitMaxOutputTokensAvailable && (
+                    <p className="text-xs text-muted-foreground">
+                      {t(
+                        "providerAdvanced.requireResponsesInstructionsUnavailable",
+                        {
+                          defaultValue:
+                            "当前 provider 格式不是 OpenAI Responses，此开关保持现有值但不可编辑。",
+                        },
+                      )}
+                    </p>
+                  )}
+                </div>
+                <Switch
+                  id="require-responses-instructions"
+                  checked={requireResponsesInstructions}
+                  onCheckedChange={onRequireResponsesInstructionsChange}
                   disabled={!omitMaxOutputTokensAvailable}
                 />
               </div>

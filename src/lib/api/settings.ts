@@ -330,6 +330,7 @@ export interface OptimizerConfig {
   tokenSaverMinChars: number;
   tokenSaverKeepChars: number;
   cavemanOutputCompression: boolean;
+  passthroughServiceTier: boolean;
 }
 
 export interface LogConfig {

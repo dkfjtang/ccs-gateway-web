@@ -370,7 +370,9 @@
         "tokenSaverMinChars": "触发阈值（字符）",
         "tokenSaverKeepChars": "保留长度（字符）",
         "cavemanOutputCompression": "Caveman 输出压缩（预留）",
-        "cavemanOutputCompressionDescription": "当前仅作为后续能力说明，运行时不会改写输出；正式实现前不提供启用开关。"
+        "cavemanOutputCompressionDescription": "当前仅作为后续能力说明，运行时不会改写输出；正式实现前不提供启用开关。",
+        "passthroughServiceTier": "透传 service_tier",
+        "passthroughServiceTierDescription": "默认开启：保留客户端送入的 service_tier=\"priority\"，用于 OpenClaw Fast 模式等链路；如上游不兼容可关闭。"
       },
       "logConfig": {
         "title": "日志管理",

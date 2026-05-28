@@ -264,6 +264,10 @@ pub struct OptimizerConfig {
     /// Caveman 输出压缩：预留给非流式响应压缩，当前仅配置落地（默认关闭）
     #[serde(default)]
     pub caveman_output_compression: bool,
+    /// OpenAI Responses service_tier 透传：将客户端送入的 service_tier="priority" 保留到上游请求
+    /// （默认开启——OpenClaw Fast 模式等场景通过此开关确保字段不丢失）
+    #[serde(default = "default_true")]
+    pub passthrough_service_tier: bool,
 }
 
 fn default_cache_ttl() -> String {
@@ -289,7 +293,32 @@ impl Default for OptimizerConfig {
             token_saver_min_chars: default_token_saver_min_chars(),
             token_saver_keep_chars: default_token_saver_keep_chars(),
             caveman_output_compression: false,
+            passthrough_service_tier: true,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod optimizer_config_tests {
+    use super::*;
+
+    #[test]
+    fn optimizer_config_passthrough_service_tier_defaults_to_true() {
+        let config: OptimizerConfig = serde_json::from_str("{}").unwrap();
+
+        assert!(config.passthrough_service_tier);
+    }
+
+    #[test]
+    fn optimizer_config_serializes_passthrough_service_tier() {
+        let config = OptimizerConfig {
+            passthrough_service_tier: false,
+            ..OptimizerConfig::default()
+        };
+        let value = serde_json::to_value(&config).unwrap();
+
+        assert_eq!(value["passthroughServiceTier"], serde_json::json!(false));
     }
 }
 

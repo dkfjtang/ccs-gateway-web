@@ -123,6 +123,24 @@ pub fn transform_claude_request_for_api_format(
     session_id: Option<&str>,
     shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
 ) -> Result<serde_json::Value, ProxyError> {
+    transform_claude_request_for_api_format_with_options(
+        body,
+        provider,
+        api_format,
+        session_id,
+        shadow_store,
+        false,
+    )
+}
+
+pub fn transform_claude_request_for_api_format_with_options(
+    body: serde_json::Value,
+    provider: &Provider,
+    api_format: &str,
+    session_id: Option<&str>,
+    shadow_store: Option<&super::gemini_shadow::GeminiShadowStore>,
+    passthrough_service_tier: bool,
+) -> Result<serde_json::Value, ProxyError> {
     let is_codex_oauth = provider.is_codex_oauth();
 
     // Copilot 场景：优先从 metadata.user_id 提取 session ID 作为 cache key
@@ -187,6 +205,7 @@ pub fn transform_claude_request_for_api_format(
                 cache_key,
                 is_codex_oauth,
                 codex_fast_mode,
+                passthrough_service_tier,
             )
         }
         "openai_chat" => {

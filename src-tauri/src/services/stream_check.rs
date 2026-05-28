@@ -370,6 +370,7 @@ impl StreamCheckService {
                 Some(&provider.id),
                 is_codex_oauth,
                 codex_fast_mode,
+                false,
             )
             .map_err(|e| AppError::Message(format!("Failed to build test request: {e}")))?
         } else if is_gemini_native {

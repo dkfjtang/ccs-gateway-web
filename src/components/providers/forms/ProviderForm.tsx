@@ -229,6 +229,10 @@ function ProviderFormFull({
   const [omitMaxOutputTokens, setOmitMaxOutputTokens] = useState<boolean>(
     () => initialData?.meta?.omitMaxOutputTokens ?? false,
   );
+  const [requireResponsesInstructions, setRequireResponsesInstructions] =
+    useState<boolean>(
+      () => initialData?.meta?.requireResponsesInstructions ?? false,
+    );
 
   const { category } = useProviderCategory({
     appId,
@@ -262,6 +266,9 @@ function ProviderFormFull({
       ),
     });
     setOmitMaxOutputTokens(initialData?.meta?.omitMaxOutputTokens ?? false);
+    setRequireResponsesInstructions(
+      initialData?.meta?.requireResponsesInstructions ?? false,
+    );
   }, [appId, initialData, supportsFullUrl]);
 
   const defaultValues: ProviderFormData = useMemo(
@@ -525,6 +532,10 @@ function ProviderFormFull({
   const effectiveOmitMaxOutputTokens = omitMaxOutputTokensControlAvailable
     ? omitMaxOutputTokens
     : (initialData?.meta?.omitMaxOutputTokens ?? false);
+  const effectiveRequireResponsesInstructions =
+    omitMaxOutputTokensControlAvailable
+      ? requireResponsesInstructions
+      : (initialData?.meta?.requireResponsesInstructions ?? false);
 
   const {
     useCommonConfig,
@@ -1228,6 +1239,11 @@ function ProviderFormFull({
           ? true
           : undefined
         : baseMeta?.omitMaxOutputTokens,
+      requireResponsesInstructions: omitMaxOutputTokensControlAvailable
+        ? requireResponsesInstructions
+          ? true
+          : undefined
+        : baseMeta?.requireResponsesInstructions,
       apiFormat:
         appId === "claude" && category !== "official"
           ? localApiFormat
@@ -2141,12 +2157,18 @@ function ProviderFormFull({
                 testConfig={testConfig}
                 pricingConfig={pricingConfig}
                 omitMaxOutputTokens={effectiveOmitMaxOutputTokens}
+                requireResponsesInstructions={
+                  effectiveRequireResponsesInstructions
+                }
                 omitMaxOutputTokensAvailable={
                   omitMaxOutputTokensControlAvailable
                 }
                 onTestConfigChange={setTestConfig}
                 onPricingConfigChange={setPricingConfig}
                 onOmitMaxOutputTokensChange={setOmitMaxOutputTokens}
+                onRequireResponsesInstructionsChange={
+                  setRequireResponsesInstructions
+                }
               />
             )}
 

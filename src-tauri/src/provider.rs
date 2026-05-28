@@ -5,6 +5,13 @@ use std::collections::HashMap;
 
 // SSOT 模式：不再写供应商副本文件
 
+fn has_non_empty_instructions(obj: &serde_json::Map<String, Value>) -> bool {
+    obj.get("instructions")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+}
+
 /// 供应商结构体
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
@@ -84,10 +91,28 @@ impl Provider {
             .unwrap_or(false)
     }
 
+    pub fn require_responses_instructions_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.require_responses_instructions_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn passthrough_service_tier_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.passthrough_service_tier_enabled())
+            .unwrap_or(true)
+    }
+
     pub fn apply_openai_responses_compatibility(&self, mut body: Value) -> Value {
-        if self.omit_max_output_tokens_enabled() {
-            if let Some(obj) = body.as_object_mut() {
+        if let Some(obj) = body.as_object_mut() {
+            if self.omit_max_output_tokens_enabled() {
                 obj.remove("max_output_tokens");
+            }
+
+            if self.require_responses_instructions_enabled() && !has_non_empty_instructions(obj) {
+                obj.insert("instructions".to_string(), Value::String(" ".to_string()));
             }
         }
 
@@ -336,6 +361,21 @@ pub struct ProviderMeta {
     /// OpenAI Responses compatibility switch: omit `max_output_tokens` before forwarding.
     #[serde(rename = "omitMaxOutputTokens", skip_serializing_if = "Option::is_none")]
     pub omit_max_output_tokens: Option<bool>,
+    /// OpenAI Responses compatibility switch: include a blank non-empty `instructions` field.
+    /// Some upstreams reject Responses requests when the field is absent or empty, while
+    /// a single whitespace keeps the field non-empty without adding prompt semantics.
+    #[serde(
+        rename = "requireResponsesInstructions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub require_responses_instructions: Option<bool>,
+    /// OpenAI Responses service_tier 透传覆盖：`None` = 使用全局 OptimizerConfig 默认值（开启），
+    /// `Some(false)` = 对该 provider 显式关闭透传。
+    #[serde(
+        rename = "passthroughServiceTier",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub passthrough_service_tier: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -359,6 +399,15 @@ impl ProviderMeta {
 
     pub fn omit_max_output_tokens_enabled(&self) -> bool {
         self.omit_max_output_tokens.unwrap_or(false)
+    }
+
+    pub fn require_responses_instructions_enabled(&self) -> bool {
+        self.require_responses_instructions.unwrap_or(false)
+    }
+
+    pub fn passthrough_service_tier_enabled(&self) -> bool {
+        // true 表示未显式关闭时允许透传（等 call site 结合全局开关做最终判断）
+        !matches!(self.passthrough_service_tier, Some(false))
     }
 
     /// 解析指定托管认证供应商绑定的账号 ID。
@@ -830,6 +879,83 @@ mod tests {
         assert!(value.get("omit_max_output_tokens").is_none());
     }
 
+
+
+    #[test]
+    fn provider_meta_omits_require_responses_instructions_when_none() {
+        let meta = ProviderMeta::default();
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert!(value.get("requireResponsesInstructions").is_none());
+    }
+
+    #[test]
+    fn provider_meta_omits_passthrough_service_tier_when_none() {
+        let meta = ProviderMeta::default();
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert!(value.get("passthroughServiceTier").is_none());
+    }
+
+    #[test]
+    fn provider_meta_serializes_passthrough_service_tier() {
+        let mut meta = ProviderMeta::default();
+        meta.passthrough_service_tier = Some(false);
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("passthroughServiceTier")
+                .and_then(|item| item.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn provider_passthrough_service_tier_defaults_to_enabled() {
+        let provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+
+        // 未设置 passthroughServiceTier 时应该返回 true（允许透传）
+        assert!(provider.passthrough_service_tier_enabled());
+    }
+
+    #[test]
+    fn provider_passthrough_service_tier_can_be_disabled() {
+        let mut meta = ProviderMeta::default();
+        meta.passthrough_service_tier = Some(false);
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+        provider.meta = Some(meta);
+
+        assert!(!provider.passthrough_service_tier_enabled());
+    }
+
+    #[test]
+    fn provider_meta_serializes_require_responses_instructions() {
+        let mut meta = ProviderMeta::default();
+        meta.require_responses_instructions = Some(true);
+
+        let value = serde_json::to_value(&meta).expect("serialize ProviderMeta");
+
+        assert_eq!(
+            value
+                .get("requireResponsesInstructions")
+                .and_then(|item| item.as_bool()),
+            Some(true)
+        );
+        assert!(value.get("require_responses_instructions").is_none());
+    }
+
     #[test]
     fn provider_omit_max_output_tokens_defaults_to_false() {
         let provider = Provider::with_id(
@@ -881,6 +1007,66 @@ mod tests {
         }));
 
         assert_eq!(body["max_output_tokens"], json!(128));
+    }
+
+
+
+    #[test]
+    fn provider_compatibility_injects_blank_instructions_when_required() {
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+        let mut meta = ProviderMeta::default();
+        meta.require_responses_instructions = Some(true);
+        provider.meta = Some(meta);
+
+        let body = provider.apply_openai_responses_compatibility(json!({
+            "model": "gpt-5.5",
+            "input": "ping"
+        }));
+
+        assert_eq!(body["instructions"], json!(" "));
+        assert_eq!(body["input"], json!("ping"));
+    }
+
+    #[test]
+    fn provider_compatibility_keeps_existing_instructions_when_required() {
+        let mut provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+        let mut meta = ProviderMeta::default();
+        meta.require_responses_instructions = Some(true);
+        provider.meta = Some(meta);
+
+        let body = provider.apply_openai_responses_compatibility(json!({
+            "instructions": "Preserve this system prompt.",
+            "input": "ping"
+        }));
+
+        assert_eq!(body["instructions"], json!("Preserve this system prompt."));
+    }
+
+    #[test]
+    fn provider_compatibility_does_not_inject_instructions_when_disabled() {
+        let provider = Provider::with_id(
+            "provider-1".to_string(),
+            "Provider".to_string(),
+            json!({}),
+            None,
+        );
+
+        let body = provider.apply_openai_responses_compatibility(json!({
+            "model": "gpt-5.5",
+            "input": "ping"
+        }));
+
+        assert!(body.get("instructions").is_none());
     }
 
     #[test]

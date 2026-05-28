@@ -1300,13 +1300,16 @@ impl RequestForwarder {
                 let api_format = resolved_claude_api_format
                     .as_deref()
                     .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                super::providers::transform_claude_request_for_api_format(
+                let passthrough_service_tier = self.optimizer_config.passthrough_service_tier
+                    && provider.passthrough_service_tier_enabled();
+                super::providers::transform_claude_request_for_api_format_with_options(
                     mapped_body,
                     provider,
                     api_format,
                     self.session_client_provided
                         .then_some(self.session_id.as_str()),
                     Some(self.gemini_shadow.as_ref()),
+                    passthrough_service_tier,
                 )?
             } else {
                 adapter.transform_request(mapped_body, provider)?

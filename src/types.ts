@@ -183,6 +183,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // OpenAI Responses compatibility switch: omit max_output_tokens before forwarding
   omitMaxOutputTokens?: boolean;
+  // OpenAI Responses compatibility switch: send blank instructions when upstream requires the field
+  requireResponsesInstructions?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）

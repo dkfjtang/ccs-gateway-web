@@ -18,6 +18,7 @@ const DEFAULT_OPTIMIZER_CONFIG: OptimizerConfig = {
   tokenSaverMinChars: 4000,
   tokenSaverKeepChars: 800,
   cavemanOutputCompression: false,
+  passthroughServiceTier: true,
 };
 
 function normalizeOptimizerConfig(config: OptimizerConfig): OptimizerConfig {
@@ -281,6 +282,21 @@ export function RectifierConfigPanel() {
                 </label>
               </div>
             )}
+
+            <div className="flex items-center justify-between rounded-lg border border-border/50 p-3">
+              <div className="space-y-0.5">
+                <Label>{t("settings.advanced.optimizer.passthroughServiceTier")}</Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.advanced.optimizer.passthroughServiceTierDescription")}
+                </p>
+              </div>
+              <Switch
+                checked={optimizerConfig.passthroughServiceTier}
+                onCheckedChange={(checked) =>
+                  handleOptimizerChange({ passthroughServiceTier: checked })
+                }
+              />
+            </div>
 
             <div className="rounded-md border border-dashed p-3 opacity-75">
               <Label>{t("settings.advanced.optimizer.cavemanOutputCompression")}</Label>
