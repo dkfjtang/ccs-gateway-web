@@ -1,11 +1,24 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText } from "lucide-react";
+import { toast } from "sonner";
 import { promptsApi, type AppId } from "@/lib/api";
 import { usePromptActions } from "@/hooks/usePromptActions";
 import PromptListItem from "./PromptListItem";
 import PromptFormPanel from "./PromptFormPanel";
 import { ConfirmDialog } from "../ConfirmDialog";
+
+const CAVEMAN_PROFILE_IDS = [
+  "caveman-lite",
+  "caveman-full",
+  "caveman-ultra",
+] as const;
+
+type CavemanProfileId = (typeof CAVEMAN_PROFILE_IDS)[number];
+type CavemanProfile = "lite" | "full" | "ultra";
+
+const isCavemanProfileId = (id: string): id is CavemanProfileId =>
+  CAVEMAN_PROFILE_IDS.includes(id as CavemanProfileId);
 
 interface PromptPanelProps {
   open: boolean;
@@ -22,6 +35,8 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     const { t } = useTranslation();
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingId, setEditingId] = useState<string | null>(null);
+    const [creatingCavemanProfile, setCreatingCavemanProfile] =
+      useState<CavemanProfile | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<{
       isOpen: boolean;
       titleKey: string;
@@ -64,14 +79,37 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
       setIsFormOpen(true);
     };
 
-    const createCavemanProfile = async (
-      profile: "lite" | "full" | "ultra",
-    ) => {
+    const activateCavemanProfile = async (profile: CavemanProfile) => {
+      const id = `caveman-${profile}`;
+      if (creatingCavemanProfile) return;
+
+      setCreatingCavemanProfile(profile);
       try {
-        await promptsApi.createCavemanStyleProfile(appId, profile);
+        if (!prompts[id]) {
+          await promptsApi.createCavemanStyleProfile(appId, profile);
+        }
+        await promptsApi.enablePrompt(appId, id);
         await reload();
+        toast.success(t("prompts.caveman.enableSuccess"), {
+          closeButton: true,
+        });
       } catch (error) {
         console.error("Failed to create Caveman style profile:", error);
+        toast.error(t("prompts.caveman.enableFailed"));
+      } finally {
+        setCreatingCavemanProfile(null);
+      }
+    };
+
+    const turnOffCaveman = async () => {
+      const active = Object.values(prompts).find(
+        (prompt) => prompt.enabled && isCavemanProfileId(prompt.id),
+      );
+      if (!active || creatingCavemanProfile) return;
+      try {
+        await toggleEnabled(active.id, false);
+      } catch (error) {
+        console.error("Failed to turn off Caveman style profile:", error);
       }
     };
 
@@ -105,6 +143,17 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
     const promptEntries = useMemo(() => Object.entries(prompts), [prompts]);
 
     const enabledPrompt = promptEntries.find(([_, p]) => p.enabled);
+    const activeCavemanProfile = promptEntries.find(
+      ([id, prompt]) => isCavemanProfileId(id) && prompt.enabled,
+    );
+    const cavemanProfiles = (["lite", "full", "ultra"] as const).map(
+      (profile) => ({
+        profile,
+        labelKey: `prompts.caveman.create${profile[0].toUpperCase()}${profile.slice(1)}`,
+        exists: Boolean(prompts[`caveman-${profile}`]),
+        active: activeCavemanProfile?.[0] === `caveman-${profile}`,
+      }),
+    );
 
     return (
       <div className="flex flex-col flex-1 min-h-0 px-6">
@@ -115,28 +164,47 @@ const PromptPanel = React.forwardRef<PromptPanelHandle, PromptPanelProps>(
               {enabledPrompt
                 ? t("prompts.enabledName", { name: enabledPrompt[1].name })
                 : t("prompts.noneEnabled")}
+              {" · "}
+              {activeCavemanProfile
+                ? t("prompts.caveman.active", {
+                    mode: activeCavemanProfile[1].name,
+                  })
+                : t("prompts.caveman.off")}
             </div>
             <div className="flex flex-wrap gap-2">
+              {cavemanProfiles.map(({ profile, labelKey, exists, active }) => {
+                const isCreating = creatingCavemanProfile === profile;
+                return (
+                  <button
+                    key={profile}
+                    type="button"
+                    className={`rounded-md border px-2 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      active
+                        ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                        : "border-white/10 text-muted-foreground hover:text-foreground"
+                    }`}
+                    disabled={creatingCavemanProfile !== null}
+                    onClick={() => activateCavemanProfile(profile)}
+                  >
+                    {active
+                      ? t("prompts.caveman.enabled", { name: t(labelKey) })
+                      : isCreating
+                        ? t("prompts.caveman.creating", { name: t(labelKey) })
+                        : exists
+                          ? t("prompts.caveman.useExisting", {
+                              name: t(labelKey),
+                            })
+                          : t(labelKey)}
+                  </button>
+                );
+              })}
               <button
                 type="button"
-                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => createCavemanProfile("lite")}
+                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={!activeCavemanProfile || creatingCavemanProfile !== null}
+                onClick={turnOffCaveman}
               >
-                {t("prompts.caveman.createLite")}
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => createCavemanProfile("full")}
-              >
-                {t("prompts.caveman.createFull")}
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => createCavemanProfile("ultra")}
-              >
-                {t("prompts.caveman.createUltra")}
+                {t("prompts.caveman.turnOff")}
               </button>
             </div>
           </div>

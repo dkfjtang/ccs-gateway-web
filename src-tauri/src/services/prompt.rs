@@ -56,16 +56,16 @@ impl PromptService {
             let target_path = prompt_file_path(&app)?;
             write_text_file(&target_path, &prompt.content)?;
         } else {
-            // 禁用提示词：检查是否还有其他已启用的提示词
+            // 禁用提示词：如果还有其他已启用项，live 文件应跟随剩余启用项
             let prompts = state.db.get_prompts(app.as_str())?;
-            let any_enabled = prompts.values().any(|p| p.enabled);
+            let enabled_prompt = prompts.values().find(|p| p.enabled);
+            let target_path = prompt_file_path(&app)?;
 
-            if !any_enabled {
+            if let Some(enabled_prompt) = enabled_prompt {
+                write_text_file(&target_path, &enabled_prompt.content)?;
+            } else if target_path.exists() {
                 // 所有提示词都已禁用，清空文件
-                let target_path = prompt_file_path(&app)?;
-                if target_path.exists() {
-                    write_text_file(&target_path, "")?;
-                }
+                write_text_file(&target_path, "")?;
             }
         }
 
@@ -253,5 +253,168 @@ impl PromptService {
 
         log::info!("自动导入完成: {}", app.as_str());
         Ok(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::Database;
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TestHome {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        dir: tempfile::TempDir,
+        old_test_home: Option<std::ffi::OsString>,
+        old_home: Option<std::ffi::OsString>,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let guard = ENV_LOCK.lock().expect("env lock");
+            let dir = tempdir().expect("tempdir");
+            let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
+            let old_home = std::env::var_os("HOME");
+            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            std::env::set_var("HOME", dir.path());
+            Self {
+                _guard: guard,
+                dir,
+                old_test_home,
+                old_home,
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            match &self.old_test_home {
+                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
+                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+            }
+            match &self.old_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn test_state() -> AppState {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        AppState::new(db)
+    }
+
+    #[test]
+    fn caveman_enable_switches_from_normal_prompt_and_writes_prompt_file() {
+        let home = TestHome::new();
+        let state = test_state();
+        let app = AppType::OpenClaw;
+        let normal_prompt = Prompt {
+            id: "normal".to_string(),
+            name: "Normal prompt".to_string(),
+            content: "normal prompt body".to_string(),
+            description: None,
+            enabled: true,
+            created_at: Some(1),
+            updated_at: Some(1),
+        };
+
+        PromptService::upsert_prompt(&state, app.clone(), "normal", normal_prompt)
+            .expect("save normal prompt");
+        PromptService::create_caveman_style_profile(&state, app.clone(), CavemanStyleProfile::Full)
+            .expect("create caveman full");
+        PromptService::enable_prompt(&state, app.clone(), "caveman-full")
+            .expect("enable caveman full");
+
+        let prompts = state.db.get_prompts(app.as_str()).expect("get prompts");
+        assert_eq!(prompts["normal"].enabled, false);
+        assert_eq!(prompts["caveman-full"].enabled, true);
+
+        let live_path = home.path().join(".openclaw").join("AGENTS.md");
+        let live = std::fs::read_to_string(&live_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", live_path.display()));
+        assert!(live.contains("Mode: full"));
+        assert!(live.contains("Auto-clarity exits"));
+    }
+
+    #[test]
+    fn caveman_can_be_turned_off_without_deleting_the_preset() {
+        let home = TestHome::new();
+        let state = test_state();
+        let app = AppType::OpenClaw;
+
+        PromptService::create_caveman_style_profile(&state, app.clone(), CavemanStyleProfile::Lite)
+            .expect("create caveman lite");
+        PromptService::enable_prompt(&state, app.clone(), "caveman-lite")
+            .expect("enable caveman lite");
+
+        let mut prompt = state
+            .db
+            .get_prompts(app.as_str())
+            .expect("get prompts")["caveman-lite"]
+            .clone();
+        prompt.enabled = false;
+        PromptService::upsert_prompt(&state, app.clone(), "caveman-lite", prompt)
+            .expect("disable caveman lite");
+
+        let prompts = state.db.get_prompts(app.as_str()).expect("get prompts");
+        assert!(prompts.contains_key("caveman-lite"));
+        assert_eq!(prompts["caveman-lite"].enabled, false);
+
+        let live_path = home.path().join(".openclaw").join("AGENTS.md");
+        let live = std::fs::read_to_string(&live_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", live_path.display()));
+        assert_eq!(live, "");
+    }
+
+    #[test]
+    fn caveman_turn_off_restores_remaining_enabled_prompt() {
+        let home = TestHome::new();
+        let state = test_state();
+        let app = AppType::OpenClaw;
+
+        PromptService::create_caveman_style_profile(&state, app.clone(), CavemanStyleProfile::Lite)
+            .expect("create caveman lite");
+        PromptService::enable_prompt(&state, app.clone(), "caveman-lite")
+            .expect("enable caveman lite");
+
+        let normal_prompt = Prompt {
+            id: "normal".to_string(),
+            name: "Normal prompt".to_string(),
+            content: "normal prompt body".to_string(),
+            description: None,
+            enabled: true,
+            created_at: Some(1),
+            updated_at: Some(1),
+        };
+        state
+            .db
+            .save_prompt(app.as_str(), &normal_prompt)
+            .expect("insert abnormal enabled normal prompt");
+
+        let mut caveman_prompt = state
+            .db
+            .get_prompts(app.as_str())
+            .expect("get prompts")["caveman-lite"]
+            .clone();
+        caveman_prompt.enabled = false;
+        PromptService::upsert_prompt(&state, app.clone(), "caveman-lite", caveman_prompt)
+            .expect("disable caveman lite");
+
+        let prompts = state.db.get_prompts(app.as_str()).expect("get prompts");
+        assert_eq!(prompts["caveman-lite"].enabled, false);
+        assert_eq!(prompts["normal"].enabled, true);
+
+        let live_path = home.path().join(".openclaw").join("AGENTS.md");
+        let live = std::fs::read_to_string(&live_path)
+            .unwrap_or_else(|err| panic!("read {}: {err}", live_path.display()));
+        assert_eq!(live, "normal prompt body");
     }
 }

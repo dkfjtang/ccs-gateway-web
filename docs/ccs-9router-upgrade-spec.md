@@ -32,7 +32,7 @@ The first implementation intentionally does not summarize semantically with an L
 
 Caveman-style output compression is documented as a reserved future capability. Output rewriting is not active and the UI intentionally does not expose an output-compression enable switch. This is deliberate: response compression needs separate streaming/non-streaming rules and must not corrupt SSE or Responses item ordering.
 
-The supported Caveman path is prompt-level style presets: CCS can create disabled `lite`, `full`, and `ultra` prompt presets for the selected app. Users must manually enable a preset; CCS does not rewrite proxy responses.
+The supported Caveman path is prompt-level style presets: CCS can create `lite`, `full`, and `ultra` prompt presets for the selected app. Users opt in by selecting a mode in the Prompt panel; that creates the preset if needed and enables it through the normal prompt enable path. CCS does not rewrite proxy responses.
 
 ## Configuration
 
@@ -103,7 +103,7 @@ The Advanced / Rectifier & Optimizer panel exposes:
 - Trigger threshold.
 - Retained character count.
 - Caveman output compression is shown as a reserved capability note, without an enable switch.
-- Caveman style profiles are exposed as disabled prompt preset creation actions in the Prompts panel.
+- Caveman style profiles are exposed as mode selection actions in the Prompts panel, plus an explicit off action.
 
 The optimizer master switch still gates these controls.
 
@@ -143,5 +143,5 @@ Next implementation direction:
 
 1. Expand built-in command-aware filters only where fixtures prove safety, with JS/Vitest/Jest now included in v0.1.
 2. Defer user/project TOML filters until trust gates exist.
-3. Keep Caveman as disabled-by-default prompt style presets or a future prose-file compressor, not as a proxy response transformer.
+3. Keep Caveman as opt-in prompt style presets or a future prose-file compressor, not as a proxy response transformer.
 4. Keep Caveman runtime output rewriting disabled until a source-backed design exists.

@@ -261,7 +261,7 @@ pub struct OptimizerConfig {
     /// Token Saver 保留长度：压缩后保留头尾各一半左右上下文（默认 800 字符）
     #[serde(default = "default_token_saver_keep_chars")]
     pub token_saver_keep_chars: usize,
-    /// Caveman 输出压缩：预留给非流式响应压缩，当前仅配置落地（默认关闭）
+    /// Caveman 输出压缩：仅作兼容/预留字段；当前运行时不得读取它改写响应（默认关闭）
     #[serde(default)]
     pub caveman_output_compression: bool,
     /// OpenAI Responses service_tier 透传：将客户端送入的 service_tier="priority" 保留到上游请求

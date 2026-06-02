@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.14.1"
+version = "3.15.0-ccs-gateway.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -760,6 +760,7 @@ dependencies = [
  "json-five",
  "json5",
  "log",
+ "minisign-verify",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "once_cell",

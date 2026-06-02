@@ -11,10 +11,88 @@ use super::{
     types::OptimizerConfig,
 };
 
+const MAX_COMPRESS_CHARS: usize = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenSaverSummary {
+    pub candidate_fields: usize,
+    pub compressed_fields: usize,
+    pub skipped_below_threshold: usize,
+    pub skipped_json_like: usize,
+    pub skipped_too_large: usize,
+    pub skipped_not_smaller: usize,
+    pub skipped_empty_output: usize,
+    pub original_chars: usize,
+    pub output_chars: usize,
+    pub omitted_chars: usize,
+}
+
+impl TokenSaverSummary {
+    pub fn saved_chars(&self) -> usize {
+        self.original_chars.saturating_sub(self.output_chars)
+    }
+
+    fn record_skip(&mut self, reason: CompressionSkipReason, original_chars: usize) {
+        self.candidate_fields += 1;
+        self.original_chars += original_chars;
+        self.output_chars += original_chars;
+        match reason {
+            CompressionSkipReason::BelowThreshold => self.skipped_below_threshold += 1,
+            CompressionSkipReason::JsonLike => self.skipped_json_like += 1,
+            CompressionSkipReason::TooLarge => self.skipped_too_large += 1,
+        }
+    }
+
+    fn record_result(&mut self, result: &CompressionResult) {
+        self.candidate_fields += 1;
+        self.original_chars += result.original_chars;
+        self.output_chars += match result.action {
+            CompressionAction::Compressed => result.output_chars,
+            CompressionAction::SkippedEmptyOutput | CompressionAction::SkippedNotSmaller => {
+                result.original_chars
+            }
+        };
+        self.omitted_chars += match result.action {
+            CompressionAction::Compressed => result.omitted_chars,
+            CompressionAction::SkippedEmptyOutput | CompressionAction::SkippedNotSmaller => 0,
+        };
+        match result.action {
+            CompressionAction::Compressed => self.compressed_fields += 1,
+            CompressionAction::SkippedEmptyOutput => self.skipped_empty_output += 1,
+            CompressionAction::SkippedNotSmaller => self.skipped_not_smaller += 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompressionResult {
+    original_chars: usize,
+    output_chars: usize,
+    omitted_chars: usize,
+    category: token_filter_engine::FilterCategory,
+    profile: token_filter_engine::FilterProfile,
+    fallback_used: bool,
+    action: CompressionAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressionAction {
+    Compressed,
+    SkippedEmptyOutput,
+    SkippedNotSmaller,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompressionSkipReason {
+    BelowThreshold,
+    JsonLike,
+    TooLarge,
+}
+
 /// Apply request-side token saving in-place.
-pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
+pub fn optimize(body: &mut Value, config: &OptimizerConfig) -> TokenSaverSummary {
     if !config.enabled || !config.token_saver {
-        return;
+        return TokenSaverSummary::default();
     }
 
     let min_chars = config.token_saver_min_chars.max(1);
@@ -22,10 +100,17 @@ pub fn optimize(body: &mut Value, config: &OptimizerConfig) {
         .token_saver_keep_chars
         .max(80)
         .min(min_chars.saturating_sub(1));
-    compress_value(body, min_chars, keep_chars);
+    let mut summary = TokenSaverSummary::default();
+    compress_value(body, min_chars, keep_chars, &mut summary);
+    summary
 }
 
-fn compress_value(value: &mut Value, min_chars: usize, keep_chars: usize) {
+fn compress_value(
+    value: &mut Value,
+    min_chars: usize,
+    keep_chars: usize,
+    summary: &mut TokenSaverSummary,
+) {
     match value {
         Value::Object(map) => {
             let block_type = map
@@ -38,10 +123,12 @@ fn compress_value(value: &mut Value, min_chars: usize, keep_chars: usize) {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
+            if is_error_result_block(map) {
+                return;
+            }
             let compress_keys: &[&str] = match (block_type.as_str(), role.as_str()) {
                 ("tool_result", _) => &["content"],
                 ("function_call_output", _) => &["output"],
-                ("output_text" | "text", _) => &["text"],
                 ("", "tool") => &["content"],
                 _ => &[],
             };
@@ -57,15 +144,16 @@ fn compress_value(value: &mut Value, min_chars: usize, keep_chars: usize) {
                         min_chars,
                         keep_chars,
                         field_kind_for(block_type.as_str(), role.as_str()),
+                        summary,
                     );
                 } else {
-                    compress_value(child, min_chars, keep_chars);
+                    compress_value(child, min_chars, keep_chars, summary);
                 }
             }
         }
         Value::Array(items) => {
             for item in items {
-                compress_value(item, min_chars, keep_chars);
+                compress_value(item, min_chars, keep_chars, summary);
             }
         }
         _ => {}
@@ -77,42 +165,55 @@ fn compress_text_like(
     min_chars: usize,
     keep_chars: usize,
     field_kind: FieldKind,
+    summary: &mut TokenSaverSummary,
 ) {
     match value {
         Value::String(text) => {
-            if should_compress_string(text, min_chars) {
-                *text = filter_safe_text(text, keep_chars, field_kind);
+            if let Some(reason) = compression_skip_reason(text, min_chars) {
+                summary.record_skip(reason, text.chars().count());
+            } else {
+                let filtered = filter_safe_text(text, keep_chars, field_kind);
+                log_compression_result(field_kind, &filtered.metrics);
+                summary.record_result(&filtered.metrics);
+                *text = filtered.text;
             }
         }
         Value::Array(items) => {
             for item in items {
-                compress_value(item, min_chars, keep_chars);
+                compress_text_part(item, min_chars, keep_chars, field_kind, summary);
             }
         }
         // Structured object outputs often encode machine-readable tool results.
-        // Leave ordinary fields intact; only visit nested explicitly typed text blocks.
-        Value::Object(_) => compress_typed_text_blocks(value, min_chars, keep_chars),
+        // Keep them intact instead of guessing which fields are safe to compact.
+        Value::Object(_) => {}
         _ => {}
     }
 }
 
-fn compress_typed_text_blocks(value: &mut Value, min_chars: usize, keep_chars: usize) {
-    match value {
-        Value::Object(map) => {
-            if map.get("type").and_then(Value::as_str).is_some() {
-                compress_value(value, min_chars, keep_chars);
-            } else {
-                for child in map.values_mut() {
-                    compress_typed_text_blocks(child, min_chars, keep_chars);
-                }
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                compress_typed_text_blocks(item, min_chars, keep_chars);
-            }
-        }
-        _ => {}
+fn compress_text_part(
+    value: &mut Value,
+    min_chars: usize,
+    keep_chars: usize,
+    field_kind: FieldKind,
+    summary: &mut TokenSaverSummary,
+) {
+    let Value::Object(map) = value else {
+        return;
+    };
+    let part_type = map.get("type").and_then(Value::as_str).unwrap_or_default();
+    if !matches!(part_type, "text" | "input_text" | "output_text") {
+        return;
+    }
+    let Some(Value::String(text)) = map.get_mut("text") else {
+        return;
+    };
+    if let Some(reason) = compression_skip_reason(text, min_chars) {
+        summary.record_skip(reason, text.chars().count());
+    } else {
+        let filtered = filter_safe_text(text, keep_chars, field_kind);
+        log_compression_result(field_kind, &filtered.metrics);
+        summary.record_result(&filtered.metrics);
+        *text = filtered.text;
     }
 }
 
@@ -125,20 +226,64 @@ fn field_kind_for(block_type: &str, role: &str) -> FieldKind {
     }
 }
 
-fn filter_safe_text(text: &str, keep_chars: usize, field_kind: FieldKind) -> String {
+struct FilteredText {
+    text: String,
+    metrics: CompressionResult,
+}
+
+fn filter_safe_text(text: &str, keep_chars: usize, field_kind: FieldKind) -> FilteredText {
     let input = FilterInput {
         text,
         field_kind,
         command_context: infer_command_context(text),
     };
-    token_filter_engine::filter(
+    let output = token_filter_engine::filter(
         input,
         FilterLimits {
             keep_chars,
             ..FilterLimits::default()
         },
-    )
-    .text
+    );
+    let original_chars = text.chars().count();
+    let output_chars = output.text.chars().count();
+    let action = if output.text.trim().is_empty() {
+        CompressionAction::SkippedEmptyOutput
+    } else if output_chars >= original_chars {
+        CompressionAction::SkippedNotSmaller
+    } else {
+        CompressionAction::Compressed
+    };
+    let text = if action == CompressionAction::Compressed {
+        output.text
+    } else {
+        text.to_string()
+    };
+    FilteredText {
+        text,
+        metrics: CompressionResult {
+            original_chars,
+            output_chars,
+            omitted_chars: output.omitted_chars,
+            category: output.category,
+            profile: output.profile,
+            fallback_used: output.fallback_used,
+            action,
+        },
+    }
+}
+
+fn log_compression_result(field_kind: FieldKind, result: &CompressionResult) {
+    log::debug!(
+        "[TokenSaver] action={:?} field_kind={:?} category={:?} profile={:?} original_chars={} output_chars={} omitted_chars={} fallback_used={}",
+        result.action,
+        field_kind,
+        result.category,
+        result.profile,
+        result.original_chars,
+        result.output_chars,
+        result.omitted_chars,
+        result.fallback_used
+    );
 }
 
 fn infer_command_context(text: &str) -> Option<CommandContext<'_>> {
@@ -200,14 +345,27 @@ fn looks_like_search_result_line(line: &str) -> bool {
     !file.is_empty() && !rest.is_empty() && line_no.chars().all(|c| c.is_ascii_digit())
 }
 
-fn should_compress_string(text: &str, min_chars: usize) -> bool {
-    if text.chars().count() < min_chars {
-        return false;
+fn compression_skip_reason(text: &str, min_chars: usize) -> Option<CompressionSkipReason> {
+    let char_count = text.chars().count();
+    if char_count < min_chars {
+        return Some(CompressionSkipReason::BelowThreshold);
+    }
+    if char_count > MAX_COMPRESS_CHARS {
+        return Some(CompressionSkipReason::TooLarge);
     }
 
     // JSON-looking tool output is usually intended to stay machine-readable.
     let trimmed = text.trim_start();
-    !(trimmed.starts_with('{') || trimmed.starts_with('['))
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return Some(CompressionSkipReason::JsonLike);
+    }
+
+    None
+}
+
+fn is_error_result_block(map: &serde_json::Map<String, Value>) -> bool {
+    map.get("is_error").and_then(Value::as_bool) == Some(true)
+        || map.get("status").and_then(Value::as_str) == Some("error")
 }
 
 fn is_protected_field(key: &str) -> bool {
@@ -261,9 +419,13 @@ mod tests {
         }
     }
 
+    fn long_plain_text() -> String {
+        "abcdefghijklmnopqrstuvwxyz0123456789".repeat(20)
+    }
+
     #[test]
-    fn compresses_long_tool_result_but_keeps_protocol_fields() {
-        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+    fn leaves_unknown_tool_result_text_unchanged_but_keeps_protocol_fields() {
+        let long = long_plain_text();
         let mut body = json!({
             "previous_response_id": "resp_prev",
             "input": [{
@@ -284,10 +446,7 @@ mod tests {
         assert_eq!(body["previous_response_id"], "resp_prev");
         assert_eq!(block["tool_use_id"], "tool_123");
         assert_eq!(block["cache_control"]["type"], "ephemeral");
-        let compressed = block["content"].as_str().unwrap();
-        assert!(compressed.contains("CCS TokenFilterEngine"));
-        assert!(compressed.starts_with("abcde"));
-        assert!(compressed.ends_with("56789"));
+        assert_eq!(block["content"], long);
     }
 
     #[test]
@@ -317,8 +476,8 @@ mod tests {
     }
 
     #[test]
-    fn compresses_openai_tool_message_content() {
-        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+    fn leaves_unknown_openai_tool_message_content_unchanged() {
+        let long = long_plain_text();
         let mut body = json!({
             "messages": [{
                 "role": "tool",
@@ -330,15 +489,44 @@ mod tests {
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["messages"][0]["tool_call_id"], "call_1");
-        assert!(body["messages"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("CCS TokenFilterEngine"));
+        assert_eq!(body["messages"][0]["content"], long);
     }
 
     #[test]
-    fn compresses_plain_function_call_output() {
-        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+    fn leaves_unknown_openai_tool_message_text_parts_unchanged() {
+        let long = long_plain_text();
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [{"type": "text", "text": long}]
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["messages"][0]["tool_call_id"], "call_1");
+        assert_eq!(body["messages"][0]["content"][0]["text"], long);
+    }
+
+    #[test]
+    fn leaves_long_user_text_blocks_unchanged() {
+        let long = long_plain_text();
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": long}]
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["messages"][0]["content"][0]["text"], long);
+    }
+
+    #[test]
+    fn leaves_unknown_function_call_output_unchanged() {
+        let long = long_plain_text();
         let mut body = json!({
             "input": [{
                 "type": "function_call_output",
@@ -350,10 +538,84 @@ mod tests {
         optimize(&mut body, &enabled_config());
 
         assert_eq!(body["input"][0]["call_id"], "call_1");
-        assert!(body["input"][0]["output"]
-            .as_str()
-            .unwrap()
-            .contains("CCS TokenFilterEngine"));
+        assert_eq!(body["input"][0]["output"], long);
+    }
+
+    #[test]
+    fn filter_safe_text_reports_compression_metrics_without_body_content() {
+        let input = (1..=160)
+            .map(|i| format!("INFO build log line {i} {}", "z".repeat(48)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let filtered = filter_safe_text(&input, 10, FieldKind::OpenAiResponsesFunctionOutput);
+
+        assert_eq!(filtered.metrics.action, CompressionAction::Compressed);
+        assert_eq!(
+            filtered.metrics.category,
+            token_filter_engine::FilterCategory::PlainLog
+        );
+        assert!(filtered.metrics.original_chars > filtered.metrics.output_chars);
+        assert!(filtered.metrics.omitted_chars > 0);
+        assert!(filtered.text.contains("INFO build log line 1"));
+    }
+
+    #[test]
+    fn filter_safe_text_reports_not_smaller_skip() {
+        let input = "diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n-old\n+new";
+
+        let filtered = filter_safe_text(input, 10, FieldKind::OpenAiChatToolContent);
+
+        assert_eq!(
+            filtered.metrics.action,
+            CompressionAction::SkippedNotSmaller
+        );
+        assert_eq!(
+            filtered.metrics.category,
+            token_filter_engine::FilterCategory::GitDiff
+        );
+        assert_eq!(
+            filtered.metrics.profile,
+            token_filter_engine::FilterProfile::GitDiffPassthrough
+        );
+        assert_eq!(filtered.text, input);
+    }
+
+    #[test]
+    fn leaves_error_tool_result_unchanged() {
+        let long_error = long_plain_text();
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "is_error": true,
+                    "content": long_error
+                }]
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["messages"][0]["content"][0]["content"], long_error);
+    }
+
+    #[test]
+    fn leaves_error_function_call_output_unchanged() {
+        let long_error = long_plain_text();
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "status": "error",
+                "output": long_error
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["input"][0]["output"], long_error);
     }
 
     #[test]
@@ -408,13 +670,14 @@ Tests  1 failed | 3 passed (4)";
 
     #[test]
     fn compresses_search_results_with_per_file_cap() {
-        let results = "src/a.rs:1:one
-src/a.rs:2:two
-src/a.rs:3:three
-src/a.rs:4:four
-src/a.rs:5:five
-src/a.rs:6:six
-src/b.rs:1:seven";
+        let results = (1..=40)
+            .map(|i| format!("src/a.rs:{i}:match {i} {}", "x".repeat(30)))
+            .chain(std::iter::once(format!(
+                "src/b.rs:1:seven {}",
+                "y".repeat(30)
+            )))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut body = json!({
             "messages": [{
                 "role": "tool",
@@ -426,11 +689,11 @@ src/b.rs:1:seven";
         optimize(&mut body, &enabled_config());
 
         let compressed = body["messages"][0]["content"].as_str().unwrap();
-        assert!(compressed.contains("src/a.rs:1:one"));
-        assert!(compressed.contains("src/a.rs:5:five"));
+        assert!(compressed.contains("src/a.rs:1:match 1"));
+        assert!(compressed.contains("src/a.rs:5:match 5"));
         assert!(compressed.contains("src/b.rs:1:seven"));
-        assert!(!compressed.contains("src/a.rs:6:six"));
-        assert!(compressed.contains("omitted 1 search result"));
+        assert!(!compressed.contains("src/a.rs:6:match 6"));
+        assert!(compressed.contains("omitted 35 search result"));
     }
 
     #[test]
@@ -468,7 +731,7 @@ src/b.rs:1:seven";
 
     #[test]
     fn leaves_computer_call_output_unchanged() {
-        let long = "abcdefghijklmnopqrstuvwxyz0123456789";
+        let long = long_plain_text();
         let mut body = json!({
             "input": [{
                 "type": "computer_call_output",
@@ -511,7 +774,7 @@ src/b.rs:1:seven";
     }
 
     #[test]
-    fn skips_object_tool_outputs_but_compresses_nested_typed_text_blocks() {
+    fn skips_object_tool_outputs_including_nested_typed_text_blocks() {
         let long = "abcdefghijklmnopqrstuvwxyz0123456789";
         let mut body = json!({
             "messages": [{
@@ -531,17 +794,139 @@ src/b.rs:1:seven";
 
         let content = &body["messages"][0]["content"][0]["content"];
         assert_eq!(content["metadata"], "abcdefghijklmnopqrstuvwxyz0123456789");
-        assert!(content["rendered"]["text"]
-            .as_str()
-            .unwrap()
-            .contains("CCS TokenFilterEngine"));
+        assert_eq!(content["rendered"]["text"], long);
+    }
+
+    #[test]
+    fn leaves_git_diff_tool_output_unchanged() {
+        let diff = "diff --git a/a.rs b/a.rs
+@@ -1 +1 @@
+-old
++new";
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": diff
+            }]
+        });
+
+        optimize(&mut body, &enabled_config());
+
+        assert_eq!(body["messages"][0]["content"], diff);
+    }
+
+    #[test]
+    fn replay_mixed_request_only_compresses_safe_tool_text() {
+        let fixture = load_fixture("mixed-request-safety.json");
+        let original = fixture["body"].clone();
+        let mut body = original.clone();
+
+        optimize(&mut body, &enabled_config());
+
+        assert_fixture_unchanged_paths(&original, &body, &fixture);
+        assert_fixture_shorter_paths(&original, &body, &fixture);
     }
 
     #[test]
     fn disabled_by_default() {
         let long = "abcdefghijklmnopqrstuvwxyz0123456789";
         let mut body = json!({"messages": [{"role": "user", "content": long}]});
-        optimize(&mut body, &OptimizerConfig::default());
+        let summary = optimize(&mut body, &OptimizerConfig::default());
         assert_eq!(body["messages"][0]["content"], long);
+        assert_eq!(summary, TokenSaverSummary::default());
+    }
+
+    #[test]
+    fn optimize_returns_summary_for_compressed_text() {
+        let log_text = (1..=120)
+            .map(|i| format!("INFO build log line {i} {}", "z".repeat(48)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": log_text
+            }]
+        });
+
+        let summary = optimize(&mut body, &enabled_config());
+
+        assert!(summary.candidate_fields >= 1);
+        assert!(summary.compressed_fields >= 1);
+        assert!(summary.saved_chars() > 0);
+        assert!(summary.original_chars > summary.output_chars);
+    }
+
+    #[test]
+    fn optimize_summary_counts_json_like_skips() {
+        let mut body = json!({
+            "messages": [{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": r#"{"records":[{"id":1,"value":"abcdefghijklmnopqrstuvwxyz0123456789"}]}"#
+            }]
+        });
+
+        let summary = optimize(&mut body, &enabled_config());
+
+        assert_eq!(summary.skipped_json_like, 1);
+        assert_eq!(summary.compressed_fields, 0);
+        assert_eq!(summary.saved_chars(), 0);
+    }
+
+    fn load_fixture(file_name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fixtures")
+            .join("token-cost-savers")
+            .join(file_name);
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read fixture {}: {err}", path.display()));
+        serde_json::from_str(&raw)
+            .unwrap_or_else(|err| panic!("parse fixture {}: {err}", path.display()))
+    }
+
+    fn assert_fixture_unchanged_paths(original: &Value, optimized: &Value, fixture: &Value) {
+        for pointer in fixture["assertions"]["unchanged"]
+            .as_array()
+            .expect("fixture unchanged assertions")
+        {
+            let pointer = pointer.as_str().expect("unchanged pointer is string");
+            assert_eq!(
+                optimized.pointer(pointer),
+                original.pointer(pointer),
+                "fixture path should remain unchanged: {pointer}"
+            );
+        }
+    }
+
+    fn assert_fixture_shorter_paths(original: &Value, optimized: &Value, fixture: &Value) {
+        for pointer in fixture["assertions"]["shorter"]
+            .as_array()
+            .expect("fixture shorter assertions")
+        {
+            let pointer = pointer.as_str().expect("shorter pointer is string");
+            let before = original
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!("fixture original shorter path must be string: {pointer}")
+                });
+            let after = optimized
+                .pointer(pointer)
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!("fixture optimized shorter path must be string: {pointer}")
+                });
+            assert!(
+                after.len() < before.len(),
+                "fixture path should become shorter: {pointer}"
+            );
+            assert!(
+                !after.trim().is_empty(),
+                "fixture path should not become empty: {pointer}"
+            );
+        }
     }
 }

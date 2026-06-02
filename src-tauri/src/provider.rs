@@ -98,6 +98,15 @@ impl Provider {
             .unwrap_or(false)
     }
 
+    pub fn openai_responses_compatibility_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| {
+                m.omit_max_output_tokens_enabled() || m.require_responses_instructions_enabled()
+            })
+            .unwrap_or(false)
+    }
+
     pub fn passthrough_service_tier_enabled(&self) -> bool {
         self.meta
             .as_ref()
@@ -106,12 +115,21 @@ impl Provider {
     }
 
     pub fn apply_openai_responses_compatibility(&self, mut body: Value) -> Value {
+        let Some(meta) = self.meta.as_ref() else {
+            return body;
+        };
+        let omit_max_output_tokens = meta.omit_max_output_tokens_enabled();
+        let require_responses_instructions = meta.require_responses_instructions_enabled();
+        if !omit_max_output_tokens && !require_responses_instructions {
+            return body;
+        }
+
         if let Some(obj) = body.as_object_mut() {
-            if self.omit_max_output_tokens_enabled() {
+            if omit_max_output_tokens {
                 obj.remove("max_output_tokens");
             }
 
-            if self.require_responses_instructions_enabled() && !has_non_empty_instructions(obj) {
+            if require_responses_instructions && !has_non_empty_instructions(obj) {
                 obj.insert("instructions".to_string(), Value::String(" ".to_string()));
             }
         }
@@ -966,6 +984,7 @@ mod tests {
         );
 
         assert!(!provider.omit_max_output_tokens_enabled());
+        assert!(!provider.openai_responses_compatibility_enabled());
     }
 
     #[test]
@@ -980,6 +999,7 @@ mod tests {
         meta.omit_max_output_tokens = Some(true);
         provider.meta = Some(meta);
 
+        assert!(provider.openai_responses_compatibility_enabled());
         let body = provider.apply_openai_responses_compatibility(json!({
             "model": "gpt-5.5",
             "input": "ping",
@@ -1002,14 +1022,13 @@ mod tests {
         meta.omit_max_output_tokens = Some(false);
         provider.meta = Some(meta);
 
+        assert!(!provider.openai_responses_compatibility_enabled());
         let body = provider.apply_openai_responses_compatibility(json!({
             "max_output_tokens": 128
         }));
 
         assert_eq!(body["max_output_tokens"], json!(128));
     }
-
-
 
     #[test]
     fn provider_compatibility_injects_blank_instructions_when_required() {
@@ -1023,6 +1042,7 @@ mod tests {
         meta.require_responses_instructions = Some(true);
         provider.meta = Some(meta);
 
+        assert!(provider.openai_responses_compatibility_enabled());
         let body = provider.apply_openai_responses_compatibility(json!({
             "model": "gpt-5.5",
             "input": "ping"

@@ -8,3 +8,5 @@ crates/**/target
 *.log
 .env
 .env.*
+!.env.web
+.run

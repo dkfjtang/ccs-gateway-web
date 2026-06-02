@@ -1320,17 +1320,40 @@ impl RequestForwarder {
         // Run final provider-specific outbound sanitizers after generic mapping and
         // provider-specific format transforms. This hook must not re-enter format conversion.
         let request_body = adapter.sanitize_outbound_request(request_body, provider)?;
-        let mut request_body = if should_apply_openai_responses_compatibility(
-            &effective_endpoint,
-            resolved_claude_api_format.as_deref(),
-        ) {
+        let mut request_body = if provider.openai_responses_compatibility_enabled()
+            && should_apply_openai_responses_compatibility(
+                &effective_endpoint,
+                resolved_claude_api_format.as_deref(),
+            )
+        {
             provider.apply_openai_responses_compatibility(request_body)
         } else {
             request_body
         };
 
+        let token_saver_summary = if self.optimizer_config.enabled && self.optimizer_config.token_saver {
+            Some(super::token_saver::optimize(&mut request_body, &self.optimizer_config))
+        } else {
+            None
+        };
+
         if self.optimizer_config.enabled && self.optimizer_config.token_saver {
-            super::token_saver::optimize(&mut request_body, &self.optimizer_config);
+            if let Some(summary) = token_saver_summary.as_ref() {
+                log::info!(
+                    "[TokenSaver] request_summary candidate_fields={} compressed_fields={} skipped_below_threshold={} skipped_json_like={} skipped_too_large={} skipped_not_smaller={} skipped_empty_output={} original_chars={} output_chars={} saved_chars={} omitted_chars={}",
+                    summary.candidate_fields,
+                    summary.compressed_fields,
+                    summary.skipped_below_threshold,
+                    summary.skipped_json_like,
+                    summary.skipped_too_large,
+                    summary.skipped_not_smaller,
+                    summary.skipped_empty_output,
+                    summary.original_chars,
+                    summary.output_chars,
+                    summary.saved_chars(),
+                    summary.omitted_chars
+                );
+            }
         }
 
         // 过滤私有参数（以 `_` 开头的字段），防止内部信息泄露到上游

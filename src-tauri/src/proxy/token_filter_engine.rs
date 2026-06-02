@@ -36,7 +36,6 @@ pub enum FilterProfile {
     SearchResults,
     PlainLog,
     Passthrough,
-    HeadTail,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,10 +124,9 @@ pub fn filter(input: FilterInput<'_>, limits: FilterLimits) -> FilterOutput {
         FilterCategory::FileReadOrSourceText => {
             (FilterProfile::Passthrough, input.text.to_string())
         }
-        FilterCategory::UnknownText => (
-            FilterProfile::HeadTail,
-            head_tail(input.text, limits.keep_chars),
-        ),
+        // Unknown text may be source, markdown, file content, or task context. Keep it intact
+        // until a safer classifier proves it is disposable output.
+        FilterCategory::UnknownText => (FilterProfile::Passthrough, input.text.to_string()),
     };
 
     let fallback_used = !input.text.is_empty() && filtered.trim().is_empty();
@@ -181,6 +179,9 @@ fn classify(input: &FilterInput<'_>) -> (FilterCategory, FilterConfidence) {
     }
     if looks_like_git_status_or_log(text) {
         return (FilterCategory::GitStatusOrLog, FilterConfidence::Heuristic);
+    }
+    if looks_like_git_diff(text) {
+        return (FilterCategory::GitDiff, FilterConfidence::Heuristic);
     }
     if looks_like_search_results(text) {
         return (FilterCategory::SearchResults, FilterConfidence::Heuristic);
@@ -459,6 +460,15 @@ fn looks_like_git_status_or_log(text: &str) -> bool {
     text.contains("On branch ") || text.lines().any(is_git_log_line)
 }
 
+fn looks_like_git_diff(text: &str) -> bool {
+    text.lines().take(16).any(|line| {
+        line.starts_with("diff --git ")
+            || line.starts_with("@@ ")
+            || line.starts_with("+++ ")
+            || line.starts_with("--- ")
+    })
+}
+
 fn looks_like_search_results(text: &str) -> bool {
     text.lines()
         .take(8)
@@ -468,7 +478,39 @@ fn looks_like_search_results(text: &str) -> bool {
 }
 
 fn looks_like_plain_log(text: &str) -> bool {
-    text.lines().count() > 20
+    let mut total = 0usize;
+    let mut log_like = 0usize;
+
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        total += 1;
+        if looks_like_plain_log_line(line) {
+            log_like += 1;
+        }
+    }
+
+    total > 20 && log_like >= 3
+}
+
+fn looks_like_plain_log_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if matches!(
+        trimmed.split_whitespace().next(),
+        Some("TRACE" | "DEBUG" | "INFO" | "WARN" | "WARNING" | "ERROR" | "FATAL")
+    ) {
+        return true;
+    }
+
+    trimmed.starts_with("[TRACE]")
+        || trimmed.starts_with("[DEBUG]")
+        || trimmed.starts_with("[INFO]")
+        || trimmed.starts_with("[WARN]")
+        || trimmed.starts_with("[WARNING]")
+        || trimmed.starts_with("[ERROR]")
+        || trimmed.starts_with("[FATAL]")
+        || trimmed.contains(" INFO ")
+        || trimmed.contains(" WARN ")
+        || trimmed.contains(" ERROR ")
+        || trimmed.contains(" DEBUG ")
 }
 
 fn is_git_log_line(line: &str) -> bool {
@@ -615,7 +657,8 @@ mod tests {
             "FAIL: health probe unavailable\nAssertionError: generic service assertion failed";
         let out = filter(input(text), FilterLimits::default());
         assert_eq!(out.category, FilterCategory::UnknownText);
-        assert_eq!(out.profile, FilterProfile::HeadTail);
+        assert_eq!(out.profile, FilterProfile::Passthrough);
+        assert_eq!(out.text, text);
     }
 
     #[test]
@@ -635,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn git_diff_without_trusted_metadata_is_not_special_cased() {
+    fn git_diff_without_trusted_metadata_is_passthrough() {
         let text = "diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n-old\n+new";
         let out = filter(
             input(text),
@@ -644,8 +687,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.category, FilterCategory::UnknownText);
-        assert_eq!(out.profile, FilterProfile::HeadTail);
+        assert_eq!(out.category, FilterCategory::GitDiff);
+        assert_eq!(out.profile, FilterProfile::GitDiffPassthrough);
+        assert_eq!(out.text, text);
     }
 
     #[test]
@@ -680,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_text_uses_head_tail_fallback() {
+    fn unknown_text_is_passthrough() {
         let text = "abcdefghijklmnopqrstuvwxyz0123456789";
         let out = filter(
             input(text),
@@ -690,8 +734,28 @@ mod tests {
             },
         );
         assert_eq!(out.category, FilterCategory::UnknownText);
-        assert!(out.text.contains("omitted"));
+        assert_eq!(out.profile, FilterProfile::Passthrough);
+        assert_eq!(out.text, text);
         assert!(!out.fallback_used);
+    }
+
+    #[test]
+    fn long_markdown_like_text_is_not_plain_log() {
+        let text = (1..=40)
+            .map(|i| format!("## Section {i}\nThis is ordinary task context, not disposable log output."))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = filter(
+            input(&text),
+            FilterLimits {
+                keep_chars: 20,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(out.category, FilterCategory::UnknownText);
+        assert_eq!(out.profile, FilterProfile::Passthrough);
+        assert_eq!(out.text, text);
     }
 
     #[test]

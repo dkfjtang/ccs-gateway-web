@@ -65,7 +65,7 @@ pub fn filter_private_params(body: Value) -> Value {
 /// ```
 pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
-    filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set)
+    filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set, false, &mut Vec::new())
 }
 
 /// 递归过滤实现（支持白名单）
@@ -73,20 +73,37 @@ fn filter_recursive_with_whitelist(
     value: Value,
     removed_keys: &mut Vec<String>,
     whitelist: &HashSet<&str>,
+    preserve_private_keys: bool,
+    path: &mut Vec<String>,
 ) -> Value {
     match value {
         Value::Object(map) => {
+            let preserve_schema_property_names = is_known_json_schema_path(path);
             let filtered: serde_json::Map<String, Value> = map
                 .into_iter()
                 .filter_map(|(key, val)| {
-                    // 以 _ 开头且不在白名单中的字段被过滤
-                    if key.starts_with('_') && !whitelist.contains(key.as_str()) {
+                    // JSON Schema 的 properties 下，key 是上游可见的参数名，不能按私有字段清理。
+                    if key.starts_with('_')
+                        && !preserve_private_keys
+                        && !whitelist.contains(key.as_str())
+                    {
                         removed_keys.push(key);
                         None
                     } else {
+                        let child_preserve_private_keys =
+                            preserve_schema_property_names && key == "properties" && val.is_object();
+                        path.push(key.clone());
+                        let filtered_value = filter_recursive_with_whitelist(
+                            val,
+                            removed_keys,
+                            whitelist,
+                            child_preserve_private_keys,
+                            path,
+                        );
+                        path.pop();
                         Some((
                             key,
-                            filter_recursive_with_whitelist(val, removed_keys, whitelist),
+                            filtered_value,
                         ))
                     }
                 })
@@ -102,11 +119,16 @@ fn filter_recursive_with_whitelist(
         }
         Value::Array(arr) => Value::Array(
             arr.into_iter()
-                .map(|v| filter_recursive_with_whitelist(v, removed_keys, whitelist))
+                .map(|v| filter_recursive_with_whitelist(v, removed_keys, whitelist, false, path))
                 .collect(),
         ),
         other => other,
     }
+}
+
+fn is_known_json_schema_path(path: &[String]) -> bool {
+    let tail = path.last().map(String::as_str);
+    matches!(tail, Some("parameters" | "input_schema" | "schema" | "json_schema"))
 }
 
 #[cfg(test)]
@@ -280,6 +302,49 @@ mod tests {
         assert!(data.get("_allowed").is_some());
         assert!(data.get("_forbidden").is_none());
         assert!(data.get("normal").is_some());
+    }
+
+    #[test]
+    fn test_preserves_json_schema_private_property_names() {
+        let input = json!({
+            "tools": [{
+                "name": "lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "_id": {
+                            "type": "string",
+                            "_private_note": "drop"
+                        }
+                    }
+                }
+            }]
+        });
+
+        let output = filter_private_params(input);
+        let id_schema = &output["tools"][0]["parameters"]["properties"]["_id"];
+
+        assert!(id_schema.is_object());
+        assert_eq!(id_schema["type"], "string");
+        assert!(id_schema.get("_private_note").is_none());
+    }
+
+    #[test]
+    fn test_filters_private_keys_in_non_schema_properties_objects() {
+        let input = json!({
+            "metadata": {
+                "properties": {
+                    "_secret": "drop",
+                    "public": "keep"
+                }
+            }
+        });
+
+        let output = filter_private_params(input);
+        let properties = &output["metadata"]["properties"];
+
+        assert!(properties.get("_secret").is_none());
+        assert_eq!(properties["public"], "keep");
     }
 
     #[test]

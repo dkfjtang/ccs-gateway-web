@@ -100,6 +100,11 @@ mod tests {
         let prompt = caveman_prompt(CavemanStyleProfile::Full);
         assert_eq!(prompt.id, "caveman-full");
         assert!(!prompt.enabled);
+        assert!(prompt
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("enable manually per app"));
         assert!(prompt.content.contains("Auto-clarity exits"));
         assert!(prompt.content.contains("Do not rewrite quoted code"));
     }

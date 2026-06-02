@@ -8,6 +8,15 @@ use crate::prompt::{CavemanStyleProfile, Prompt};
 use crate::services::PromptService;
 use crate::store::AppState;
 
+fn parse_caveman_style_profile(profile: &str) -> Result<CavemanStyleProfile, String> {
+    match profile {
+        "lite" => Ok(CavemanStyleProfile::Lite),
+        "full" => Ok(CavemanStyleProfile::Full),
+        "ultra" => Ok(CavemanStyleProfile::Ultra),
+        other => Err(format!("Invalid Caveman style profile: {other}")),
+    }
+}
+
 #[tauri::command]
 pub async fn get_prompts(
     app: String,
@@ -70,12 +79,31 @@ pub async fn create_caveman_style_profile(
     profile: String,
 ) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    let profile = match profile.as_str() {
-        "lite" => CavemanStyleProfile::Lite,
-        "full" => CavemanStyleProfile::Full,
-        "ultra" => CavemanStyleProfile::Ultra,
-        other => return Err(format!("Invalid Caveman style profile: {other}")),
-    };
+    let profile = parse_caveman_style_profile(profile.as_str())?;
     PromptService::create_caveman_style_profile(&state, app_type, profile)
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caveman_style_profile_parser_rejects_unknown_modes() {
+        assert!(matches!(
+            parse_caveman_style_profile("lite"),
+            Ok(CavemanStyleProfile::Lite)
+        ));
+        assert!(matches!(
+            parse_caveman_style_profile("full"),
+            Ok(CavemanStyleProfile::Full)
+        ));
+        assert!(matches!(
+            parse_caveman_style_profile("ultra"),
+            Ok(CavemanStyleProfile::Ultra)
+        ));
+
+        let err = parse_caveman_style_profile("custom").expect_err("custom mode rejected");
+        assert!(err.contains("Invalid Caveman style profile: custom"));
+    }
 }

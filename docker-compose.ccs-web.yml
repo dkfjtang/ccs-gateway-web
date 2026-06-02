@@ -16,5 +16,5 @@ services:
       - "127.0.0.1:17666:17666"
       - "127.0.0.1:15721:15721"
     volumes:
-      - /root/.openclaw:/root/.openclaw:ro
+      - /root/.openclaw:/root/.openclaw
       - /root/.cc-switch:/root/.cc-switch

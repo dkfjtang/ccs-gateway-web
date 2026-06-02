@@ -1,0 +1,84 @@
+{
+  "name": "mixed_request_safety",
+  "description": "Mixed gateway request: user/assistant text must remain intact; safe tool output may compact; errors, structured output and git diff must pass through.",
+  "body": {
+    "model": "claude-sonnet-4",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "USER_TEXT_SENTINEL_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "ASSISTANT_TEXT_SENTINEL_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "search_1",
+        "content": "src/proxy/token_saver.rs:1:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:2:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:3:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:4:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:5:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:6:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:7:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:8:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:9:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:10:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:11:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:12:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:13:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:14:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:15:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:16:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:17:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:18:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:19:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:20:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:21:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:22:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:23:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:24:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:25:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:26:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:27:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:28:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:29:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:30:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:31:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:32:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:33:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:34:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:35:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:36:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:37:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:38:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:39:match xxxxxxxxxxxxxxxxxxxxxxxx\nsrc/proxy/token_saver.rs:40:match xxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "diff_1",
+        "content": "diff --git a/src/a.rs b/src/a.rs\n@@ -1 +1 @@\n-old\n+new"
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool_error",
+            "is_error": true,
+            "content": "ERROR_OUTPUT_SENTINEL_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "tool_structured",
+            "content": {
+              "status": "ok",
+              "payload": {
+                "type": "text",
+                "text": "STRUCTURED_TEXT_SENTINEL_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "input": [
+      {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": "FUNCTION_OUTPUT_SENTINEL_abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789"
+      }
+    ]
+  },
+  "assertions": {
+    "unchanged": [
+      "/messages/0/content/0/text",
+      "/messages/1/content/0/text",
+      "/messages/3/content",
+      "/messages/4/content/0/content",
+      "/messages/5/content/0/content/payload/text",
+      "/input/0/output"
+    ],
+    "shorter": [
+      "/messages/2/content"
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenClaw Fast Priority Patch"
+  short_description: "Patch OpenClaw fast mode to send service_tier=priority"
+  default_prompt: "Use $openclaw-fast-priority-patch to apply and verify the OpenClaw fast-mode service_tier=priority patch on Ubuntu hosts."
