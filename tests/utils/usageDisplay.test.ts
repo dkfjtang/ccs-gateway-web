@@ -46,4 +46,20 @@ describe("formatUsageDataSummary", () => {
       ),
     ).toBe("Unauthorized");
   });
+
+  it("ignores probe-only fields in the compact data summary", () => {
+    expect(
+      formatUsageDataSummary(
+        {
+          planName: "Balance",
+          used: 4,
+          remaining: 6,
+          total: 10,
+          unit: "USD",
+          resetsAt: "2026-07-01T00:00:00Z",
+        },
+        labels,
+      ),
+    ).toBe("[Balance] Used: 40% / Remaining: 6 USD");
+  });
 });

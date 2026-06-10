@@ -480,6 +480,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         script.accessToken,
         script.userId,
         selectedTemplate as "custom" | "general" | "newapi" | undefined,
+        script,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data

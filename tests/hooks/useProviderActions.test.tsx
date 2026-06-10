@@ -389,6 +389,19 @@ describe("useProviderActions", () => {
       language: "javascript",
       code: "return { success: true };",
       timeout: 5,
+      probes: [
+        {
+          id: "rate-main",
+          type: "rate",
+          enabled: true,
+          request: {
+            url: "https://example.com/rate",
+            method: "GET",
+          },
+          extractor: "return response",
+          timeout: 3,
+        },
+      ],
     };
 
     const { result } = renderHook(() => useProviderActions("claude"), {
@@ -409,6 +422,8 @@ describe("useProviderActions", () => {
       },
       "claude",
     );
+    expect(providersApiUpdateMock.mock.calls[0]?.[0].meta.usage_script.probes)
+      .toEqual(script.probes);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["providers", "claude"],
     });

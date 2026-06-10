@@ -3,8 +3,8 @@ import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
-import { UsageData, Provider } from "@/types";
 import { TierBadge } from "@/components/SubscriptionQuotaFooter";
+import type { UsageData, Provider, UsageResult } from "@/types";
 import type { QuotaTier } from "@/types/subscription";
 
 interface UsageFooterProps {
@@ -25,6 +25,68 @@ function toQuotaTier(data: UsageData): QuotaTier {
     resetsAt: data.extra || null,
   };
 }
+
+function getProbeErrorSummary(usage: UsageResult): string | null {
+  if (usage.success) {
+    const errors = usage.probeErrors ? Object.values(usage.probeErrors) : [];
+    return errors.length > 0 ? errors[0] || "probe" : null;
+  }
+
+  return usage.error || null;
+}
+
+function formatErrorTitle(summary: string): string {
+  const compact = summary.replace(/\s+/g, " ").trim();
+  return compact.length > 80 ? `${compact.slice(0, 80)}...` : compact;
+}
+
+function hasProbeDisplayContext(usage: UsageResult): boolean {
+  return (
+    usage.rate !== undefined ||
+    Boolean(usage.rateLabel) ||
+    Boolean(usage.probeErrors && Object.keys(usage.probeErrors).length > 0)
+  );
+}
+
+const UsageRateBadge: React.FC<{ usage: UsageResult }> = ({ usage }) => {
+  const { t } = useTranslation();
+  if (usage.rate === undefined && !usage.rateLabel) return null;
+
+  const label =
+    usage.rateLabel ||
+    t("usage.currentRateValue", {
+      rate: usage.rate,
+      defaultValue: `${usage.rate}x`,
+    });
+  const title = `${t("usage.currentRate", { defaultValue: "当前倍率" })} ${label}`;
+
+  return (
+    <span
+      className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300 min-w-0 max-w-[140px] truncate"
+      title={title}
+    >
+      {t("usage.currentRate", { defaultValue: "当前倍率" })} {label}
+    </span>
+  );
+};
+
+const UsageProbeErrorBadge: React.FC<{ usage: UsageResult }> = ({ usage }) => {
+  const { t } = useTranslation();
+  const summary = getProbeErrorSummary(usage);
+  if (!summary) return null;
+  const title = formatErrorTitle(summary);
+
+  return (
+    <span
+      className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-300 flex-shrink-0"
+      title={title}
+    >
+      {usage.success
+        ? t("usage.probePartialError", { defaultValue: "探测异常" })
+        : t("usage.usagePartialError", { defaultValue: "用量异常" })}
+    </span>
+  );
+};
 
 const UsageFooter: React.FC<UsageFooterProps> = ({
   provider,
@@ -73,6 +135,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   // 只在启用用量查询且有数据时显示
   if (!usageEnabled || !usage) return null;
 
+  const showCompactFailure = !usage.success && hasProbeDisplayContext(usage);
+
   // 错误状态
   if (!usage.success) {
     if (inline) {
@@ -82,8 +146,13 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             <AlertCircle size={12} />
             <span>{t("usage.queryFailed")}</span>
           </div>
+          <UsageRateBadge usage={usage} />
+          <UsageProbeErrorBadge usage={usage} />
           <button
-            onClick={() => refetch()}
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
             disabled={loading}
             className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("usage.refreshUsage")}
@@ -97,14 +166,25 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     return (
       <div className="mt-3 rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm">
         <div className="flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2 text-red-500 dark:text-red-400">
-            <AlertCircle size={14} />
-            <span>{usage.error || t("usage.queryFailed")}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2 text-red-500 dark:text-red-400 min-w-0">
+              <AlertCircle size={14} className="flex-shrink-0" />
+              <span className="truncate">
+                {showCompactFailure
+                  ? t("usage.queryFailed")
+                  : usage.error || t("usage.queryFailed")}
+              </span>
+            </div>
+            <UsageRateBadge usage={usage} />
+            <UsageProbeErrorBadge usage={usage} />
           </div>
 
           {/* 刷新按钮 */}
           <button
-            onClick={() => refetch()}
+            onClick={(e) => {
+              e.stopPropagation();
+              refetch();
+            }}
             disabled={loading}
             className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 flex-shrink-0"
             title={t("usage.refreshUsage")}
@@ -147,6 +227,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
         </div>
         {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
         <div className="flex items-center gap-2">
+          <UsageRateBadge usage={usage} />
+          <UsageProbeErrorBadge usage={usage} />
           {usageDataList.map((data, index) => (
             <TierBadge key={index} tier={toQuotaTier(data)} t={t} />
           ))}
@@ -188,6 +270,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
 
         {/* 第二行：用量和剩余 */}
         <div className="flex items-center gap-2">
+          <UsageRateBadge usage={usage} />
+          <UsageProbeErrorBadge usage={usage} />
           {/* 已用 */}
           {firstUsage.used !== undefined && (
             <div className="flex items-center gap-0.5">
@@ -250,6 +334,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           {t("usage.planUsage")}
         </span>
         <div className="flex items-center gap-2">
+          <UsageRateBadge usage={usage} />
+          <UsageProbeErrorBadge usage={usage} />
           {/* 自动查询时间提示 */}
           {lastQueriedAt && (
             <span className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
