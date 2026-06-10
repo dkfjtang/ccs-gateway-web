@@ -51,6 +51,22 @@ export interface EndpointCandidate {
 
 import type { TemplateType } from "./config/constants";
 
+export type UsageProbeType = "usage" | "rate" | "models" | "account";
+
+export interface UsageProbe {
+  id: string;
+  type: UsageProbeType;
+  enabled: boolean;
+  request: {
+    url: string;
+    method: string;
+    headers?: Record<string, string>;
+    body?: string;
+  };
+  extractor: string;
+  timeout?: number;
+}
+
 // 用量查询脚本配置
 export interface UsageScript {
   enabled: boolean; // 是否启用用量查询
@@ -65,6 +81,7 @@ export interface UsageScript {
   codingPlanProvider?: string; // Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
   autoQueryInterval?: number; // 自动查询间隔（单位：分钟，0 表示禁用）
   autoIntervalMinutes?: number; // 自动查询间隔（分钟）- 别名字段
+  probes?: UsageProbe[];
   request?: {
     // 请求配置
     url?: string; // 请求 URL
@@ -98,6 +115,7 @@ export interface UsageData {
   used?: number; // 已用额度（可选）
   remaining?: number; // 剩余额度（可选）
   unit?: string; // 单位（可选）
+  resetsAt?: string; // 重置时间（可选）
 }
 
 // 用量查询结果（支持多套餐）
@@ -105,6 +123,10 @@ export interface UsageResult {
   success: boolean;
   data?: UsageData[]; // 改为数组，支持返回多个套餐
   error?: string;
+  rate?: number;
+  rateLabel?: string;
+  models?: string[];
+  probeErrors?: Record<string, string>;
 }
 
 // 供应商单独的模型测试配置

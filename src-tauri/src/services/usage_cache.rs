@@ -94,6 +94,10 @@ mod tests {
             success: true,
             data: None,
             error: None,
+            rate: None,
+            rate_label: None,
+            models: None,
+            probe_errors: None,
         }
     }
 

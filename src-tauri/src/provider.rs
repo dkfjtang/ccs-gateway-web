@@ -154,6 +154,38 @@ pub struct ProviderManager {
 }
 
 /// 用量查询脚本配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UsageProbeType {
+    Usage,
+    Rate,
+    Models,
+    Account,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageProbeRequest {
+    pub url: String,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageProbe {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub probe_type: UsageProbeType,
+    pub enabled: bool,
+    pub request: UsageProbeRequest,
+    pub extractor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+/// 用量查询脚本配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageScript {
     pub enabled: bool,
@@ -189,6 +221,8 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "codingPlanProvider")]
     pub coding_plan_provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub probes: Vec<UsageProbe>,
 }
 
 /// 用量数据
@@ -213,6 +247,9 @@ pub struct UsageData {
     pub remaining: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "resetsAt")]
+    pub resets_at: Option<String>,
 }
 
 /// 用量查询结果（支持多套餐）
@@ -223,6 +260,16 @@ pub struct UsageResult {
     pub data: Option<Vec<UsageData>>, // 支持返回多个套餐
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "rateLabel")]
+    pub rate_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "probeErrors")]
+    pub probe_errors: Option<HashMap<String, String>>,
 }
 
 /// 供应商单独的模型测试配置
@@ -870,7 +917,8 @@ pub struct OpenCodeModelLimit {
 mod tests {
     use super::{
         ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider,
+        ProviderManager, ProviderMeta, UniversalProvider, UsageData, UsageProbeType, UsageResult,
+        UsageScript,
     };
     use serde_json::json;
 
@@ -888,6 +936,93 @@ mod tests {
             Some("response")
         );
         assert!(value.get("pricing_model_source").is_none());
+    }
+
+    #[test]
+    fn usage_script_deserializes_legacy_without_probes() {
+        let json = r#"{
+            "enabled": true,
+            "language": "javascript",
+            "code": "({ request: {}, extractor: function() { return {}; } })"
+        }"#;
+        let script: UsageScript = serde_json::from_str(json).expect("deserialize legacy script");
+
+        assert!(script.probes.is_empty());
+
+        let serialized = serde_json::to_value(&script).expect("serialize legacy script");
+        assert!(serialized.get("probes").is_none());
+    }
+
+    #[test]
+    fn usage_script_deserializes_empty_probes_and_omits_when_serialized() {
+        let json = r#"{
+            "enabled": true,
+            "language": "javascript",
+            "code": "({ request: {}, extractor: function() { return {}; } })",
+            "probes": []
+        }"#;
+        let script: UsageScript = serde_json::from_str(json).expect("deserialize empty probes");
+
+        assert!(script.probes.is_empty());
+
+        let serialized = serde_json::to_value(&script).expect("serialize empty probes");
+        assert!(serialized.get("probes").is_none());
+    }
+
+    #[test]
+    fn usage_probe_type_deserializes_and_serializes_lowercase_strings() {
+        let cases = [
+            ("usage", UsageProbeType::Usage),
+            ("rate", UsageProbeType::Rate),
+            ("models", UsageProbeType::Models),
+            ("account", UsageProbeType::Account),
+        ];
+
+        for (raw, expected) in cases {
+            let probe_type: UsageProbeType =
+                serde_json::from_str(&format!(r#""{raw}""#)).expect("deserialize probe type");
+            assert_eq!(probe_type, expected);
+            assert_eq!(
+                serde_json::to_value(&probe_type).expect("serialize probe type"),
+                json!(raw)
+            );
+        }
+    }
+
+    #[test]
+    fn usage_result_serializes_probe_fields_with_camel_case() {
+        let mut probe_errors = std::collections::HashMap::new();
+        probe_errors.insert("rate-main".to_string(), "探测异常".to_string());
+
+        let result = UsageResult {
+            success: false,
+            data: Some(vec![UsageData {
+                plan_name: Some("default".to_string()),
+                extra: None,
+                is_valid: Some(true),
+                invalid_message: None,
+                total: Some(100.0),
+                used: Some(25.0),
+                remaining: Some(75.0),
+                unit: Some("USD".to_string()),
+                resets_at: Some("2026-07-01T00:00:00Z".to_string()),
+            }]),
+            error: Some("用量异常".to_string()),
+            rate: Some(1.5),
+            rate_label: Some("x1.5".to_string()),
+            models: Some(vec!["claude-sonnet-4".to_string()]),
+            probe_errors: Some(probe_errors),
+        };
+
+        let value = serde_json::to_value(result).expect("serialize usage result");
+
+        assert_eq!(value["rate"], 1.5);
+        assert_eq!(value["rateLabel"], "x1.5");
+        assert_eq!(value["models"][0], "claude-sonnet-4");
+        assert_eq!(value["data"][0]["resetsAt"], "2026-07-01T00:00:00Z");
+        assert_eq!(value["probeErrors"]["rate-main"], "探测异常");
+        assert!(value.get("rate_label").is_none());
+        assert!(value.get("probe_errors").is_none());
     }
 
     #[test]

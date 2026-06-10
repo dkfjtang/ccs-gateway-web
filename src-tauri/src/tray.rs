@@ -986,6 +986,7 @@ mod tests {
             used: Some(utilization),
             remaining: Some(100.0 - utilization),
             unit: Some("%".to_string()),
+            resets_at: None,
         }
     }
 
@@ -994,6 +995,10 @@ mod tests {
             success,
             data: if data.is_empty() { None } else { Some(data) },
             error: None,
+            rate: None,
+            rate_label: None,
+            models: None,
+            probe_errors: None,
         }
     }
 

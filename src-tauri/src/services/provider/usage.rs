@@ -54,6 +54,10 @@ pub(crate) async fn execute_and_format_usage_result(
                 success: true,
                 data: Some(usage_list),
                 error: None,
+                rate: None,
+                rate_label: None,
+                models: None,
+                probe_errors: None,
             })
         }
         Err(err) => {
@@ -76,6 +80,10 @@ pub(crate) async fn execute_and_format_usage_result(
                 success: false,
                 data: None,
                 error: Some(msg),
+                rate: None,
+                rate_label: None,
+                models: None,
+                probe_errors: None,
             })
         }
     }

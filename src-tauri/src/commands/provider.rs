@@ -322,6 +322,10 @@ pub async fn queryProviderUsage(
             success: false,
             data: None,
             error: Some(err_msg.clone()),
+            rate: None,
+            rate_label: None,
+            models: None,
+            probe_errors: None,
         },
     };
     let payload = serde_json::json!({
@@ -388,8 +392,13 @@ async fn query_provider_usage_inner(
                 is_valid: Some(true),
                 invalid_message: None,
                 extra: Some(format!("Reset: {}", usage.quota_reset_date)),
+                resets_at: None,
             }]),
             error: None,
+            rate: None,
+            rate_label: None,
+            models: None,
+            probe_errors: None,
         });
     }
 
@@ -423,6 +432,10 @@ async fn query_provider_usage_inner(
                 success: false,
                 data: None,
                 error: quota.error,
+                rate: None,
+                rate_label: None,
+                models: None,
+                probe_errors: None,
             });
         }
 
@@ -442,6 +455,7 @@ async fn query_provider_usage_inner(
                     is_valid: Some(true),
                     invalid_message: None,
                     extra: tier.resets_at.clone(),
+                    resets_at: None,
                 }
             })
             .collect();
@@ -450,6 +464,10 @@ async fn query_provider_usage_inner(
             success: true,
             data: if data.is_empty() { None } else { Some(data) },
             error: None,
+            rate: None,
+            rate_label: None,
+            models: None,
+            probe_errors: None,
         });
     }
 

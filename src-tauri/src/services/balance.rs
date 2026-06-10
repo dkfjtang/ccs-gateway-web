@@ -41,6 +41,10 @@ fn make_error(msg: String) -> UsageResult {
         success: false,
         data: None,
         error: Some(msg),
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -56,8 +60,13 @@ fn make_auth_error(status: reqwest::StatusCode) -> UsageResult {
             is_valid: Some(false),
             invalid_message: Some(format!("Authentication failed (HTTP {status})")),
             extra: None,
+            resets_at: None,
         }]),
         error: Some(format!("Authentication failed (HTTP {status})")),
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -122,6 +131,7 @@ async fn query_deepseek(api_key: &str) -> UsageResult {
                     None
                 },
                 extra: None,
+                resets_at: None,
             });
         }
     }
@@ -130,6 +140,10 @@ async fn query_deepseek(api_key: &str) -> UsageResult {
         success: true,
         data: if data.is_empty() { None } else { Some(data) },
         error: None,
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -180,8 +194,13 @@ async fn query_stepfun(api_key: &str) -> UsageResult {
             is_valid: Some(true),
             invalid_message: None,
             extra: None,
+            resets_at: None,
         }]),
         error: None,
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -251,8 +270,13 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> UsageResult {
             is_valid: Some(true),
             invalid_message: None,
             extra: None,
+            resets_at: None,
         }]),
         error: None,
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -310,8 +334,13 @@ async fn query_openrouter(api_key: &str) -> UsageResult {
                 None
             },
             extra: None,
+            resets_at: None,
         }]),
         error: None,
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -368,8 +397,13 @@ async fn query_novita(api_key: &str) -> UsageResult {
                 None
             },
             extra: None,
+            resets_at: None,
         }]),
         error: None,
+        rate: None,
+        rate_label: None,
+        models: None,
+        probe_errors: None,
     }
 }
 
@@ -391,6 +425,10 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
             success: false,
             data: None,
             error: Some("API key is empty".to_string()),
+            rate: None,
+            rate_label: None,
+            models: None,
+            probe_errors: None,
         });
     }
 
@@ -401,6 +439,10 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
                 success: false,
                 data: None,
                 error: Some("Unknown balance provider".to_string()),
+                rate: None,
+                rate_label: None,
+                models: None,
+                probe_errors: None,
             })
         }
     };
