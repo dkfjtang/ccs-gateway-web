@@ -37,7 +37,7 @@ pub use cc_switch::{
     ProviderLimitStatus, ProviderStats, RectifierConfig, RequestLogDetail, SessionSyncResult,
     SkillBackupEntry, SkillMigrationResult, SkillRepo, SkillStorageLocation, SkillUpdateInfo,
     S3SyncSettings, SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig, StreamCheckResult,
-    StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult, UsageSummary,
+    StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult, UsageScript, UsageSummary,
     UsageSummaryByApp, WebDavSyncSettings, WslShellPreferenceInput, WEB_COMPAT_TAURI_COMMANDS,
 };
 
@@ -310,6 +310,7 @@ pub async fn test_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
+    usage_script: Option<&UsageScript>,
 ) -> Result<serde_json::Value, String> {
     let app_type = AppType::from_str(app).map_err(|e| e.to_string())?;
     let result = ProviderService::test_usage_script(
@@ -323,6 +324,7 @@ pub async fn test_usage_script(
         access_token,
         user_id,
         template_type,
+        usage_script,
     )
     .await
     .map_err(|e| e.to_string())?;

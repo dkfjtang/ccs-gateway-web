@@ -74,7 +74,7 @@ pub use mcp::{
 pub use prompt::{CavemanStyleProfile, Prompt};
 pub use provider::{
     ClaudeDesktopMode, ClaudeDesktopModelRoute, Provider, ProviderMeta, UniversalProvider,
-    UsageData, UsageResult,
+    UsageData, UsageResult, UsageScript,
 };
 pub use proxy::http_client::{
     apply_proxy as apply_global_proxy, get_current_proxy_url as get_current_global_proxy_url,
