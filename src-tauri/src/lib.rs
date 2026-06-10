@@ -36,6 +36,7 @@ mod store;
 mod tray;
 mod ui_runtime;
 mod usage_events;
+mod usage_probe;
 mod usage_script;
 
 pub use app_config::{
