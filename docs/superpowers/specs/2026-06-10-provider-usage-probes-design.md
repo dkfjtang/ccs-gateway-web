@@ -143,7 +143,7 @@ export interface UsageResult {
 失败语义：
 
 - 旧单脚本模式保持现有行为。
-- 多探测模式下，`usage` 探测失败时返回 `success=false`。
+- 多探测模式下，`usage` 探测失败时返回 `success=false`，但不得丢弃已成功的 `rate`、`models`、`account` 探测结果。
 - `rate`、`models`、`account` 失败但 `usage` 成功时，返回 `success=true`，保留用量数据，并把安全错误摘要写入 `probeErrors[probe.id]`。
 - 非核心探测失败不得覆盖成功的用量字段。
 - 整体测试失败时，不得把旧缓存和新字段混合写成假成功状态。
@@ -193,7 +193,7 @@ export interface UsageResult {
 - 服务商卡片内联视图：当 `usage.rate` 或 `usage.rateLabel` 存在时，在现有“已用”附近显示 `计费倍率 x1.5`。
 - 如果有 `rateLabel`，优先显示 `rateLabel`，否则格式化 `rate`。
 - 没有倍率时不显示占位。
-- `success=false` 时不显示旧的或缓存残留的倍率文本。
+- `success=false` 但当前结果里包含成功探测到的 `rate` 或 `rateLabel` 时，仍显示当前计费倍率，并在用量区域显示简短异常标记，例如 `用量异常` 或 `探测异常`。不能显示旧的或缓存残留的倍率文本。
 - 多套餐展开视图：可以在头部显示查询级计费倍率；不要让用户误解为每个套餐都有独立倍率。
 - 模型列表不在服务商卡片铺开。首版只在测试结果或详情里显示简要数量，例如 `模型 12 个`。
 
@@ -229,7 +229,7 @@ export interface UsageResult {
 - 只有至少一个 probe 启用时才进入多探测模式。
 - 一个启用的 `usage` probe 加成功的 `rate`、`models`、`account` probe，返回 `success=true`，包含用量数据和顶层 `rate`、`models`、账号状态字段。
 - `rate`、`models`、`account` 失败不阻断成功用量展示。
-- `usage` probe 失败返回 `success=false` 和安全错误信息。
+- `usage` probe 失败返回 `success=false` 和安全错误信息；如果 `rate` probe 成功，列表页仍显示当前计费倍率，并显示简短异常标记。
 - 服务商卡片在“已用”附近展示计费倍率。
 - 无倍率、当前查询失败或没有结果时，不显示 `undefined`、空占位或旧倍率残留。
 - 配置/测试结果区域展示的 probe 错误不得泄露凭证。
@@ -250,7 +250,7 @@ export interface UsageResult {
 必补前端测试：
 
 - `UsageFooter` 优先展示 `rateLabel`，其次展示格式化 `rate`，无倍率时不显示占位。
-- `UsageFooter` 在 `success=false` 时不展示旧倍率。
+- `UsageFooter` 在 `success=false` 但当前结果包含 `rate` 或 `rateLabel` 时展示当前倍率和简短异常标记；没有当前倍率时不展示旧倍率。
 - `usageDisplay` 摘要默认忽略 probe-only 字段，除非后续明确设计要展示。
 - `saveUsageScript` 保存时保留 `probes`，不丢 `request`、`extractor`、`timeout`。
 - `UsageScriptModal` 在多探测模式下测试时传完整 script，并且只在成功结果下更新 `["usage", provider.id, appId]` 缓存。
@@ -275,5 +275,4 @@ rtk powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-local-o
 
 ## 待确认决策
 
-- 当 `usage` probe 失败但 `rate` probe 成功时，是否在列表页显示倍率。首版实现建议不在 `UsageFooter` 显示，因为 `success=false` 表示用量区域处于失败状态；后端可以保留安全 probe 元数据用于调试，但前端不混合展示。
 - 账号级有效性后续是否升级为顶层 `UsageResult.account` 对象。首版保持最小字段，避免扩大 UI 范围。
