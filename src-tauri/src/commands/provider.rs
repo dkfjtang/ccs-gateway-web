@@ -4,7 +4,7 @@ use tauri::{Emitter, State};
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
-use crate::provider::{ClaudeDesktopMode, Provider};
+use crate::provider::{ClaudeDesktopMode, Provider, UsageScript};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
@@ -515,6 +515,7 @@ pub async fn testUsageScript(
     #[allow(non_snake_case)] accessToken: Option<String>,
     #[allow(non_snake_case)] userId: Option<String>,
     #[allow(non_snake_case)] templateType: Option<String>,
+    #[allow(non_snake_case)] usageScript: Option<UsageScript>,
 ) -> Result<crate::provider::UsageResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::test_usage_script(
@@ -528,6 +529,7 @@ pub async fn testUsageScript(
         accessToken.as_deref(),
         userId.as_deref(),
         templateType.as_deref(),
+        usageScript.as_ref(),
     )
     .await
     .map_err(|e| e.to_string())

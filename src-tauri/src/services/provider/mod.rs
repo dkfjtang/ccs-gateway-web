@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::provider::{Provider, UsageResult};
+use crate::provider::{Provider, UsageResult, UsageScript};
 use crate::services::mcp::McpService;
 use crate::settings::CustomEndpoint;
 use crate::store::AppState;
@@ -2040,6 +2040,7 @@ impl ProviderService {
         access_token: Option<&str>,
         user_id: Option<&str>,
         template_type: Option<&str>,
+        usage_script: Option<&UsageScript>,
     ) -> Result<UsageResult, AppError> {
         usage::test_usage_script(
             state,
@@ -2052,6 +2053,7 @@ impl ProviderService {
             access_token,
             user_id,
             template_type,
+            usage_script,
         )
         .await
     }

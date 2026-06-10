@@ -7,6 +7,7 @@ use crate::error::AppError;
 use crate::provider::{UsageData, UsageResult, UsageScript};
 use crate::settings;
 use crate::store::AppState;
+use crate::usage_probe;
 use crate::usage_script;
 
 /// Execute usage script and format result (private helper method)
@@ -123,7 +124,7 @@ pub async fn query_usage(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
-    let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
+    let (usage_script, api_key, base_url) = {
         let providers = state.db.get_all_providers(app_type.as_str())?;
         let provider = providers.get(provider_id).ok_or_else(|| {
             AppError::localized(
@@ -167,25 +168,28 @@ pub async fn query_usage(
             .or_else(|| extract_base_url_from_provider(provider))
             .unwrap_or_default();
 
-        (
-            usage_script.code.clone(),
-            usage_script.timeout.unwrap_or(10),
-            api_key,
-            base_url,
-            usage_script.access_token.clone(),
-            usage_script.user_id.clone(),
-            usage_script.template_type.clone(),
-        )
+        (usage_script.clone(), api_key, base_url)
     };
 
+    if usage_probe::has_enabled_probes(&usage_script.probes) {
+        return usage_probe::execute_usage_probes(
+            &usage_script.probes,
+            &api_key,
+            &base_url,
+            usage_script.access_token.as_deref(),
+            usage_script.user_id.as_deref(),
+        )
+        .await;
+    }
+
     execute_and_format_usage_result(
-        &script_code,
+        &usage_script.code,
         &api_key,
         &base_url,
-        timeout,
-        access_token.as_deref(),
-        user_id.as_deref(),
-        template_type.as_deref(),
+        usage_script.timeout.unwrap_or(10),
+        usage_script.access_token.as_deref(),
+        usage_script.user_id.as_deref(),
+        usage_script.template_type.as_deref(),
     )
     .await
 }
@@ -203,7 +207,21 @@ pub async fn test_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
+    usage_script: Option<&UsageScript>,
 ) -> Result<UsageResult, AppError> {
+    if let Some(script) =
+        usage_script.filter(|script| usage_probe::has_enabled_probes(&script.probes))
+    {
+        return usage_probe::execute_usage_probes(
+            &script.probes,
+            script.api_key.as_deref().or(api_key).unwrap_or(""),
+            script.base_url.as_deref().or(base_url).unwrap_or(""),
+            script.access_token.as_deref().or(access_token),
+            script.user_id.as_deref().or(user_id),
+        )
+        .await;
+    }
+
     // Use provided credential parameters directly for testing
     execute_and_format_usage_result(
         script_code,
@@ -233,4 +251,102 @@ pub(crate) fn validate_usage_script(script: &UsageScript) -> Result<(), AppError
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::{UsageProbe, UsageProbeRequest, UsageProbeType};
+    use crate::store::AppState;
+    use axum::{extract::State, routing::get, Json, Router};
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    use tokio::net::TcpListener;
+
+    #[derive(Clone, Default)]
+    struct RequestLog(Arc<Mutex<Vec<String>>>);
+
+    async fn usage(State(log): State<RequestLog>) -> Json<serde_json::Value> {
+        log.0.lock().expect("request log").push("usage".to_string());
+        Json(json!({ "planName": "Script", "remaining": 9.0 }))
+    }
+
+    async fn test_server() -> (String, RequestLog) {
+        let log = RequestLog::default();
+        let app = Router::new()
+            .route("/usage", get(usage))
+            .with_state(log.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test server");
+        });
+        (format!("http://{addr}"), log)
+    }
+
+    fn usage_probe(base_url: &str) -> UsageProbe {
+        UsageProbe {
+            id: "usage-main".to_string(),
+            probe_type: UsageProbeType::Usage,
+            enabled: true,
+            request: UsageProbeRequest {
+                url: format!("{base_url}/usage"),
+                method: "GET".to_string(),
+                headers: Default::default(),
+                body: None,
+            },
+            extractor: "return response".to_string(),
+            timeout: Some(2),
+        }
+    }
+
+    fn script_with_probe(base_url: &str) -> UsageScript {
+        UsageScript {
+            enabled: true,
+            language: "javascript".to_string(),
+            code: "return legacy".to_string(),
+            timeout: Some(10),
+            api_key: Some("script-api-key".to_string()),
+            base_url: Some(base_url.to_string()),
+            access_token: None,
+            user_id: None,
+            template_type: None,
+            auto_query_interval: None,
+            coding_plan_provider: None,
+            probes: vec![usage_probe(base_url)],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_usage_script_uses_full_usage_script_probes() {
+        let (base_url, log) = test_server().await;
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        let state = AppState::new(db);
+        let script = script_with_probe(&base_url);
+
+        let result = test_usage_script(
+            &state,
+            AppType::Claude,
+            "provider-1",
+            "legacy script should not run",
+            10,
+            Some("flat-api-key"),
+            Some("https://flat.example.com"),
+            None,
+            None,
+            Some("custom"),
+            Some(&script),
+        )
+        .await
+        .expect("test usage probes");
+
+        assert!(result.success);
+        assert_eq!(
+            result.data.expect("usage data")[0].plan_name.as_deref(),
+            Some("Script")
+        );
+        assert_eq!(*log.0.lock().expect("request log"), vec!["usage"]);
+    }
 }
