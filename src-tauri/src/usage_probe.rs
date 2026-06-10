@@ -97,20 +97,41 @@ pub(crate) fn finalize_probe_result(accumulator: ProbeAccumulator) -> UsageResul
     }
 }
 
+fn sanitize_usage_error_message(message: &str) -> String {
+    let message = message.trim();
+    if message.is_empty() {
+        return "用量异常".to_string();
+    }
+
+    let lower_message = message.to_ascii_lowercase();
+    if [
+        "authorization",
+        "api_key",
+        "apikey",
+        "access_token",
+        "bearer ",
+    ]
+    .iter()
+    .any(|keyword| lower_message.contains(keyword))
+    {
+        return "探测异常".to_string();
+    }
+
+    message.to_string()
+}
+
 fn apply_usage_value(accumulator: &mut ProbeAccumulator, value: Value) -> Result<(), AppError> {
     if value
         .get("success")
         .and_then(Value::as_bool)
         .is_some_and(|success| !success)
     {
-        accumulator.usage_error = Some(
+        accumulator.usage_error = Some(sanitize_usage_error_message(
             value
                 .get("error")
                 .and_then(Value::as_str)
-                .filter(|message| !message.trim().is_empty())
-                .unwrap_or("用量异常")
-                .to_string(),
-        );
+                .unwrap_or("用量异常"),
+        ));
         return Ok(());
     }
 
@@ -272,6 +293,25 @@ mod tests {
         assert_eq!(result.error.as_deref(), Some("用量异常"));
         assert_eq!(result.rate, Some(1.5));
         assert_eq!(result.rate_label.as_deref(), Some("x1.5"));
+    }
+
+    #[test]
+    fn usage_failure_sanitizes_sensitive_error_message() {
+        let usage_probe = probe("usage-main", UsageProbeType::Usage, true);
+        let mut accumulator = ProbeAccumulator::default();
+
+        apply_probe_value(
+            &mut accumulator,
+            &usage_probe,
+            json!({ "success": false, "error": "Bearer secret-token" }),
+        )
+        .expect("record usage failure");
+
+        let result = finalize_probe_result(accumulator);
+        let error = result.error.expect("usage error");
+
+        assert_eq!(error, "探测异常");
+        assert!(!error.contains("secret-token"));
     }
 
     #[test]
