@@ -103,11 +103,11 @@ CC Switch ユーザーマニュアル
 
 ## バージョン情報
 
-- ドキュメントバージョン：v3.13.0
-- 最終更新：2026-04-08
-- CC Switch v3.13.0+ 対応
+- ドキュメントバージョン：v3.16.2-ccs-gateway.1
+- 最終更新：2026-06-10
+- CC Switch v3.16.2+ 対応
 
-### v3.13.0 の注目機能
+### v3.16.2 Gateway の注目機能
 
 - **軽量モード**：トレイへ最小化時にメインウィンドウを破棄、アイドル時のリソース使用量をほぼゼロに — 詳細は [1.5 個人設定](./1-getting-started/1.5-settings.md)
 - **クォータ・残高表示**：公式サブスクリプション系（Claude/Codex/Gemini/Copilot/Codex OAuth）はカードに自動表示、Token Plan および第三者残高は内蔵テンプレートでワンクリック有効化 — 詳細は [2.5 使用量クエリ](./2-providers/2.5-usage-query.md)
@@ -121,5 +121,5 @@ CC Switch ユーザーマニュアル
 
 Issue や PR でドキュメントの改善にご協力ください：
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)

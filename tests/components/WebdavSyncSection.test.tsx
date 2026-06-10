@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import type { WebDavSyncSettings } from "@/types";
+import type { S3SyncSettings, WebDavSyncSettings } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -79,6 +79,11 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncFetchRemoteInfo: vi.fn(),
     webdavSyncUpload: vi.fn(),
     webdavSyncDownload: vi.fn(),
+    s3TestConnection: vi.fn(),
+    s3SyncSaveSettings: vi.fn(),
+    s3SyncFetchRemoteInfo: vi.fn(),
+    s3SyncUpload: vi.fn(),
+    s3SyncDownload: vi.fn(),
   },
 }));
 
@@ -97,7 +102,20 @@ const baseConfig: WebDavSyncSettings = {
   status: {},
 };
 
-function renderSection(config?: WebDavSyncSettings) {
+const baseS3Config: S3SyncSettings = {
+  enabled: true,
+  region: "auto",
+  bucket: "ccs-sync",
+  accessKeyId: "access-key",
+  secretAccessKey: "secret-key",
+  endpoint: "https://example.r2.cloudflarestorage.com",
+  remoteRoot: "cc-switch-sync",
+  profile: "default",
+  autoSync: false,
+  status: {},
+};
+
+function renderSection(config?: WebDavSyncSettings, s3Config?: S3SyncSettings) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -106,7 +124,7 @@ function renderSection(config?: WebDavSyncSettings) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <WebdavSyncSection config={config} />
+      <WebdavSyncSection config={config} s3Config={s3Config} />
     </QueryClientProvider>,
   );
   return { ...view, client };
@@ -123,6 +141,11 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncFetchRemoteInfo.mockReset();
     settingsApiMock.webdavSyncUpload.mockReset();
     settingsApiMock.webdavSyncDownload.mockReset();
+    settingsApiMock.s3TestConnection.mockReset();
+    settingsApiMock.s3SyncSaveSettings.mockReset();
+    settingsApiMock.s3SyncFetchRemoteInfo.mockReset();
+    settingsApiMock.s3SyncUpload.mockReset();
+    settingsApiMock.s3SyncDownload.mockReset();
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
@@ -139,6 +162,21 @@ describe("WebdavSyncSection", () => {
     });
     settingsApiMock.webdavSyncUpload.mockResolvedValue({ status: "uploaded" });
     settingsApiMock.webdavSyncDownload.mockResolvedValue({ status: "downloaded" });
+    settingsApiMock.s3SyncSaveSettings.mockResolvedValue({ success: true });
+    settingsApiMock.s3TestConnection.mockResolvedValue({
+      success: true,
+      message: "ok",
+    });
+    settingsApiMock.s3SyncFetchRemoteInfo.mockResolvedValue({
+      deviceName: "My MacBook",
+      createdAt: "2026-02-01T10:00:00Z",
+      snapshotId: "snapshot-1",
+      version: 2,
+      compatible: true,
+      artifacts: ["db.sql", "skills.zip"],
+    });
+    settingsApiMock.s3SyncUpload.mockResolvedValue({ status: "uploaded" });
+    settingsApiMock.s3SyncDownload.mockResolvedValue({ status: "downloaded" });
   });
 
   it("shows auto sync error callout when last auto sync failed", () => {
@@ -552,6 +590,73 @@ describe("WebdavSyncSection", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         "settings.webdavSync.downloadFailed",
+      );
+    });
+  });
+
+  it("preserves s3 secret only for the single post-save refresh", async () => {
+    const view = renderSection(baseConfig, baseS3Config);
+
+    fireEvent.click(screen.getByRole("button", { name: "settings.s3Sync.save" }));
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncSaveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection
+          config={baseConfig}
+          s3Config={{ ...baseS3Config, secretAccessKey: "" }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "settings.s3Sync.secretAccessKeyPlaceholder",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("secret-key");
+
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection
+          config={baseConfig}
+          s3Config={{ ...baseS3Config, secretAccessKey: "" }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "settings.s3Sync.secretAccessKeyPlaceholder",
+        ) as HTMLInputElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("disables webdav before switching to enabled s3", async () => {
+    renderSection({ ...baseConfig, enabled: true }, { ...baseS3Config, enabled: false });
+
+    fireEvent.change(screen.getAllByRole("combobox")[0], {
+      target: { value: "s3" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "common.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.webdavSyncSaveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: false,
+          autoSync: false,
+        }),
+        false,
       );
     });
   });

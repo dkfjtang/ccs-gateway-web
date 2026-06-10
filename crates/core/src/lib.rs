@@ -36,7 +36,7 @@ pub use cc_switch::{
     OpenClawToolsConfig, OptimizerConfig, PaginatedLogs, Provider as CoreProvider,
     ProviderLimitStatus, ProviderStats, RectifierConfig, RequestLogDetail, SessionSyncResult,
     SkillBackupEntry, SkillMigrationResult, SkillRepo, SkillStorageLocation, SkillUpdateInfo,
-    SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig, StreamCheckResult,
+    S3SyncSettings, SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig, StreamCheckResult,
     StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult, UsageSummary,
     UsageSummaryByApp, WebDavSyncSettings, WslShellPreferenceInput, WEB_COMPAT_TAURI_COMMANDS,
 };
@@ -1578,7 +1578,7 @@ pub fn restart_app() -> Result<bool, String> {
 /// 检查更新 (stub - not applicable for web server)
 /// Returns the update URL for the client to handle
 pub fn check_for_updates() -> Result<String, String> {
-    Ok("https://github.com/farion1231/cc-switch/releases/latest".to_string())
+    Ok("https://github.com/dkfjtang/ccs-gateway-web/releases/latest".to_string())
 }
 
 /// 判断是否为便携版运行
@@ -1932,6 +1932,135 @@ pub fn webdav_sync_save_settings(
 pub async fn webdav_sync_fetch_remote_info() -> Result<serde_json::Value, String> {
     let settings = require_enabled_webdav_settings()?;
     let info = cc_switch::webdav_fetch_remote_info(&settings)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(info.unwrap_or_else(|| serde_json::json!({ "empty": true })))
+}
+
+fn s3_not_configured_error() -> String {
+    cc_switch::AppError::localized(
+        "s3.sync.not_configured",
+        "未配置 S3 同步",
+        "S3 sync is not configured.",
+    )
+    .to_string()
+}
+
+fn s3_sync_disabled_error() -> String {
+    cc_switch::AppError::localized("s3.sync.disabled", "S3 同步未启用", "S3 sync is disabled.")
+        .to_string()
+}
+
+fn require_enabled_s3_settings() -> Result<S3SyncSettings, String> {
+    let settings = cc_switch::get_s3_sync_settings().ok_or_else(s3_not_configured_error)?;
+    if !settings.enabled {
+        return Err(s3_sync_disabled_error());
+    }
+    Ok(settings)
+}
+
+fn resolve_secret_for_request(
+    mut incoming: S3SyncSettings,
+    existing: Option<S3SyncSettings>,
+    preserve_empty_secret: bool,
+) -> S3SyncSettings {
+    if let Some(existing_settings) = existing {
+        if preserve_empty_secret && incoming.secret_access_key.is_empty() {
+            incoming.secret_access_key = existing_settings.secret_access_key;
+        }
+    }
+    incoming
+}
+
+fn persist_s3_sync_error(settings: &mut S3SyncSettings, error: &cc_switch::AppError, source: &str) {
+    settings.status.last_error = Some(error.to_string());
+    settings.status.last_error_source = Some(source.to_string());
+    let _ = cc_switch::update_s3_sync_status(settings.status.clone());
+}
+
+/// 测试 S3 连接
+pub async fn s3_test_connection(
+    settings: S3SyncSettings,
+    preserve_empty_secret: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let preserve_empty = preserve_empty_secret.unwrap_or(true);
+    let resolved =
+        resolve_secret_for_request(settings, cc_switch::get_s3_sync_settings(), preserve_empty);
+    cc_switch::s3_check_connection(&resolved)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "success": true,
+        "message": "S3 connection ok"
+    }))
+}
+
+/// 上传 S3 同步快照
+pub async fn s3_sync_upload(ctx: &CoreContext) -> Result<serde_json::Value, String> {
+    let db = ctx.app_state().db.clone();
+    let mut settings = require_enabled_s3_settings()?;
+
+    let result = cc_switch::s3_run_with_sync_lock(cc_switch::s3_upload(&db, &mut settings)).await;
+    match result {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            persist_s3_sync_error(&mut settings, &err, "manual");
+            Err(err.to_string())
+        }
+    }
+}
+
+/// 下载 S3 同步快照
+pub async fn s3_sync_download(ctx: &CoreContext) -> Result<serde_json::Value, String> {
+    let db = ctx.app_state().db.clone();
+    let mut settings = require_enabled_s3_settings()?;
+
+    let result = cc_switch::s3_run_with_sync_lock(cc_switch::s3_download(&db, &mut settings)).await;
+    let mut value = match result {
+        Ok(value) => value,
+        Err(err) => {
+            persist_s3_sync_error(&mut settings, &err, "manual");
+            return Err(err.to_string());
+        }
+    };
+
+    let warning = match ProviderService::sync_current_to_live(ctx.app_state()) {
+        Ok(()) => match cc_switch::reload_settings() {
+            Ok(()) => None,
+            Err(err) => Some(post_sync_warning(err)),
+        },
+        Err(err) => Some(post_sync_warning(err)),
+    };
+    if let Some(msg) = warning.as_ref() {
+        log::warn!("[S3] post-download sync warning: {msg}");
+    }
+    value = attach_warning(value, warning);
+    Ok(value)
+}
+
+/// 保存 S3 同步设置
+pub fn s3_sync_save_settings(
+    settings: S3SyncSettings,
+    password_touched: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let password_touched = password_touched.unwrap_or(false);
+    let existing = cc_switch::get_s3_sync_settings();
+    let mut sync_settings = resolve_secret_for_request(settings, existing.clone(), !password_touched);
+
+    if let Some(existing_settings) = existing {
+        sync_settings.status = existing_settings.status;
+    }
+
+    sync_settings.normalize();
+    sync_settings.validate().map_err(|e| e.to_string())?;
+    cc_switch::set_s3_sync_settings(Some(sync_settings)).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "success": true }))
+}
+
+/// 获取 S3 远端信息
+pub async fn s3_sync_fetch_remote_info() -> Result<serde_json::Value, String> {
+    let settings = require_enabled_s3_settings()?;
+    let info = cc_switch::s3_fetch_remote_info(&settings)
         .await
         .map_err(|e| e.to_string())?;
     Ok(info.unwrap_or_else(|| serde_json::json!({ "empty": true })))

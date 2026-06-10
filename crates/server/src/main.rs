@@ -15,12 +15,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cc_switch_server::{
     api::{
-        export_sql_download_handler, import_sql_upload_handler, invoke_handler,
-        upgrade_handler, MAX_SQL_UPLOAD_BYTES,
+        export_sql_download_handler, import_sql_upload_handler, invoke_handler, upgrade_handler,
+        MAX_SQL_UPLOAD_BYTES,
     },
-    create_event_bus,
-    load_auth_config, SessionStore,
-    ServerState,
+    create_event_bus, load_auth_config, ServerState, SessionStore,
 };
 
 // 嵌入前端静态文件（构建时从 dist 目录读取）
@@ -69,7 +67,8 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 
 // 健康检查和欢迎页面
 async fn welcome_handler() -> Html<&'static str> {
-    Html(r#"<!DOCTYPE html>
+    Html(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>CC-Switch Web</title>
@@ -93,7 +92,8 @@ async fn welcome_handler() -> Html<&'static str> {
         <p><strong>Frontend:</strong> <a href="/">Open Web UI</a></p>
     </div>
 </body>
-</html>"#)
+</html>"#,
+    )
 }
 
 fn try_bind_listener(host: &str, port: u16) -> Option<StdTcpListener> {
@@ -217,8 +217,7 @@ async fn main() {
         .unwrap_or(17666);
 
     // Get host from environment or use default
-    let host = std::env::var("CC_SWITCH_HOST")
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("CC_SWITCH_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
 
     // Check if auto-port selection is enabled (default: true)
     let auto_port = std::env::var("CC_SWITCH_AUTO_PORT")
@@ -243,10 +242,17 @@ async fn main() {
             }
             None => {
                 eprintln!("❌ Error: Could not find an available port");
-                eprintln!("   Tried ports {} to {}", requested_port, requested_port + 100);
+                eprintln!(
+                    "   Tried ports {} to {}",
+                    requested_port,
+                    requested_port + 100
+                );
                 eprintln!();
                 eprintln!("   Solutions:");
-                eprintln!("   1. Stop the process using port {}: lsof -ti:{} | xargs kill", requested_port, requested_port);
+                eprintln!(
+                    "   1. Stop the process using port {}: lsof -ti:{} | xargs kill",
+                    requested_port, requested_port
+                );
                 eprintln!("   2. Use a different port: CC_SWITCH_PORT=8080 ./cc-switch-web");
                 eprintln!();
                 std::process::exit(1);
@@ -254,9 +260,14 @@ async fn main() {
         }
     } else {
         eprintln!();
-        eprintln!("❌ Error: Port {} is already in use on {}", requested_port, host);
+        eprintln!(
+            "❌ Error: Port {} is already in use on {}",
+            requested_port, host
+        );
         if !is_loopback {
-            eprintln!("   Remote-access mode requires a stable host/port and will not auto-switch ports.");
+            eprintln!(
+                "   Remote-access mode requires a stable host/port and will not auto-switch ports."
+            );
         }
         eprintln!();
         eprintln!("   Solutions:");

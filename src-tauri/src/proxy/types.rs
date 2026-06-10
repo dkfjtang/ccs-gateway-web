@@ -298,7 +298,6 @@ impl Default for OptimizerConfig {
     }
 }
 
-
 #[cfg(test)]
 mod optimizer_config_tests {
     use super::*;

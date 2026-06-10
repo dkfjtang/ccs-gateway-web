@@ -742,7 +742,9 @@ mod tests {
     #[test]
     fn long_markdown_like_text_is_not_plain_log() {
         let text = (1..=40)
-            .map(|i| format!("## Section {i}\nThis is ordinary task context, not disposable log output."))
+            .map(|i| {
+                format!("## Section {i}\nThis is ordinary task context, not disposable log output.")
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let out = filter(

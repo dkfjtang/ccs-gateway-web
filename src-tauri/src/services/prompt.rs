@@ -355,11 +355,8 @@ mod tests {
         PromptService::enable_prompt(&state, app.clone(), "caveman-lite")
             .expect("enable caveman lite");
 
-        let mut prompt = state
-            .db
-            .get_prompts(app.as_str())
-            .expect("get prompts")["caveman-lite"]
-            .clone();
+        let mut prompt =
+            state.db.get_prompts(app.as_str()).expect("get prompts")["caveman-lite"].clone();
         prompt.enabled = false;
         PromptService::upsert_prompt(&state, app.clone(), "caveman-lite", prompt)
             .expect("disable caveman lite");
@@ -399,11 +396,8 @@ mod tests {
             .save_prompt(app.as_str(), &normal_prompt)
             .expect("insert abnormal enabled normal prompt");
 
-        let mut caveman_prompt = state
-            .db
-            .get_prompts(app.as_str())
-            .expect("get prompts")["caveman-lite"]
-            .clone();
+        let mut caveman_prompt =
+            state.db.get_prompts(app.as_str()).expect("get prompts")["caveman-lite"].clone();
         caveman_prompt.enabled = false;
         PromptService::upsert_prompt(&state, app.clone(), "caveman-lite", caveman_prompt)
             .expect("disable caveman lite");

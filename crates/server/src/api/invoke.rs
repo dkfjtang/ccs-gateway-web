@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use axum::{
     extract::State,
     http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
@@ -7,6 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::state::ServerState;
 
@@ -17,7 +17,6 @@ use super::{
 
 /// Methods that bypass authentication check (public endpoints)
 pub const PUBLIC_METHODS: &[&str] = &["auth.status", "auth.login", "auth.check"];
-
 
 #[derive(Deserialize)]
 pub struct InvokeRequest {

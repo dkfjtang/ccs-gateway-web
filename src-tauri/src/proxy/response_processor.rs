@@ -404,7 +404,8 @@ impl SseUsageCollector {
         callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
     ) -> Self {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
-        let on_event: Option<EventCallback> = event_callback.map(|callback| Arc::new(callback) as EventCallback);
+        let on_event: Option<EventCallback> =
+            event_callback.map(|callback| Arc::new(callback) as EventCallback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
                 events: Mutex::new(Vec::new()),
@@ -503,22 +504,15 @@ impl Drop for SseUsageFinishGuard {
 // ============================================================================
 
 fn extract_response_id(value: &Value) -> Option<&str> {
-    value
-        .get("id")
-        .and_then(|id| id.as_str())
-        .or_else(|| {
-            value
-                .get("response")
-                .and_then(|response| response.get("id"))
-                .and_then(|id| id.as_str())
-        })
+    value.get("id").and_then(|id| id.as_str()).or_else(|| {
+        value
+            .get("response")
+            .and_then(|response| response.get("id"))
+            .and_then(|id| id.as_str())
+    })
 }
 
-async fn record_response_id_if_present(
-    state: &ProxyState,
-    ctx: &RequestContext,
-    value: &Value,
-) {
+async fn record_response_id_if_present(state: &ProxyState, ctx: &RequestContext, value: &Value) {
     if ctx.app_type_str != "codex" {
         return;
     }
@@ -893,7 +887,9 @@ mod tests {
     use crate::provider::ProviderMeta;
     use crate::proxy::failover_switch::FailoverSwitchManager;
     use crate::proxy::provider_router::ProviderRouter;
-    use crate::proxy::providers::gemini_shadow::GeminiShadowStore;
+    use crate::proxy::providers::{
+        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore,
+    };
     use crate::proxy::types::{ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
@@ -1017,6 +1013,7 @@ mod tests {
             responses_response_providers: Arc::new(RwLock::new(HashMap::new())),
             provider_router: Arc::new(ProviderRouter::new(db.clone())),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             app_handle: None,
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
         }

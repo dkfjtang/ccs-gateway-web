@@ -1103,7 +1103,8 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}]
         });
 
-        let result = anthropic_to_responses(input, Some("my-provider-id"), false, false, false).unwrap();
+        let result =
+            anthropic_to_responses(input, Some("my-provider-id"), false, false, false).unwrap();
         assert_eq!(result["prompt_cache_key"], "my-provider-id");
     }
 
@@ -1577,7 +1578,6 @@ mod tests {
             "非 Codex OAuth 路径下 tools 在客户端未送时不应被注入"
         );
     }
-
 
     #[test]
     fn test_anthropic_to_responses_passthroughs_service_tier_when_enabled() {

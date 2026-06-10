@@ -103,11 +103,11 @@
 
 ## 版本信息
 
-- 文档版本：v3.13.0
-- 最后更新：2026-04-08
-- 适用于 CC Switch v3.13.0+
+- 文档版本：v3.16.2-ccs-gateway.1
+- 最后更新：2026-06-10
+- 适用于 CC Switch v3.16.2+
 
-### v3.13.0 亮点
+### v3.16.2 Gateway 亮点
 
 - **轻量模式**：退出到托盘时销毁主窗口，空闲占用接近零 — 详见 [1.5 个性化配置](./1-getting-started/1.5-settings.md)
 - **配额与余额展示**：官方订阅类（Claude/Codex/Gemini/Copilot/Codex OAuth）自动展示剩余额度；Token Plan 和第三方余额通过内置模板一键启用 — 详见 [2.5 用量查询](./2-providers/2.5-usage-query.md)
@@ -121,5 +121,5 @@
 
 欢迎提交 Issue 或 PR 改进文档：
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)

@@ -176,6 +176,112 @@ impl WebDavSyncSettings {
     }
 }
 
+/// S3 同步设置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct S3SyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_sync: bool,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub access_key_id: String,
+    #[serde(default)]
+    pub secret_access_key: String,
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default = "default_remote_root")]
+    pub remote_root: String,
+    #[serde(default = "default_profile")]
+    pub profile: String,
+    #[serde(default)]
+    pub status: WebDavSyncStatus,
+}
+
+impl Default for S3SyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_sync: false,
+            region: String::new(),
+            bucket: String::new(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            endpoint: String::new(),
+            remote_root: default_remote_root(),
+            profile: default_profile(),
+            status: WebDavSyncStatus::default(),
+        }
+    }
+}
+
+impl S3SyncSettings {
+    pub fn validate(&self) -> Result<(), crate::error::AppError> {
+        if self.bucket.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.bucket.required",
+                "S3 存储桶不能为空",
+                "S3 bucket is required.",
+            ));
+        }
+        if self.region.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.region.required",
+                "S3 区域不能为空",
+                "S3 region is required.",
+            ));
+        }
+        if self.access_key_id.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.access_key_id.required",
+                "S3 Access Key ID 不能为空",
+                "S3 access key ID is required.",
+            ));
+        }
+        if self.secret_access_key.trim().is_empty() {
+            return Err(crate::error::AppError::localized(
+                "s3.secret_access_key.required",
+                "S3 Secret Access Key 不能为空",
+                "S3 secret access key is required.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn normalize(&mut self) {
+        self.region = self.region.trim().to_string();
+        self.bucket = self.bucket.trim().to_string();
+        self.access_key_id = self.access_key_id.trim().to_string();
+        self.endpoint = self.endpoint.trim().trim_end_matches('/').to_string();
+        self.remote_root = self.remote_root.trim().to_string();
+        self.profile = self.profile.trim().to_string();
+        if self.remote_root.is_empty() {
+            self.remote_root = default_remote_root();
+        }
+        if self.profile.is_empty() {
+            self.profile = default_profile();
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.region.is_empty()
+            && self.bucket.is_empty()
+            && self.access_key_id.is_empty()
+            && self.secret_access_key.is_empty()
+            && self.endpoint.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyncBackendPreference {
+    WebDav,
+    S3,
+}
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -282,6 +388,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_sync: Option<WebDavSyncSettings>,
 
+    // ===== S3 同步设置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub s3_sync: Option<S3SyncSettings>,
+
     // ===== WebDAV 备份设置（旧版，保留向后兼容）=====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub webdav_backup: Option<serde_json::Value>,
@@ -347,6 +457,7 @@ impl Default for AppSettings {
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
+            s3_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
@@ -412,13 +523,54 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "ja"))
+            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
             .map(|s| s.to_string());
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();
             if sync.is_empty() {
                 self.webdav_sync = None;
+            }
+        }
+
+        if let Some(s3) = &mut self.s3_sync {
+            s3.normalize();
+            if s3.is_empty() {
+                self.s3_sync = None;
+            }
+        }
+
+        self.enforce_single_sync_backend(SyncBackendPreference::S3);
+    }
+
+    fn enforce_single_sync_backend(&mut self, preference: SyncBackendPreference) {
+        let webdav_enabled = self
+            .webdav_sync
+            .as_ref()
+            .map(|settings| settings.enabled)
+            .unwrap_or(false);
+        let s3_enabled = self
+            .s3_sync
+            .as_ref()
+            .map(|settings| settings.enabled)
+            .unwrap_or(false);
+
+        if !webdav_enabled || !s3_enabled {
+            return;
+        }
+
+        match preference {
+            SyncBackendPreference::WebDav => {
+                if let Some(s3) = self.s3_sync.as_mut() {
+                    s3.enabled = false;
+                    s3.auto_sync = false;
+                }
+            }
+            SyncBackendPreference::S3 => {
+                if let Some(webdav) = self.webdav_sync.as_mut() {
+                    webdav.enabled = false;
+                    webdav.auto_sync = false;
+                }
             }
         }
     }
@@ -524,6 +676,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
     let mut settings = get_settings();
     if let Some(sync) = &mut settings.webdav_sync {
         sync.password.clear();
+    }
+    if let Some(s3) = &mut settings.s3_sync {
+        s3.secret_access_key.clear();
     }
     settings.webdav_backup = None;
     settings
@@ -774,6 +929,14 @@ pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
 pub fn set_webdav_sync_settings(settings: Option<WebDavSyncSettings>) -> Result<(), AppError> {
     mutate_settings(|current| {
         current.webdav_sync = settings;
+        let prefers_webdav = current
+            .webdav_sync
+            .as_ref()
+            .map(|settings| settings.enabled)
+            .unwrap_or(false);
+        if prefers_webdav {
+            current.enforce_single_sync_backend(SyncBackendPreference::WebDav);
+        }
     })
 }
 
@@ -786,10 +949,39 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
     })
 }
 
+// ===== S3 同步设置管理函数 =====
+
+pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
+    settings_store().read().ok()?.s3_sync.clone()
+}
+
+pub fn set_s3_sync_settings(settings: Option<S3SyncSettings>) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        current.s3_sync = settings;
+        let prefers_s3 = current
+            .s3_sync
+            .as_ref()
+            .map(|settings| settings.enabled)
+            .unwrap_or(false);
+        if prefers_s3 {
+            current.enforce_single_sync_backend(SyncBackendPreference::S3);
+        }
+    })
+}
+
+pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
+    mutate_settings(|current| {
+        if let Some(s3) = current.s3_sync.as_mut() {
+            s3.status = status;
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app_config::AppType;
+    use serial_test::serial;
 
     #[test]
     fn visible_apps_old_settings_default_claude_desktop_visible() {
@@ -820,5 +1012,143 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn app_settings_preserves_traditional_chinese_language() {
+        let mut settings = AppSettings {
+            language: Some("zh-TW".to_string()),
+            ..AppSettings::default()
+        };
+
+        settings.normalize_paths();
+
+        assert_eq!(settings.language.as_deref(), Some("zh-TW"));
+    }
+
+    #[test]
+    #[serial]
+    fn saving_enabled_s3_disables_existing_webdav_sync() {
+        let test_home = std::env::temp_dir().join("cc-switch-settings-s3-prefers-single-sync");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        update_settings(AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                enabled: true,
+                auto_sync: true,
+                base_url: "https://dav.example.com/dav/".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            ..AppSettings::default()
+        })
+        .expect("seed webdav settings");
+
+        set_s3_sync_settings(Some(S3SyncSettings {
+            enabled: true,
+            auto_sync: true,
+            region: "us-east-1".to_string(),
+            bucket: "my-bucket".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "SECRET".to_string(),
+            ..S3SyncSettings::default()
+        }))
+        .expect("save s3 settings");
+
+        let settings = get_settings();
+        let webdav = settings.webdav_sync.expect("webdav config is preserved");
+        let s3 = settings.s3_sync.expect("s3 config is saved");
+        assert!(!webdav.enabled);
+        assert!(!webdav.auto_sync);
+        assert_eq!(webdav.base_url, "https://dav.example.com/dav/");
+        assert_eq!(webdav.username, "alice");
+        assert_eq!(webdav.password, "secret");
+        assert!(s3.enabled);
+        assert!(s3.auto_sync);
+    }
+
+    #[test]
+    #[serial]
+    fn saving_enabled_webdav_disables_existing_s3_sync() {
+        let test_home = std::env::temp_dir().join("cc-switch-settings-webdav-prefers-single-sync");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        update_settings(AppSettings {
+            s3_sync: Some(S3SyncSettings {
+                enabled: true,
+                auto_sync: true,
+                region: "us-east-1".to_string(),
+                bucket: "my-bucket".to_string(),
+                access_key_id: "AKID".to_string(),
+                secret_access_key: "SECRET".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        })
+        .expect("seed s3 settings");
+
+        set_webdav_sync_settings(Some(WebDavSyncSettings {
+            enabled: true,
+            auto_sync: true,
+            base_url: "https://dav.example.com/dav/".to_string(),
+            username: "alice".to_string(),
+            password: "secret".to_string(),
+            ..WebDavSyncSettings::default()
+        }))
+        .expect("save webdav settings");
+
+        let settings = get_settings();
+        let webdav = settings.webdav_sync.expect("webdav config is saved");
+        let s3 = settings.s3_sync.expect("s3 config is preserved");
+        assert!(webdav.enabled);
+        assert!(webdav.auto_sync);
+        assert!(!s3.enabled);
+        assert!(!s3.auto_sync);
+        assert_eq!(s3.bucket, "my-bucket");
+        assert_eq!(s3.secret_access_key, "SECRET");
+    }
+
+    #[test]
+    #[serial]
+    fn update_settings_normalizes_legacy_dual_sync_to_s3_only() {
+        let test_home = std::env::temp_dir().join("cc-switch-settings-dual-sync-normalized");
+        let _ = std::fs::remove_dir_all(&test_home);
+        std::fs::create_dir_all(&test_home).expect("create test home");
+        std::env::set_var("CC_SWITCH_TEST_HOME", &test_home);
+
+        update_settings(AppSettings {
+            webdav_sync: Some(WebDavSyncSettings {
+                enabled: true,
+                auto_sync: true,
+                base_url: "https://dav.example.com/dav/".to_string(),
+                username: "alice".to_string(),
+                password: "secret".to_string(),
+                ..WebDavSyncSettings::default()
+            }),
+            s3_sync: Some(S3SyncSettings {
+                enabled: true,
+                auto_sync: true,
+                region: "us-east-1".to_string(),
+                bucket: "my-bucket".to_string(),
+                access_key_id: "AKID".to_string(),
+                secret_access_key: "SECRET".to_string(),
+                ..S3SyncSettings::default()
+            }),
+            ..AppSettings::default()
+        })
+        .expect("save legacy dual-sync settings");
+
+        let settings = get_settings();
+        let webdav = settings.webdav_sync.expect("webdav config is preserved");
+        let s3 = settings.s3_sync.expect("s3 config is preserved");
+        assert!(!webdav.enabled);
+        assert!(!webdav.auto_sync);
+        assert!(s3.enabled);
+        assert!(s3.auto_sync);
     }
 }

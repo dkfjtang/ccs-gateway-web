@@ -9,9 +9,7 @@ use axum::{
 use cc_switch::{AppState, Database};
 use cc_switch_core::CoreContext;
 use cc_switch_server::{
-    api::import_sql_upload_handler,
-    create_event_bus,
-    AuthConfig, ServerState, SessionStore,
+    api::import_sql_upload_handler, create_event_bus, AuthConfig, ServerState, SessionStore,
 };
 use tower::util::ServiceExt;
 
@@ -55,7 +53,6 @@ async fn unauthenticated_sql_upload_is_rejected_when_web_auth_is_enabled() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-
 #[tokio::test]
 async fn invalid_sql_upload_does_not_pollute_existing_database() {
     let db = Arc::new(Database::memory().expect("in-memory database"));
@@ -95,5 +92,8 @@ async fn invalid_sql_upload_does_not_pollute_existing_database() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let after = db.export_sql_string().expect("export after");
-    assert_eq!(before, after, "failed upload should not mutate existing data");
+    assert_eq!(
+        before, after,
+        "failed upload should not mutate existing data"
+    );
 }

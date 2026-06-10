@@ -414,7 +414,7 @@ fn insert_session_log_entry(
         ),
     };
 
-    conn.execute(
+    let inserted_rows = conn.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -451,7 +451,11 @@ fn insert_session_log_entry(
     )
     .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
 
-    Ok(true)
+    if inserted_rows > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
+
+    Ok(inserted_rows > 0)
 }
 
 /// 从 model_pricing 表查找模型定价（支持模糊匹配）

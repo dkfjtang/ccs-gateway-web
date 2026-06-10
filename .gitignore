@@ -22,6 +22,7 @@ crates/core/target
 release-web
 nul
 .run/
+/.upstream/
 
 # Flatpak build artifacts
 flatpak/cc-switch.deb

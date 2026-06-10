@@ -14,6 +14,7 @@ beforeAll(async () => {
     fallbackLng: "zh",
     resources: {
       zh: { translation: {} },
+      "zh-TW": { translation: {} },
       en: { translation: {} },
     },
     interpolation: {

@@ -137,6 +137,39 @@ export interface ClaudeDesktopModelRoute {
   supports1m?: boolean;
 }
 
+export type CodexChatThinkingParam =
+  | "none"
+  | "thinking"
+  | "enable_thinking"
+  | "reasoning_split";
+
+export type CodexChatEffortParam =
+  | "none"
+  | "reasoning_effort"
+  | "reasoning.effort";
+
+export type CodexChatEffortValueMode =
+  | "passthrough"
+  | "low_high"
+  | "deepseek"
+  | "openrouter";
+
+export type CodexChatReasoningOutputFormat =
+  | "auto"
+  | "reasoning_content"
+  | "reasoning"
+  | "reasoning_details"
+  | "think_tags";
+
+export interface CodexChatReasoning {
+  supportsThinking?: boolean;
+  supportsEffort?: boolean;
+  thinkingParam?: CodexChatThinkingParam;
+  effortParam?: CodexChatEffortParam;
+  effortValueMode?: CodexChatEffortValueMode;
+  outputFormat?: CodexChatReasoningOutputFormat;
+}
+
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
   // 自定义端点：以 URL 为键，值为端点信息
@@ -181,6 +214,8 @@ export interface ProviderMeta {
   promptCacheKey?: string;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
+  // Codex Responses -> Chat Completions reasoning capability metadata
+  codexChatReasoning?: CodexChatReasoning;
   // OpenAI Responses compatibility switch: omit max_output_tokens before forwarding
   omitMaxOutputTokens?: boolean;
   // OpenAI Responses compatibility switch: send blank instructions when upstream requires the field
@@ -207,6 +242,14 @@ export type ClaudeApiFormat =
   | "openai_chat"
   | "openai_responses"
   | "gemini_native";
+
+export type CodexApiFormat = "openai_responses" | "openai_chat";
+
+export interface CodexCatalogModel {
+  model: string;
+  displayName?: string;
+  contextWindow?: string | number;
+}
 
 // Claude 认证字段类型
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
@@ -239,6 +282,20 @@ export interface WebDavSyncSettings {
   baseUrl?: string;
   username?: string;
   password?: string;
+  remoteRoot?: string;
+  profile?: string;
+  status?: WebDavSyncStatus;
+}
+
+// S3 同步配置
+export interface S3SyncSettings {
+  enabled?: boolean;
+  autoSync?: boolean;
+  region?: string;
+  bucket?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  endpoint?: string;
   remoteRoot?: string;
   profile?: string;
   status?: WebDavSyncStatus;
@@ -288,6 +345,8 @@ export interface Settings {
   streamCheckConfirmed?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
+  // Preserve Codex ChatGPT login in auth.json when switching third-party providers
+  preserveCodexOfficialAuthOnSwitch?: boolean;
   // User has confirmed the failover toggle first-run notice
   failoverConfirmed?: boolean;
   // User has confirmed the first-run welcome notice
@@ -297,7 +356,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "ja";
+  language?: "en" | "zh" | "zh-TW" | "ja";
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
@@ -334,6 +393,9 @@ export interface Settings {
 
   // ===== WebDAV v2 同步设置 =====
   webdavSync?: WebDavSyncSettings;
+
+  // ===== S3 v2 同步设置 =====
+  s3Sync?: S3SyncSettings;
 
   // ===== 备份策略设置 =====
   // Auto-backup interval in hours (0=disabled, default 24)

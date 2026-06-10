@@ -4,6 +4,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
 
 vi.mock("@/lib/api/auth", () => ({
   authApi: {
@@ -30,6 +31,8 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.spyOn(settingsApi, "openExternal").mockResolvedValue(undefined);
+
 vi.mock("@/components/providers/ProviderList", () => ({
   ProviderList: ({
     providers,
@@ -40,26 +43,26 @@ vi.mock("@/components/providers/ProviderList", () => ({
     onConfigureUsage,
     onOpenWebsite,
     onCreate,
-  }: any) => (
-    <div>
-      <div data-testid="provider-list">{JSON.stringify(providers)}</div>
-      <div data-testid="current-provider">{currentProviderId}</div>
-      <button onClick={() => onSwitch(providers[currentProviderId])}>
-        switch
-      </button>
-      <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
-        duplicate
-      </button>
-      <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
-        usage
-      </button>
-      <button onClick={() => onOpenWebsite("https://example.com")}>
-        open-website
-      </button>
-      <button onClick={() => onCreate?.()}>create</button>
-    </div>
-  ),
+  }: any) => {
+    const currentProvider = Array.isArray(providers)
+      ? providers.find((provider) => provider.id === currentProviderId)
+      : providers[currentProviderId];
+
+    return (
+      <div>
+        <div data-testid="provider-list">{JSON.stringify(providers)}</div>
+        <div data-testid="current-provider">{currentProviderId}</div>
+        <button onClick={() => onSwitch(currentProvider)}>switch</button>
+        <button onClick={() => onEdit(currentProvider)}>edit</button>
+        <button onClick={() => onDuplicate(currentProvider)}>duplicate</button>
+        <button onClick={() => onConfigureUsage(currentProvider)}>usage</button>
+        <button onClick={() => onOpenWebsite("https://example.com")}>
+          open-website
+        </button>
+        <button onClick={() => onCreate?.()}>create</button>
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/components/providers/AddProviderDialog", () => ({
@@ -183,6 +186,7 @@ describe("App integration with MSW", () => {
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    vi.mocked(settingsApi.openExternal).mockClear();
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -228,6 +232,7 @@ describe("App integration with MSW", () => {
     );
 
     fireEvent.click(screen.getByText("open-website"));
+    expect(settingsApi.openExternal).toHaveBeenCalledWith("https://example.com");
 
     emitTauriEvent("provider-switched", {
       appType: "codex",

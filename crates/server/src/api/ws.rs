@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-use std::sync::Arc;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -10,19 +8,17 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::{mpsc, RwLock};
 
 use crate::rpc::{RpcError, RpcRequest, RpcResponse};
 use crate::state::ServerState;
 
-use super::{
-    dispatch::dispatch_command,
-    session_auth::has_valid_session,
-};
+use super::{dispatch::dispatch_command, session_auth::has_valid_session};
 
 /// Protocol-only WebSocket methods that do not participate in business command dispatch.
 pub const WS_PROTOCOL_METHODS: &[&str] = &["event.subscribe", "event.unsubscribe", "ping"];
-
 
 #[derive(Deserialize)]
 pub struct WsAuthQuery {
@@ -69,7 +65,7 @@ pub async fn upgrade_handler(
 
 async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
-    let mut subscriptions: HashSet<String> = HashSet::new();
+    let subscriptions = Arc::new(RwLock::new(HashSet::<String>::new()));
 
     // Channel for sending responses back to the WebSocket
     let (tx, mut rx) = mpsc::channel::<String>(32);
@@ -86,12 +82,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     // Event subscription task
     let mut event_rx = state.event_bus.subscribe();
     let event_tx = tx.clone();
+    let event_subscriptions = Arc::clone(&subscriptions);
     let event_task = tokio::spawn(async move {
-        let local_subs: HashSet<String> = HashSet::new();
         loop {
             match event_rx.recv().await {
                 Ok(event) => {
-                    if local_subs.contains(&event.name) {
+                    if event_subscriptions.read().await.contains(&event.name) {
                         let notification = RpcResponse::notification(
                             "event",
                             serde_json::json!({
@@ -113,9 +109,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     // Message receiving loop
     while let Some(Ok(msg)) = ws_receiver.next().await {
         if let Message::Text(text) = msg {
-            if let Some(response) =
-                handle_message(&state, &mut subscriptions, &text).await
-            {
+            if let Some(response) = handle_message(&state, &subscriptions, &text).await {
                 if tx.send(response).await.is_err() {
                     break;
                 }
@@ -131,7 +125,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
 
 async fn handle_message(
     state: &Arc<ServerState>,
-    subscriptions: &mut HashSet<String>,
+    subscriptions: &Arc<RwLock<HashSet<String>>>,
     text: &str,
 ) -> Option<String> {
     let request: RpcRequest = match serde_json::from_str(text) {
@@ -158,7 +152,7 @@ async fn handle_message(
                 .get("event")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            subscriptions.insert(event.to_string());
+            subscriptions.write().await.insert(event.to_string());
             RpcResponse::success(id, serde_json::json!({ "ok": true }))
         }
         "event.unsubscribe" => {
@@ -167,7 +161,7 @@ async fn handle_message(
                 .get("event")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            subscriptions.remove(event);
+            subscriptions.write().await.remove(event);
             RpcResponse::success(id, serde_json::json!({ "ok": true }))
         }
         "ping" => RpcResponse::success(id, serde_json::json!({ "pong": true })),

@@ -103,11 +103,11 @@ CC Switch User Manual
 
 ## Version Information
 
-- Documentation version: v3.13.0
-- Last updated: 2026-04-08
-- Applicable to CC Switch v3.13.0+
+- Documentation version: v3.16.2-ccs-gateway.1
+- Last updated: 2026-06-10
+- Applicable to CC Switch v3.16.2+
 
-### v3.13.0 Highlights
+### v3.16.2 Gateway Highlights
 
 - **Lightweight Mode**: Destroys the main window when minimizing to tray — near-zero idle footprint. See [1.5 Personalization](./1-getting-started/1.5-settings.md)
 - **Quota & Balance Display**: Official subscriptions (Claude/Codex/Gemini/Copilot/Codex OAuth) auto-display quotas; Token Plan and third-party balances use built-in templates with one-click enable — see [2.5 Usage Query](./2-providers/2.5-usage-query.md)
@@ -121,5 +121,5 @@ CC Switch User Manual
 
 Feel free to submit Issues or PRs to improve the documentation:
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)

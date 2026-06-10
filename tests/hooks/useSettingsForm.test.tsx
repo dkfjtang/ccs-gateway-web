@@ -81,6 +81,29 @@ describe("useSettingsForm Hook", () => {
     expect(changeLanguageSpy).toHaveBeenCalledWith("ja");
   });
 
+  it("should support traditional chinese language aliases from server data", async () => {
+    useSettingsQueryMock.mockReturnValue({
+      data: {
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        claudeConfigDir: "/Users/demo",
+        codexConfigDir: null,
+        language: "zh_hant",
+      },
+      isLoading: false,
+    });
+
+    const { result } = renderHook(() => useSettingsForm());
+
+    await waitFor(() => {
+      expect(result.current.settings?.language).toBe("zh-TW");
+    });
+
+    expect(result.current.initialLanguage).toBe("zh-TW");
+    expect(changeLanguageSpy).toHaveBeenCalledWith("zh-TW");
+  });
+
   it("should prioritize reading language from local storage in readPersistedLanguage", () => {
     useSettingsQueryMock.mockReturnValue({
       data: null,
@@ -92,6 +115,20 @@ describe("useSettingsForm Hook", () => {
 
     const lang = result.current.readPersistedLanguage();
     expect(lang).toBe("en");
+    expect(changeLanguageSpy).not.toHaveBeenCalled();
+  });
+
+  it("should normalize traditional chinese from local storage in readPersistedLanguage", () => {
+    useSettingsQueryMock.mockReturnValue({
+      data: null,
+      isLoading: false,
+    });
+    window.localStorage.setItem("language", "zh-tw");
+
+    const { result } = renderHook(() => useSettingsForm());
+
+    const lang = result.current.readPersistedLanguage();
+    expect(lang).toBe("zh-TW");
     expect(changeLanguageSpy).not.toHaveBeenCalled();
   });
 
@@ -116,6 +153,14 @@ describe("useSettingsForm Hook", () => {
 
     expect(result.current.settings?.language).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
+
+    changeLanguageSpy.mockClear();
+    act(() => {
+      result.current.updateSettings({ language: "zh-TW" });
+    });
+
+    expect(result.current.settings?.language).toBe("zh-TW");
+    expect(changeLanguageSpy).toHaveBeenCalledWith("zh-TW");
   });
 
   it("should reset with server data and restore initial language in resetSettings", async () => {
@@ -151,6 +196,10 @@ describe("useSettingsForm Hook", () => {
       });
     });
 
+    await waitFor(() => {
+      expect(result.current.settings?.showInTray).toBe(false);
+    });
+
     const settings = result.current.settings!;
     expect(settings.showInTray).toBe(false);
     expect(settings.minimizeToTrayOnClose).toBe(false);
@@ -160,6 +209,48 @@ describe("useSettingsForm Hook", () => {
     expect(settings.language).toBe("zh");
     expect(result.current.initialLanguage).toBe("en");
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
+  });
+
+  it("should preserve zh-TW value in resetSettings while restoring initial language", async () => {
+    useSettingsQueryMock.mockReturnValue({
+      data: {
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        claudeConfigDir: "/origin",
+        codexConfigDir: null,
+        language: "zh-TW",
+      },
+      isLoading: false,
+    });
+
+    const { result } = renderHook(() => useSettingsForm());
+
+    await waitFor(() => {
+      expect(result.current.settings?.language).toBe("zh-TW");
+    });
+
+    changeLanguageSpy.mockClear();
+    (i18n as any).language = "en";
+
+    act(() => {
+      result.current.resetSettings({
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        claudeConfigDir: "/reset",
+        codexConfigDir: undefined,
+        language: "zh-TW",
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings?.claudeConfigDir).toBe("/reset");
+    });
+
+    expect(result.current.settings?.language).toBe("zh-TW");
+    expect(result.current.initialLanguage).toBe("zh-TW");
+    expect(changeLanguageSpy).toHaveBeenCalledWith("zh-TW");
   });
 
   it("should not call changeLanguage repeatedly when language is consistent in syncLanguage", async () => {

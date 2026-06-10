@@ -17,6 +17,13 @@
 use super::{AuthInfo, AuthStrategy, ProviderAdapter, ProviderType};
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
+use serde_json::{json, Value};
+
+const ANTHROPIC_THINKING_PLACEHOLDER: &str = "tool call";
+const ANTHROPIC_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
+
+// Keep hints lowercase; matching lowercases only the input value.
+const REASONING_VENDOR_HINTS: &[&str] = &["moonshot", "kimi", "deepseek", "mimo", "xiaomimimo"];
 
 /// 获取 Claude 供应商的 API 格式
 ///
@@ -84,7 +91,9 @@ pub fn claude_api_format_needs_transform(api_format: &str) -> bool {
 
 fn is_reasoning_content_compatible_identifier(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
-    value.contains("moonshot") || value.contains("kimi") || value.contains("deepseek")
+    REASONING_VENDOR_HINTS
+        .iter()
+        .any(|hint| value.contains(hint))
 }
 
 fn should_preserve_reasoning_content_for_openai_chat(
@@ -114,6 +123,205 @@ fn should_preserve_reasoning_content_for_openai_chat(
         .into_iter()
         .flatten()
         .any(is_reasoning_content_compatible_identifier)
+}
+
+fn is_reasoning_vendor_identifier(value: &str) -> bool {
+    is_reasoning_content_compatible_identifier(value)
+}
+
+fn should_normalize_anthropic_tool_thinking_history(
+    provider: &Provider,
+    body: &Value,
+    api_format: &str,
+) -> bool {
+    if api_format.trim() != "anthropic" {
+        return false;
+    }
+    if body.get("messages").and_then(Value::as_array).is_none() {
+        return false;
+    }
+
+    if body
+        .get("model")
+        .and_then(Value::as_str)
+        .is_some_and(is_reasoning_vendor_identifier)
+    {
+        return true;
+    }
+
+    let settings = &provider.settings_config;
+    [
+        settings
+            .get("env")
+            .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+            .and_then(Value::as_str),
+        settings.get("base_url").and_then(Value::as_str),
+        settings.get("baseURL").and_then(Value::as_str),
+        settings.get("apiEndpoint").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .any(is_reasoning_vendor_identifier)
+}
+
+/// DeepSeek/Kimi Anthropic-compatible endpoints require thinking history to be
+/// replayed on assistant turns that contain tool_use. They reject redacted or
+/// missing thinking blocks on the next request.
+pub fn normalize_anthropic_tool_thinking_history_for_provider(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if !should_normalize_anthropic_tool_thinking_history(provider, body, api_format) {
+        return false;
+    }
+
+    normalize_anthropic_tool_thinking_history(body)
+}
+
+pub fn normalize_anthropic_messages_for_provider(
+    body: &mut Value,
+    provider: &Provider,
+    api_format: &str,
+) -> bool {
+    if api_format.trim() != "anthropic" {
+        return false;
+    }
+
+    let mut changed = normalize_anthropic_system_role_messages(body);
+    changed |= normalize_anthropic_tool_thinking_history_for_provider(body, provider, api_format);
+    changed
+}
+
+fn normalize_anthropic_system_role_messages(body: &mut Value) -> bool {
+    let mut system_parts = Vec::new();
+    let changed = {
+        let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+            return false;
+        };
+
+        let original_len = messages.len();
+        let mut kept_messages = Vec::with_capacity(messages.len());
+        for message in std::mem::take(messages) {
+            if message.get("role").and_then(Value::as_str) == Some("system") {
+                if let Some(content) = message.get("content") {
+                    append_anthropic_system_parts(content, &mut system_parts);
+                }
+            } else {
+                kept_messages.push(message);
+            }
+        }
+
+        let changed = kept_messages.len() != original_len;
+        *messages = kept_messages;
+        changed
+    };
+
+    if !changed || system_parts.is_empty() {
+        return changed;
+    }
+
+    let mut merged_parts = Vec::new();
+    if let Some(existing) = body.get("system") {
+        append_anthropic_system_parts(existing, &mut merged_parts);
+    }
+    merged_parts.extend(system_parts);
+
+    if !merged_parts.is_empty() {
+        body["system"] = Value::Array(merged_parts);
+    }
+
+    true
+}
+
+fn append_anthropic_system_parts(content: &Value, parts: &mut Vec<Value>) {
+    match content {
+        Value::String(text) if !text.trim().is_empty() => {
+            parts.push(json!({
+                "type": "text",
+                "text": text
+            }));
+        }
+        Value::Array(items) => {
+            for item in items {
+                append_anthropic_system_parts(item, parts);
+            }
+        }
+        Value::Object(obj)
+            if obj
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty()) =>
+        {
+            parts.push(Value::Object(obj.clone()));
+        }
+        _ => {}
+    }
+}
+
+fn normalize_anthropic_tool_thinking_history(body: &mut Value) -> bool {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return false;
+    };
+
+    let mut changed = false;
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+
+        let has_tool_use = content
+            .iter()
+            .any(|item| item.get("type").and_then(Value::as_str) == Some("tool_use"));
+        if !has_tool_use {
+            continue;
+        }
+
+        let mut thinking_index = None;
+        let mut redacted_indices = Vec::new();
+        for (index, item) in content.iter().enumerate() {
+            match item.get("type").and_then(Value::as_str) {
+                Some("thinking") => thinking_index = Some(index),
+                Some("redacted_thinking") => redacted_indices.push(index),
+                _ => {}
+            }
+        }
+
+        if let Some(index) = thinking_index {
+            let thinking = content[index]
+                .get("thinking")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+            if thinking.is_empty() || thinking == ANTHROPIC_REDACTED_THINKING_PLACEHOLDER {
+                content[index]["thinking"] = json!(ANTHROPIC_THINKING_PLACEHOLDER);
+                changed = true;
+            }
+        } else {
+            content.insert(
+                0,
+                json!({
+                    "type": "thinking",
+                    "thinking": ANTHROPIC_THINKING_PLACEHOLDER
+                }),
+            );
+            changed = true;
+        }
+
+        for index in redacted_indices.into_iter().rev() {
+            if index < content.len() {
+                content.remove(index);
+                changed = true;
+            }
+        }
+    }
+
+    changed
 }
 
 pub fn transform_claude_request_for_api_format(

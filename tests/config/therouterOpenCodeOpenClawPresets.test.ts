@@ -18,7 +18,7 @@ describe("TheRouter OpenCode and OpenClaw presets", () => {
     expect(preset?.settingsConfig.options?.setCacheKey).toBe(true);
     expect(models).toHaveProperty("openai/gpt-5.3-codex");
     expect(models).toHaveProperty("anthropic/claude-sonnet-4.6");
-    expect(models).toHaveProperty("google/gemini-3-flash-preview");
+    expect(models).toHaveProperty("google/gemini-3.5-flash");
   });
 
   it("uses OpenAI completions config for OpenClaw", () => {
@@ -36,14 +36,14 @@ describe("TheRouter OpenCode and OpenClaw presets", () => {
         "anthropic/claude-sonnet-4.6",
         "openai/gpt-5.3-codex",
         "openai/gpt-5.2",
-        "google/gemini-3-flash-preview",
+        "google/gemini-3.5-flash",
       ]),
     );
     expect(preset?.suggestedDefaults?.model).toEqual({
       primary: "therouter/anthropic/claude-sonnet-4.6",
       fallbacks: [
         "therouter/openai/gpt-5.2",
-        "therouter/google/gemini-3-flash-preview",
+        "therouter/google/gemini-3.5-flash",
       ],
     });
   });

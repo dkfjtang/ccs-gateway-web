@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
 import type { Settings } from "@/types";
 
-type Language = "zh" | "en" | "ja";
+type Language = "zh" | "zh-TW" | "en" | "ja";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
@@ -12,7 +12,16 @@ export type SettingsFormState = Omit<Settings, "language"> & {
 const normalizeLanguage = (lang?: string | null): Language => {
   if (!lang) return "zh";
   const normalized = lang.toLowerCase();
-  return normalized === "en" || normalized === "ja" ? normalized : "zh";
+  if (normalized === "en" || normalized === "ja") return normalized;
+  if (
+    normalized === "zh-tw" ||
+    normalized === "zh_tw" ||
+    normalized === "zh-hant" ||
+    normalized === "zh_hant"
+  ) {
+    return "zh-TW";
+  }
+  return "zh";
 };
 
 const sanitizeDir = (value?: string | null): string | undefined => {
@@ -48,12 +57,15 @@ export function useSettingsForm(): UseSettingsFormResult {
   );
 
   const initialLanguageRef = useRef<Language>("zh");
+  const lastAppliedDataRef = useRef<Settings | null>(null);
+  const suppressNextDataSyncRef = useRef(false);
 
   const readPersistedLanguage = useCallback((): Language => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem("language");
-      if (stored === "en" || stored === "zh" || stored === "ja") {
-        return stored as Language;
+      const normalized = normalizeLanguage(stored);
+      if (stored && normalized) {
+        return normalized;
       }
     }
     return normalizeLanguage(i18n.language);
@@ -72,6 +84,12 @@ export function useSettingsForm(): UseSettingsFormResult {
   // 初始化设置数据
   useEffect(() => {
     if (!data) return;
+    if (suppressNextDataSyncRef.current) {
+      suppressNextDataSyncRef.current = false;
+      lastAppliedDataRef.current = data;
+      return;
+    }
+    if (data === lastAppliedDataRef.current) return;
 
     const normalizedLanguage = normalizeLanguage(
       data.language ?? readPersistedLanguage(),
@@ -95,6 +113,7 @@ export function useSettingsForm(): UseSettingsFormResult {
     };
 
     setSettingsState(normalized);
+    lastAppliedDataRef.current = data;
     initialLanguageRef.current = normalizedLanguage;
     syncLanguage(normalizedLanguage);
   }, [data, readPersistedLanguage, syncLanguage]);
@@ -155,10 +174,12 @@ export function useSettingsForm(): UseSettingsFormResult {
         language: normalizedLanguage,
       };
 
+      suppressNextDataSyncRef.current = true;
       setSettingsState(normalized);
-      syncLanguage(initialLanguageRef.current);
+      lastAppliedDataRef.current = serverData;
+      void i18n.changeLanguage(initialLanguageRef.current);
     },
-    [readPersistedLanguage, syncLanguage],
+    [i18n, readPersistedLanguage],
   );
 
   return {

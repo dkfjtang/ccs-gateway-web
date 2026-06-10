@@ -80,7 +80,7 @@ type View =
   | "openclawAgents"
   | "hermesMemory";
 
-interface WebDavSyncStatusUpdatedPayload {
+interface SyncStatusUpdatedPayload {
   source?: string;
   status?: string;
   error?: string;
@@ -406,7 +406,7 @@ function App() {
 
     const setupListener = async () => {
       try {
-        const off = await listen<WebDavSyncStatusUpdatedPayload>(
+        const off = await listen<SyncStatusUpdatedPayload>(
           "webdav-sync-status-updated",
           async (payload) => {
             await queryClient.invalidateQueries({ queryKey: ["settings"] });
@@ -430,6 +430,48 @@ function App() {
       } catch (error) {
         console.error(
           "[App] Failed to subscribe webdav-sync-status-updated event",
+          error,
+        );
+      }
+    };
+
+    void setupListener();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [queryClient, t]);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    let active = true;
+
+    const setupListener = async () => {
+      try {
+        const off = await listen<SyncStatusUpdatedPayload>(
+          "s3-sync-status-updated",
+          async (payload) => {
+            await queryClient.invalidateQueries({ queryKey: ["settings"] });
+
+            if (payload.source !== "auto" || payload.status !== "error") {
+              return;
+            }
+
+            toast.error(
+              t("settings.s3Sync.autoSyncFailedToast", {
+                error: payload.error || t("common.unknown"),
+              }),
+            );
+          },
+        );
+        if (!active) {
+          off();
+          return;
+        }
+        unsubscribe = off;
+      } catch (error) {
+        console.error(
+          "[App] Failed to subscribe s3-sync-status-updated event",
           error,
         );
       }
@@ -1078,7 +1120,7 @@ function App() {
               <div className="flex items-center gap-2">
                 <div className="relative inline-flex items-center">
                   <a
-                    href="https://github.com/farion1231/cc-switch"
+                    href="https://github.com/dkfjtang/ccs-gateway-web"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(

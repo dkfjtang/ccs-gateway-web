@@ -31,7 +31,10 @@ check_git_clean() {
 
 changed_files() {
   if [[ "$SCOPE" == "all" ]]; then
-    git ls-files
+    {
+      git ls-files
+      git ls-files -o --exclude-standard
+    } | sort -u
     return
   fi
 
@@ -67,15 +70,38 @@ check_dockerignore() {
 
 check_sensitive_literals() {
   local files
-  files="$(changed_files | grep -Ev '(^|/)(package-lock.json|pnpm-lock.yaml|CHANGELOG.md|.*\.lock|.*\.(svg|png|jpg|jpeg|ico|icns)|\.env\.web)$' || true)"
+  files="$(changed_files | grep -Ev '(^|/)(package-lock.json|pnpm-lock.yaml|CHANGELOG.md|scripts/ccs-secret-preflight\.sh|.*\.lock|.*\.(svg|png|jpg|jpeg|ico|icns)|\.env\.web)$' || true)"
   [[ -n "$files" ]] || return 0
 
   local pattern
-  pattern='(sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{40,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----)'
+  pattern='(sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{40,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----|((AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|aws_secret_access_key|aws_session_token|secretAccessKey|secret_access_key|sessionToken|session_token)[[:space:]]*[:=][[:space:]]*["'\'']?[A-Za-z0-9/+=_-]{30,}))'
 
   while IFS= read -r file; do
     [[ -f "$file" ]] || continue
-    grep -nIE "$pattern" "$file" && return 1
+    local matches
+    matches="$(grep -nIE "$pattern" "$file" || true)"
+    if [[ -z "$matches" ]]; then
+      continue
+    fi
+
+    if [[ "$file" == "src-tauri/src/services/s3.rs" ]]; then
+      matches="$(
+        printf '%s\n' "$matches" |
+          grep -Ev 'AKIAIOSFODNN7EXAMPLE|AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE|wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY|TESTSECRET' || true
+      )"
+    fi
+
+    if [[ "$file" == "deplink.html" ]]; then
+      matches="$(
+        printf '%s\n' "$matches" |
+          grep -Ev 'ctx7sk-4ddd4f66-e752-4022-b1f6-c8cf6279b80d|sk-ant-your-api-key-here|sk-proj-your-api-key-here' || true
+      )"
+    fi
+
+    if [[ -n "$matches" ]]; then
+      printf '%s\n' "$matches"
+      return 1
+    fi
   done <<< "$files"
 
   return 0

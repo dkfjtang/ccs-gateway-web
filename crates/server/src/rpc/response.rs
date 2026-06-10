@@ -1,6 +1,6 @@
+use super::error::RpcError;
 use serde::Serialize;
 use serde_json::Value;
-use super::error::RpcError;
 
 #[derive(Debug, Serialize)]
 pub struct RpcResponse {

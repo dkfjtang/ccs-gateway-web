@@ -32,6 +32,8 @@ mod prompt;
 mod provider;
 #[cfg(feature = "desktop")]
 mod proxy;
+#[cfg(feature = "desktop")]
+mod s3_sync;
 mod session_manager;
 #[cfg(feature = "desktop")]
 mod settings;
@@ -79,6 +81,8 @@ pub use prompt::*;
 pub use provider::*;
 #[cfg(feature = "desktop")]
 pub use proxy::*;
+#[cfg(feature = "desktop")]
+pub use s3_sync::*;
 pub use session_manager::*;
 #[cfg(feature = "desktop")]
 pub use settings::*;

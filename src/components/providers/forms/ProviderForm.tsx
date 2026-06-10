@@ -172,7 +172,7 @@ function ProviderFormFull({
   const handleCommonConfigConfirm = async () => {
     try {
       if (settingsData) {
-        const { webdavSync: _, ...rest } = settingsData;
+        const { webdavSync: _, s3Sync: _s3Sync, ...rest } = settingsData;
         await settingsApi.save({ ...rest, commonConfigConfirmed: true });
         await queryClient.invalidateQueries({ queryKey: ["settings"] });
       }
@@ -1057,9 +1057,19 @@ function ProviderFormFull({
     if (appId === "codex") {
       try {
         const authJson = JSON.parse(codexAuth);
+        const rawConfig = JSON.parse(values.settingsConfig || "{}") as Record<
+          string,
+          unknown
+        >;
+        const selectedCodexPreset = selectedPresetId
+          ? (presetEntries.find((entry) => entry.id === selectedPresetId)
+              ?.preset as CodexProviderPreset | undefined)
+          : undefined;
         const configObj = {
           auth: authJson,
           config: codexConfig ?? "",
+          modelCatalog:
+            selectedCodexPreset?.modelCatalog ?? rawConfig.modelCatalog,
         };
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
@@ -1189,6 +1199,11 @@ function ProviderFormFull({
 
     const baseMeta: ProviderMeta | undefined =
       payload.meta ?? (initialData?.meta ? { ...initialData.meta } : undefined);
+    const selectedCodexPreset =
+      appId === "codex" && selectedPresetId
+        ? (presetEntries.find((entry) => entry.id === selectedPresetId)
+            ?.preset as CodexProviderPreset | undefined)
+        : undefined;
 
     // 确定 providerType（新建时从预设获取，编辑时从现有数据获取）
     const providerType = effectiveProviderType;
@@ -1245,9 +1260,16 @@ function ProviderFormFull({
           : undefined
         : baseMeta?.requireResponsesInstructions,
       apiFormat:
-        appId === "claude" && category !== "official"
+        appId === "codex"
+          ? (selectedCodexPreset?.apiFormat ?? baseMeta?.apiFormat)
+          : appId === "claude" && category !== "official"
           ? localApiFormat
           : undefined,
+      codexChatReasoning:
+        appId === "codex"
+          ? (selectedCodexPreset?.codexChatReasoning ??
+            baseMeta?.codexChatReasoning)
+          : baseMeta?.codexChatReasoning,
       apiKeyField:
         appId === "claude" &&
         category !== "official" &&

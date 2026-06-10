@@ -9,9 +9,7 @@ use axum::{
 use cc_switch::{AppState, Database};
 use cc_switch_core::CoreContext;
 use cc_switch_server::{
-    api::export_sql_download_handler,
-    create_event_bus,
-    AuthConfig, ServerState, SessionStore,
+    api::export_sql_download_handler, create_event_bus, AuthConfig, ServerState, SessionStore,
 };
 use tower::util::ServiceExt;
 

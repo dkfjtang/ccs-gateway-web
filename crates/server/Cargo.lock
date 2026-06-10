@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "cc-switch"
-version = "3.14.1"
+version = "3.16.2-ccs-gateway.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -507,6 +507,7 @@ dependencies = [
  "dirs 5.0.1",
  "flate2",
  "futures",
+ "hmac",
  "http",
  "http-body",
  "http-body-util",

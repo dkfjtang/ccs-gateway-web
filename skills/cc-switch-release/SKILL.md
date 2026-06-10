@@ -9,9 +9,10 @@ Use this skill for repo-specific release work in `cc-switch`.
 
 ## Core Rules
 
-- Treat `origin` as the release repo: `cp-yu/cc-switch-web`.
+- Treat `origin` as the release repo: `dkfjtang/ccs-gateway-web`.
 - Treat `upstream` as the source mirror. Do not use it for release verification unless the user explicitly asks.
-- Pass `-R cp-yu/cc-switch-web` to `gh` when checking Actions or Releases. The default `gh` repo may point elsewhere.
+- Pass `-R dkfjtang/ccs-gateway-web` to `gh` when checking Actions or Releases. The default `gh` repo may point elsewhere.
+- Treat `cp-yu/cc-switch-web` as a historical/reference fork only, not as a release target.
 - Treat official GitHub Releases as Web-only. `Build Web Release` runs on tag push. `Desktop Release (Manual)` is manual only.
 - Keep version fields aligned in:
   - `package.json`
@@ -37,14 +38,14 @@ Use this skill for repo-specific release work in `cc-switch`.
 5. Verify the result.
    Confirm `git status` is clean, HEAD/tag moved as expected, and version values match.
    For remote verification, use:
-   `gh -R cp-yu/cc-switch-web run list --limit 5`
-   `gh -R cp-yu/cc-switch-web release view v<version> --json tagName,name,publishedAt,url,assets`
+   `gh -R dkfjtang/ccs-gateway-web run list --limit 5`
+   `gh -R dkfjtang/ccs-gateway-web release view v<version> --json tagName,name,publishedAt,url,assets`
 
 ## Failure Handling
 
 - If `release-manager.mjs` rejects the worktree, fix staging hygiene instead of bypassing the check.
 - If a tag already exists remotely, do not rewrite it unless the user explicitly asks for destructive history changes.
-- If Actions succeeded but a release is missing, verify the run and release against `cp-yu/cc-switch-web`, not the upstream repo.
+- If Actions succeeded but a release is missing, verify the run and release against `dkfjtang/ccs-gateway-web`, not the upstream repo or the historical `ccs-web` reference.
 - If the task involves changing release behavior itself, edit the workflow or helper script first, then cut a new tag.
 
 ## Resources

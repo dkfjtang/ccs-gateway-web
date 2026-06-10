@@ -301,7 +301,7 @@ fn insert_gemini_session_entry(
     };
 
     // 使用 UPSERT：新记录插入，已存在记录更新 token 和费用（Gemini 全量重读可能携带更新值）
-    conn.execute(
+    let changed_rows = conn.execute(
         "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -353,7 +353,11 @@ fn insert_gemini_session_entry(
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
 
     // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
-    Ok(conn.changes() > 0)
+    if changed_rows > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
+
+    Ok(changed_rows > 0)
 }
 
 /// 查找 Gemini 模型定价

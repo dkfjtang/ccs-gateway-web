@@ -11,8 +11,8 @@ use super::{
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
-        gemini_shadow::GeminiShadowStore, get_adapter, AuthInfo, AuthStrategy, ProviderAdapter,
-        ProviderType,
+        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
+        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
@@ -98,6 +98,7 @@ pub struct RequestForwarder {
     responses_session_providers: Arc<RwLock<HashMap<String, String>>>,
     responses_response_providers: Arc<RwLock<HashMap<String, String>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
+    codex_chat_history: Arc<CodexChatHistoryStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
@@ -136,6 +137,7 @@ impl RequestForwarder {
         responses_session_providers: Arc<RwLock<HashMap<String, String>>>,
         responses_response_providers: Arc<RwLock<HashMap<String, String>>>,
         gemini_shadow: Arc<GeminiShadowStore>,
+        codex_chat_history: Arc<CodexChatHistoryStore>,
         failover_manager: Arc<FailoverSwitchManager>,
         app_handle: Option<UiAppHandle>,
         current_provider_id_at_start: String,
@@ -158,6 +160,7 @@ impl RequestForwarder {
             responses_session_providers,
             responses_response_providers,
             gemini_shadow,
+            codex_chat_history,
             failover_manager,
             app_handle,
             current_provider_id_at_start,
@@ -472,15 +475,14 @@ impl RequestForwarder {
                         }
                     }
 
-                    self
-                        .record_responses_session_provider_if_needed(
-                            app_type_str,
-                            endpoint,
-                            &body,
-                            provider,
-                            claude_api_format.as_deref(),
-                        )
-                        .await;
+                    self.record_responses_session_provider_if_needed(
+                        app_type_str,
+                        endpoint,
+                        &body,
+                        provider,
+                        claude_api_format.as_deref(),
+                    )
+                    .await;
 
                     return Ok(ForwardResult {
                         response,
@@ -615,15 +617,14 @@ impl RequestForwarder {
                                             }
                                         }
 
-                                        self
-                                            .record_responses_session_provider_if_needed(
-                                                app_type_str,
-                                                endpoint,
-                                                &body,
-                                                provider,
-                                                claude_api_format.as_deref(),
-                                            )
-                                            .await;
+                                        self.record_responses_session_provider_if_needed(
+                                            app_type_str,
+                                            endpoint,
+                                            &body,
+                                            provider,
+                                            claude_api_format.as_deref(),
+                                        )
+                                        .await;
 
                                         return Ok(ForwardResult {
                                             response,
@@ -784,15 +785,14 @@ impl RequestForwarder {
                                         }
                                     }
 
-                                    self
-                                        .record_responses_session_provider_if_needed(
-                                            app_type_str,
-                                            endpoint,
-                                            &body,
-                                            provider,
-                                            claude_api_format.as_deref(),
-                                        )
-                                        .await;
+                                    self.record_responses_session_provider_if_needed(
+                                        app_type_str,
+                                        endpoint,
+                                        &body,
+                                        provider,
+                                        claude_api_format.as_deref(),
+                                    )
+                                    .await;
 
                                     return Ok(ForwardResult {
                                         response,
@@ -1263,24 +1263,42 @@ impl RequestForwarder {
         } else {
             None
         };
+        if adapter.name() == "Claude" {
+            if let Some(api_format) = resolved_claude_api_format.as_deref() {
+                super::providers::normalize_anthropic_messages_for_provider(
+                    &mut mapped_body,
+                    provider,
+                    api_format,
+                );
+            }
+        }
         let needs_transform = match resolved_claude_api_format.as_deref() {
             Some(api_format) => super::providers::claude_api_format_needs_transform(api_format),
             None => adapter.needs_transform(provider),
         };
-        let (effective_endpoint, passthrough_query) =
-            if needs_transform && adapter.name() == "Claude" {
-                let api_format = resolved_claude_api_format
-                    .as_deref()
-                    .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
-                rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
-            } else {
-                (
-                    endpoint.to_string(),
-                    split_endpoint_and_query(endpoint)
-                        .1
-                        .map(ToString::to_string),
-                )
-            };
+        let codex_responses_to_chat = matches!(app_type, AppType::Codex)
+            && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
+        let (effective_endpoint, passthrough_query) = if codex_responses_to_chat {
+            rewrite_codex_responses_endpoint_to_chat(endpoint)
+        } else if needs_transform && adapter.name() == "Claude" {
+            let api_format = resolved_claude_api_format
+                .as_deref()
+                .unwrap_or_else(|| super::providers::get_claude_api_format(provider));
+            rewrite_claude_transform_endpoint(endpoint, api_format, is_copilot, &mapped_body)
+        } else {
+            (
+                endpoint.to_string(),
+                split_endpoint_and_query(endpoint)
+                    .1
+                    .map(ToString::to_string),
+            )
+        };
+
+        let codex_chat_base_is_full_endpoint = codex_responses_to_chat
+            && base_url
+                .trim_end_matches('/')
+                .to_ascii_lowercase()
+                .ends_with("/chat/completions");
 
         let url = if matches!(resolved_claude_api_format.as_deref(), Some("gemini_native")) {
             super::gemini_url::resolve_gemini_native_url(
@@ -1288,14 +1306,32 @@ impl RequestForwarder {
                 &effective_endpoint,
                 is_full_url,
             )
-        } else if is_full_url {
+        } else if is_full_url || codex_chat_base_is_full_endpoint {
             append_query_to_full_url(&base_url, passthrough_query.as_deref())
         } else {
             adapter.build_url(&base_url, &effective_endpoint)
         };
 
         // 转换请求体（如果需要）
-        let request_body = if needs_transform {
+        let request_body = if codex_responses_to_chat {
+            let mut mapped_body = mapped_body;
+            let restored = self
+                .codex_chat_history
+                .enrich_request(&mut mapped_body)
+                .await;
+            if restored > 0 {
+                log::debug!(
+                    "[Codex] Restored {restored} cached function call(s) for Chat upstream"
+                );
+            }
+            super::providers::apply_codex_chat_upstream_model(provider, &mut mapped_body);
+            let reasoning_config =
+                super::providers::resolve_codex_chat_reasoning_config(provider, &mapped_body);
+            super::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+                mapped_body,
+                reasoning_config.as_ref(),
+            )?
+        } else if needs_transform {
             if adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -1324,18 +1360,21 @@ impl RequestForwarder {
             && should_apply_openai_responses_compatibility(
                 &effective_endpoint,
                 resolved_claude_api_format.as_deref(),
-            )
-        {
+            ) {
             provider.apply_openai_responses_compatibility(request_body)
         } else {
             request_body
         };
 
-        let token_saver_summary = if self.optimizer_config.enabled && self.optimizer_config.token_saver {
-            Some(super::token_saver::optimize(&mut request_body, &self.optimizer_config))
-        } else {
-            None
-        };
+        let token_saver_summary =
+            if self.optimizer_config.enabled && self.optimizer_config.token_saver {
+                Some(super::token_saver::optimize(
+                    &mut request_body,
+                    &self.optimizer_config,
+                ))
+            } else {
+                None
+            };
 
         if self.optimizer_config.enabled && self.optimizer_config.token_saver {
             if let Some(summary) = token_saver_summary.as_ref() {
@@ -1369,7 +1408,8 @@ impl RequestForwarder {
         );
         let request_is_streaming =
             is_streaming_request(&effective_endpoint, &filtered_body, headers);
-        let force_identity_encoding = needs_transform || request_is_streaming;
+        let force_identity_encoding =
+            needs_transform || codex_responses_to_chat || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
         let mut codex_oauth_account_id: Option<String> = None;
@@ -1380,7 +1420,10 @@ impl RequestForwarder {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
 
             #[cfg(not(feature = "desktop"))]
-            if matches!(auth.strategy, AuthStrategy::GitHubCopilot | AuthStrategy::CodexOAuth) {
+            if matches!(
+                auth.strategy,
+                AuthStrategy::GitHubCopilot | AuthStrategy::CodexOAuth
+            ) {
                 return Err(ProxyError::AuthError(
                     "OAuth-backed provider requires desktop auth manager".to_string(),
                 ));
@@ -2254,10 +2297,7 @@ fn is_responses_endpoint_or_format(endpoint: &str, api_format: Option<&str>) -> 
     path.ends_with("/responses") || path.ends_with("/responses/compact")
 }
 
-fn should_apply_openai_responses_compatibility(
-    endpoint: &str,
-    api_format: Option<&str>,
-) -> bool {
+fn should_apply_openai_responses_compatibility(endpoint: &str, api_format: Option<&str>) -> bool {
     is_responses_endpoint_or_format(endpoint, api_format)
 }
 
@@ -2319,12 +2359,24 @@ fn body_contains_reasoning_item(body: &Value) -> bool {
 
 fn contains_key_recursive(value: &Value, key: &str) -> bool {
     match value {
-        Value::Object(map) => map
-            .iter()
-            .any(|(item_key, item_value)| item_key == key || contains_key_recursive(item_value, key)),
+        Value::Object(map) => map.iter().any(|(item_key, item_value)| {
+            item_key == key || contains_key_recursive(item_value, key)
+        }),
         Value::Array(items) => items.iter().any(|item| contains_key_recursive(item, key)),
         _ => false,
     }
+}
+
+fn rewrite_codex_responses_endpoint_to_chat(endpoint: &str) -> (String, Option<String>) {
+    let (_path, query) = split_endpoint_and_query(endpoint);
+    let passthrough_query = query.map(ToString::to_string);
+    let target_path = "/chat/completions";
+    let rewritten = match passthrough_query.as_deref() {
+        Some(query) if !query.is_empty() => format!("{target_path}?{query}"),
+        _ => target_path.to_string(),
+    };
+
+    (rewritten, passthrough_query)
 }
 
 fn rewrite_claude_transform_endpoint(
@@ -2620,6 +2672,7 @@ mod tests {
             responses_session_providers: Arc::new(RwLock::new(HashMap::new())),
             responses_response_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
+            codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             failover_manager: Arc::new(FailoverSwitchManager::new(db)),
             app_handle: None,
             current_provider_id_at_start: String::new(),
@@ -3049,7 +3102,10 @@ mod tests {
         )
         .await;
 
-        assert_eq!(map.read().await.get("session-1").map(String::as_str), Some("provider-b"));
+        assert_eq!(
+            map.read().await.get("session-1").map(String::as_str),
+            Some("provider-b")
+        );
     }
 
     #[tokio::test]
@@ -3073,7 +3129,10 @@ mod tests {
         )
         .await;
 
-        assert_eq!(map.read().await.get("resp-1").map(String::as_str), Some("provider-a"));
+        assert_eq!(
+            map.read().await.get("resp-1").map(String::as_str),
+            Some("provider-a")
+        );
     }
 
     #[test]

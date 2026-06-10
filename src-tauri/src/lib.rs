@@ -35,6 +35,7 @@ mod store;
 #[cfg(feature = "desktop")]
 mod tray;
 mod ui_runtime;
+mod usage_events;
 mod usage_script;
 
 pub use app_config::{
@@ -96,6 +97,11 @@ pub use services::provider::{
     import_hermes_providers_from_live, import_openclaw_providers_from_live,
     import_opencode_providers_from_live,
 };
+pub use services::s3_sync::{
+    check_connection as s3_check_connection, download as s3_download,
+    fetch_remote_info as s3_fetch_remote_info, run_with_sync_lock as s3_run_with_sync_lock,
+    sync_mutex as s3_sync_mutex, upload as s3_upload,
+};
 pub use services::session_usage::{DataSourceSummary, SessionSyncResult};
 pub use services::skill::{DiscoverableSkill, Skill, SkillRepo};
 pub use services::skill::{
@@ -127,8 +133,9 @@ pub use session_manager::{
     DeleteSessionOutcome, DeleteSessionRequest, SessionMessage, SessionMeta,
 };
 pub use settings::{
-    get_settings, get_webdav_sync_settings, reload_settings, set_webdav_sync_settings,
-    update_settings, update_webdav_sync_status, AppSettings, WebDavSyncSettings,
+    get_s3_sync_settings, get_settings, get_webdav_sync_settings, reload_settings,
+    set_s3_sync_settings, set_webdav_sync_settings, update_s3_sync_status, update_settings,
+    update_webdav_sync_status, AppSettings, S3SyncSettings, WebDavSyncSettings,
 };
 pub use store::AppState;
 
@@ -361,6 +368,11 @@ pub const WEB_COMPAT_TAURI_COMMANDS: &[&str] = &[
     "webdav_sync_download",
     "webdav_sync_save_settings",
     "webdav_sync_fetch_remote_info",
+    "s3_test_connection",
+    "s3_sync_upload",
+    "s3_sync_download",
+    "s3_sync_save_settings",
+    "s3_sync_fetch_remote_info",
     "parse_deeplink",
     "merge_deeplink_config",
     "import_from_deeplink",
@@ -827,6 +839,8 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            usage_events::init(app.handle().clone());
 
             // 初始化数据库
             let app_config_dir = crate::config::get_app_config_dir();
@@ -1308,6 +1322,10 @@ pub fn run() {
                 app_state.db.clone(),
                 app.handle().clone(),
             );
+            crate::services::s3_auto_sync::start_worker(
+                app_state.db.clone(),
+                app.handle().clone(),
+            );
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
 
@@ -1640,6 +1658,11 @@ pub fn run() {
             commands::webdav_sync_download,
             commands::webdav_sync_save_settings,
             commands::webdav_sync_fetch_remote_info,
+            commands::s3_test_connection,
+            commands::s3_sync_upload,
+            commands::s3_sync_download,
+            commands::s3_sync_save_settings,
+            commands::s3_sync_fetch_remote_info,
             commands::save_file_dialog,
             commands::open_file_dialog,
             commands::open_zip_file_dialog,

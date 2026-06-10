@@ -108,6 +108,8 @@ impl<'a> UsageLogger<'a> {
         )
         .map_err(|e| AppError::Database(format!("记录请求日志失败: {e}")))?;
 
+        crate::usage_events::notify_log_recorded();
+
         Ok(())
     }
 

@@ -151,6 +151,67 @@ pub fn read_and_validate_codex_config_text() -> Result<String, AppError> {
     Ok(s)
 }
 
+pub fn extract_codex_auth_api_key(auth: &Value) -> Option<String> {
+    auth.get("OPENAI_API_KEY")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+}
+
+/// Extract the upstream base URL from a Codex `config.toml` string.
+///
+/// Prefers the active `[model_providers.<model_provider>].base_url`, falling
+/// back to a top-level `base_url` when no model provider is selected.
+pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
+    let doc = config_text.parse::<toml::Value>().ok()?;
+
+    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
+        if let Some(base_url) = doc
+            .get("model_providers")
+            .and_then(|providers| providers.get(active_provider))
+            .and_then(|provider| provider.get("base_url"))
+            .and_then(|v| v.as_str())
+        {
+            return Some(base_url.to_string());
+        }
+    }
+
+    doc.get("base_url")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string)
+}
+
+pub fn extract_codex_experimental_bearer_token(config_text: &str) -> Option<String> {
+    if !config_text.contains("experimental_bearer_token") {
+        return None;
+    }
+    let doc = config_text.parse::<DocumentMut>().ok()?;
+    let provider_id = active_codex_model_provider_id(&doc);
+
+    let top_level_token = || {
+        doc.get("experimental_bearer_token")
+            .and_then(|item| item.as_str())
+    };
+    let token = match provider_id.as_deref() {
+        Some(id) if is_custom_codex_model_provider_id(id) => doc
+            .get("model_providers")
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get(id))
+            .and_then(|item| item.as_table())
+            .and_then(|table| table.get("experimental_bearer_token"))
+            .and_then(|item| item.as_str())
+            .or_else(top_level_token),
+        Some(_) => top_level_token(),
+        None => top_level_token(),
+    };
+
+    token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+}
+
 fn active_codex_model_provider_id(doc: &DocumentMut) -> Option<String> {
     doc.get("model_provider")
         .and_then(|item| item.as_str())

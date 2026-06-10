@@ -23,7 +23,6 @@ pub fn get_usage_summary(
         .get_usage_summary(start_date, end_date, app_type.as_deref())
 }
 
-
 /// 获取按 app_type 拆分的使用量汇总
 #[cfg(feature = "desktop")]
 #[tauri::command]

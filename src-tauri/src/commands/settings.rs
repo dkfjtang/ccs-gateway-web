@@ -21,6 +21,21 @@ fn merge_settings_for_save(
         }
         _ => {}
     }
+    match (&mut incoming.s3_sync, &existing.s3_sync) {
+        // incoming 没有 s3 → 保留现有
+        (None, _) => {
+            incoming.s3_sync = existing.s3_sync.clone();
+        }
+        // get_settings_for_frontend 总是清空 secret_access_key；通用 save_settings
+        // 传入空 secret 表示保持现有，而不是主动清空。
+        (Some(incoming_sync), Some(existing_sync))
+            if incoming_sync.secret_access_key.is_empty()
+                && !existing_sync.secret_access_key.is_empty() =>
+        {
+            incoming_sync.secret_access_key = existing_sync.secret_access_key.clone();
+        }
+        _ => {}
+    }
     incoming
 }
 
@@ -83,7 +98,7 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::merge_settings_for_save;
-    use crate::settings::{AppSettings, WebDavSyncSettings};
+    use crate::settings::{AppSettings, S3SyncSettings, WebDavSyncSettings};
 
     #[test]
     fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
@@ -190,6 +205,60 @@ mod tests {
             Some("")
         );
     }
+
+    #[test]
+    fn save_settings_should_preserve_existing_s3_when_payload_omits_it() {
+        let mut existing = AppSettings::default();
+        existing.s3_sync = Some(S3SyncSettings {
+            region: "us-east-1".to_string(),
+            bucket: "ccs-backup".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "SECRET".to_string(),
+            ..S3SyncSettings::default()
+        });
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert!(merged.s3_sync.is_some());
+        assert_eq!(
+            merged.s3_sync.as_ref().map(|v| v.bucket.as_str()),
+            Some("ccs-backup")
+        );
+        assert_eq!(
+            merged.s3_sync.as_ref().map(|v| v.secret_access_key.as_str()),
+            Some("SECRET")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_s3_secret_when_incoming_has_empty_secret() {
+        let mut existing = AppSettings::default();
+        existing.s3_sync = Some(S3SyncSettings {
+            region: "us-east-1".to_string(),
+            bucket: "ccs-backup".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "SECRET".to_string(),
+            ..S3SyncSettings::default()
+        });
+
+        let mut incoming = AppSettings::default();
+        incoming.s3_sync = Some(S3SyncSettings {
+            region: "us-east-1".to_string(),
+            bucket: "ccs-backup".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: String::new(),
+            ..S3SyncSettings::default()
+        });
+
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged.s3_sync.as_ref().map(|v| v.secret_access_key.as_str()),
+            Some("SECRET"),
+            "empty S3 secret from frontend must not overwrite existing secret"
+        );
+    }
 }
 
 /// 获取开机自启状态
@@ -252,7 +321,10 @@ pub async fn set_optimizer_config(
     }
 
     if config.token_saver_keep_chars >= config.token_saver_min_chars {
-        return Err("Invalid token_saver_keep_chars value: must be smaller than token_saver_min_chars".to_string());
+        return Err(
+            "Invalid token_saver_keep_chars value: must be smaller than token_saver_min_chars"
+                .to_string(),
+        );
     }
 
     state

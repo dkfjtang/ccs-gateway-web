@@ -76,11 +76,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://www.packyapi.com",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.5-flash",
       },
     },
     baseURL: "https://www.packyapi.com",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.5-flash",
     description: "PackyCode",
     category: "third_party",
     isPartner: true,
@@ -338,11 +338,11 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://api.therouter.ai",
-        GEMINI_MODEL: "gemini-3.1-pro",
+        GEMINI_MODEL: "gemini-3.5-flash",
       },
     },
     baseURL: "https://api.therouter.ai",
-    model: "gemini-3.1-pro",
+    model: "gemini-3.5-flash",
     description: "TheRouter",
     category: "aggregator",
     endpointCandidates: ["https://api.therouter.ai"],

@@ -41,13 +41,13 @@ rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web &
 Run the local container without using production data:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && mkdir -p .run/local-cc-switch .run/local-openclaw && docker run --rm --name ccs-gateway-web-local -p 127.0.0.1:17666:17666 -p 127.0.0.1:15721:15721 -e CC_SWITCH_HOST=0.0.0.0 -e CC_SWITCH_PORT=17666 -e CC_SWITCH_AUTO_PORT=false -e CC_SWITCH_START_PROXY=false -e RUST_LOG=cc_switch_server=info,tower_http=info -v "$PWD/.run/local-cc-switch:/root/.cc-switch" -v "$PWD/.run/local-openclaw:/root/.openclaw:ro" ccs-gateway-web:local'
+rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && mkdir -p .run/local-cc-switch .run/local-openclaw && docker run --rm --name ccs-gateway-web-local -p 127.0.0.1:17666:17666 -p 127.0.0.1:15721:15721 -e CC_SWITCH_HOST=0.0.0.0 -e CC_SWITCH_PORT=17666 -e CC_SWITCH_AUTO_PORT=false -e CC_SWITCH_START_PROXY=true -e RUST_LOG=cc_switch_server=info,tower_http=info -v "$PWD/.run/local-cc-switch:/root/.cc-switch" -v "$PWD/.run/local-openclaw:/root/.openclaw" ccs-gateway-web:local'
 ```
 
 Smoke test from another shell:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && CCS_TARGET_NAME=local CCS_CONTAINER_NAME=ccs-gateway-web-local CCS_SKIP_PROXY=true ./scripts/ccs-prod-probe.sh'
+rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && CCS_TARGET_NAME=local CCS_CONTAINER_NAME=ccs-gateway-web-local ./scripts/ccs-prod-probe.sh'
 ```
 
 ## Sensitive Data Policy
@@ -86,7 +86,7 @@ Each production host keeps runtime data outside the repo:
 | `/root/.cc-switch` | CCS database, settings, proxy config, backups, Web auth |
 | `/root/.cc-switch/web-auth.json` | Server-local Web Auth config |
 | `/root/.cc-switch/web-auth-password.txt` | Server-local password note, never committed |
-| `/root/.openclaw` | OpenClaw config mounted read-only |
+| `/root/.openclaw` | OpenClaw config mounted read-write so OpenClaw/Caveman prompt config can be updated |
 
 Required runtime environment:
 
@@ -132,17 +132,21 @@ If either host uses a different external NGINX port, override only `CCS_NGINX_BA
 
 ## Release Flow
 
-1. Run the local overlay gate from Windows PowerShell:
+1. Run the official upstream and local overlay gates from Windows PowerShell:
 
 ```powershell
+rtk powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-official-upstream-alignment.ps1
 rtk powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-local-overlays.ps1
 ```
 
-The gate must print:
+The gates must print:
 
 ```text
+official_upstream_alignment=ready
 overlay_status=overlay_ready
 ```
+
+The upstream alignment gate also enforces that desktop updater endpoints use the fork release channel and that `.upstream/` remains a local, untracked comparison cache. Do not publish fork desktop builds that still point to the official `farion1231/cc-switch` updater feed.
 
 2. Local build in WSL Docker.
 3. Local smoke test with isolated `.run/local-*` volumes.
@@ -197,4 +201,5 @@ Release is not healthy until:
 - `/.env` through NGINX returns `404`.
 - Unauthenticated protected API calls return `401` when Web Auth is enabled.
 - OpenClaw last-hop model call succeeds through the CCS proxy route.
+- `verify-official-upstream-alignment.ps1` prints `official_upstream_alignment=ready`.
 - `verify-local-overlays.ps1` prints `overlay_status=overlay_ready`.

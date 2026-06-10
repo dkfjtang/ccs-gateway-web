@@ -846,10 +846,10 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
           cost: { input: 1.75, output: 14, cacheRead: 0.175 },
         },
         {
-          id: "google/gemini-3-flash-preview",
-          name: "Gemini 3 Flash Preview",
+          id: "google/gemini-3.5-flash",
+          name: "Gemini 3.5 Flash",
           contextWindow: 1000000,
-          cost: { input: 0.5, output: 3, cacheRead: 0.05 },
+          cost: { input: 1.5, output: 9, cacheRead: 0.15 },
         },
         {
           id: "qwen/qwen3-coder-480b",
@@ -872,13 +872,13 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
         primary: "therouter/anthropic/claude-sonnet-4.6",
         fallbacks: [
           "therouter/openai/gpt-5.2",
-          "therouter/google/gemini-3-flash-preview",
+          "therouter/google/gemini-3.5-flash",
         ],
       },
       modelCatalog: {
         "therouter/anthropic/claude-sonnet-4.6": { alias: "Sonnet" },
         "therouter/openai/gpt-5.2": { alias: "GPT-5.2" },
-        "therouter/google/gemini-3-flash-preview": { alias: "Gemini Flash" },
+        "therouter/google/gemini-3.5-flash": { alias: "Gemini Flash" },
         "therouter/openai/gpt-5.3-codex": { alias: "Codex" },
         "therouter/qwen/qwen3-coder-480b": { alias: "Qwen Coder" },
       },

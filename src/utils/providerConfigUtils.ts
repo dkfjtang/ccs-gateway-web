@@ -417,6 +417,8 @@ export const hasTomlCommonConfigSnippet = (
 const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*$/;
 const TOML_BASE_URL_PATTERN =
   /^\s*base_url\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_WIRE_API_PATTERN =
+  /^\s*wire_api\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PATTERN = /^\s*model\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
 const TOML_MODEL_PROVIDER_LINE_PATTERN =
   /^\s*model_provider\s*=\s*(["'])([^"'\r\n]+)\1\s*(?:#.*)?$/;
@@ -657,6 +659,69 @@ export const getCodexBaseUrl = (
         ? (provider as any).settingsConfig.config
         : "";
     return extractCodexBaseUrl(text);
+  } catch {
+    return undefined;
+  }
+};
+
+const CODEX_CHAT_WIRE_API_VALUES = new Set([
+  "chat",
+  "chat_completions",
+  "chat-completions",
+  "openai_chat",
+  "openai-chat",
+  "openai_chat_completions",
+]);
+
+export const isCodexChatWireApi = (
+  wireApi: string | undefined | null,
+): boolean =>
+  CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
+
+export const extractCodexWireApi = (
+  configText: string | undefined | null,
+): string | undefined => {
+  try {
+    const raw = typeof configText === "string" ? configText : "";
+    const text = normalizeTomlText(raw);
+    if (!text) return undefined;
+
+    const lines = text.split("\n");
+    const targetSectionName = getCodexProviderSectionName(text);
+
+    if (targetSectionName) {
+      const sectionRange = getTomlSectionRange(lines, targetSectionName);
+      if (sectionRange) {
+        const match = findTomlAssignmentInRange(
+          lines,
+          TOML_WIRE_API_PATTERN,
+          sectionRange.bodyStartIndex,
+          sectionRange.bodyEndIndex,
+          targetSectionName,
+        );
+        if (match?.value) {
+          return match.value;
+        }
+      }
+    }
+
+    const topLevelMatch = findTomlAssignmentInRange(
+      lines,
+      TOML_WIRE_API_PATTERN,
+      0,
+      getTopLevelEndIndex(lines),
+    );
+    if (topLevelMatch?.value) {
+      return topLevelMatch.value;
+    }
+
+    const fallbackAssignments = getRecoverableBaseUrlAssignments(
+      findTomlAssignments(lines, TOML_WIRE_API_PATTERN),
+      targetSectionName,
+    );
+    return fallbackAssignments.length === 1
+      ? fallbackAssignments[0].value
+      : undefined;
   } catch {
     return undefined;
   }

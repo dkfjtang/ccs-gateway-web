@@ -3,10 +3,11 @@
 ## Repos and remotes
 
 - Release repo for this workspace:
-  - `origin = git@github.com:cp-yu/cc-switch-web.git`
+  - `origin = git@github.com:dkfjtang/ccs-gateway-web.git`
 - Upstream mirror:
   - `upstream = https://github.com/farion1231/cc-switch.git`
-- Use `gh -R cp-yu/cc-switch-web ...` for release and Actions checks.
+- Use `gh -R dkfjtang/ccs-gateway-web ...` for release and Actions checks.
+- `cp-yu/cc-switch-web` is a historical/reference fork only; do not use it as a release target.
 
 ## Version sources
 
@@ -58,6 +59,6 @@ git log --oneline --decorate -5
 node -p "require('./package.json').version"
 node -p "require('./src-tauri/tauri.conf.json').version"
 sed -n '1,8p' src-tauri/Cargo.toml
-gh -R cp-yu/cc-switch-web run list --limit 5
-gh -R cp-yu/cc-switch-web release view v<version> --json tagName,name,publishedAt,url,assets
+gh -R dkfjtang/ccs-gateway-web run list --limit 5
+gh -R dkfjtang/ccs-gateway-web release view v<version> --json tagName,name,publishedAt,url,assets
 ```

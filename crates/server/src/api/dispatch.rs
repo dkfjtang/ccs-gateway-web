@@ -151,6 +151,11 @@ rpc_business_methods!(
     "webdav_sync_download",
     "webdav_sync_save_settings",
     "webdav_sync_fetch_remote_info",
+    "s3_test_connection",
+    "s3_sync_upload",
+    "s3_sync_download",
+    "s3_sync_save_settings",
+    "s3_sync_fetch_remote_info",
     "get_skills",
     "get_installed_skills",
     "get_skill_backups",
@@ -1939,6 +1944,66 @@ pub async fn dispatch_command(
 
         "webdav_sync_fetch_remote_info" => {
             let result = cc_switch_core::webdav_sync_fetch_remote_info()
+                .await
+                .map_err(RpcError::app_error)?;
+            Ok(result)
+        }
+
+        "s3_test_connection" => {
+            let settings_value = params
+                .get("settings")
+                .ok_or_else(|| RpcError::invalid_params("missing 'settings' field"))?;
+            let settings: cc_switch_core::S3SyncSettings =
+                serde_json::from_value(settings_value.clone()).map_err(|e| {
+                    RpcError::invalid_params(format!("invalid 'settings' value: {e}"))
+                })?;
+            let preserve_empty_secret = params
+                .get("preserveEmptyPassword")
+                .and_then(|v| v.as_bool())
+                .or_else(|| {
+                    params
+                        .get("preserve_empty_password")
+                        .and_then(|v| v.as_bool())
+                });
+            let result = cc_switch_core::s3_test_connection(settings, preserve_empty_secret)
+                .await
+                .map_err(RpcError::app_error)?;
+            Ok(result)
+        }
+
+        "s3_sync_upload" => {
+            let result = cc_switch_core::s3_sync_upload(core)
+                .await
+                .map_err(RpcError::app_error)?;
+            Ok(result)
+        }
+
+        "s3_sync_download" => {
+            let result = cc_switch_core::s3_sync_download(core)
+                .await
+                .map_err(RpcError::app_error)?;
+            Ok(result)
+        }
+
+        "s3_sync_save_settings" => {
+            let settings_value = params
+                .get("settings")
+                .ok_or_else(|| RpcError::invalid_params("missing 'settings' field"))?;
+            let settings: cc_switch_core::S3SyncSettings =
+                serde_json::from_value(settings_value.clone()).map_err(|e| {
+                    RpcError::invalid_params(format!("invalid 'settings' value: {e}"))
+                })?;
+            let password_touched = params
+                .get("passwordTouched")
+                .and_then(|v| v.as_bool())
+                .or_else(|| params.get("password_touched").and_then(|v| v.as_bool()));
+            let result = cc_switch_core::s3_sync_save_settings(settings, password_touched)
+                .map_err(RpcError::app_error)?;
+            Ok(result)
+        }
+
+        "s3_sync_fetch_remote_info" => {
+            let result = cc_switch_core::s3_sync_fetch_remote_info()
                 .await
                 .map_err(RpcError::app_error)?;
             Ok(result)

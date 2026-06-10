@@ -91,8 +91,8 @@ export const OPENCODE_PRESET_MODEL_VARIANTS: Record<
       },
     },
     {
-      id: "gemini-3-flash-preview",
-      name: "Gemini 3 Flash Preview",
+      id: "gemini-3.5-flash",
+      name: "Gemini 3.5 Flash",
       contextLimit: 1048576,
       outputLimit: 65536,
       modalities: {
@@ -964,8 +964,8 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "anthropic/claude-sonnet-4.6": { name: "Claude Sonnet 4.6" },
         "openai/gpt-5.3-codex": { name: "GPT-5.3 Codex" },
         "openai/gpt-5.2": { name: "GPT-5.2" },
-        "google/gemini-3-flash-preview": {
-          name: "Gemini 3 Flash Preview",
+        "google/gemini-3.5-flash": {
+          name: "Gemini 3.5 Flash",
         },
         "qwen/qwen3-coder-480b": { name: "Qwen3 Coder 480B" },
       },

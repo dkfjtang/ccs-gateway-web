@@ -298,6 +298,25 @@ pub struct ClaudeDesktopModelRoute {
     pub supports_1m: Option<bool>,
 }
 
+/// Codex Responses -> Chat Completions 的 reasoning 能力描述。
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct CodexChatReasoningConfig {
+    #[serde(rename = "supportsThinking", skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+    #[serde(rename = "supportsEffort", skip_serializing_if = "Option::is_none")]
+    pub supports_effort: Option<bool>,
+    #[serde(rename = "thinkingParam", skip_serializing_if = "Option::is_none")]
+    pub thinking_param: Option<String>,
+    #[serde(rename = "effortParam", skip_serializing_if = "Option::is_none")]
+    pub effort_param: Option<String>,
+    #[serde(rename = "effortValueMode", skip_serializing_if = "Option::is_none")]
+    pub effort_value_mode: Option<String>,
+    /// 声明性字段：标注上游 reasoning 的回传位置（reasoning_content / reasoning /
+    /// reasoning_details / think_tags）。
+    #[serde(rename = "outputFormat", skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
+}
+
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
@@ -376,8 +395,14 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// Codex Responses -> Chat Completions reasoning capability metadata.
+    #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
+    pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
     /// OpenAI Responses compatibility switch: omit `max_output_tokens` before forwarding.
-    #[serde(rename = "omitMaxOutputTokens", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "omitMaxOutputTokens",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub omit_max_output_tokens: Option<bool>,
     /// OpenAI Responses compatibility switch: include a blank non-empty `instructions` field.
     /// Some upstreams reject Responses requests when the field is absent or empty, while
@@ -896,8 +921,6 @@ mod tests {
         );
         assert!(value.get("omit_max_output_tokens").is_none());
     }
-
-
 
     #[test]
     fn provider_meta_omits_require_responses_instructions_when_none() {

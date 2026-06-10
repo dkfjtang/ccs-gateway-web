@@ -6,10 +6,10 @@
 
 ## 项目来源
 
-本项目主要基于以下两个上游项目继续改造：
+本项目从现在起以官方 CC Switch 主线为唯一跟踪上游，旧 Web fork 仅作为辅助参考：
 
-- [farion1231/cc-switch](https://github.com/farion1231/cc-switch)：CC Switch 主项目，提供 Claude Code / Codex / Gemini 等多应用供应商切换、配置管理、代理、使用量统计、WebDAV 同步等核心能力。
-- [cp-yu/cc-switch-web](https://github.com/cp-yu/cc-switch-web)：Web 运行形态改造参考，为本项目的 Web Server / Web UI 方向提供了重要基础。
+- [farion1231/cc-switch](https://github.com/farion1231/cc-switch)：官方 CC Switch 主项目，是本仓库后续版本拉齐、差异比对和长期跟踪的主线来源，提供 Claude Code / Codex / Gemini 等多应用供应商切换、配置管理、代理、使用量统计、WebDAV 同步等核心能力。
+- [cp-yu/cc-switch-web](https://github.com/cp-yu/cc-switch-web)：历史 Web fork 参考源，仅用于对照旧 `v3.15` Web 运行形态、迁移背景和可借鉴实现，不再作为版本跟踪上游。
 
 本仓库继续保留对原项目能力和结构的尊重：上游的 Tauri 桌面代码、配置管理、代理转换、使用量统计、WebDAV 同步、Skills / MCP / Prompt 等能力仍是本项目的重要基础。
 
@@ -110,7 +110,7 @@ docker compose -f docker-compose.ccs-web.yml up -d
 - 外部只通过 NGINX 访问 Web UI/API。
 - 不要把 `15721` 模型代理端口暴露到公网或局域网。
 - 启用 `/root/.cc-switch/web-auth.json` 保护管理 UI/API。
-- 持久化 `/root/.cc-switch`，只读挂载 `/root/.openclaw`。
+- 持久化 `/root/.cc-switch`，可写挂载 `/root/.openclaw`，以便 OpenClaw/Caveman prompt 配置能够写回。
 
 ## 常用检查
 
@@ -190,4 +190,4 @@ cargo build --release --manifest-path crates/server/Cargo.toml
 
 感谢 [cp-yu/cc-switch-web](https://github.com/cp-yu/cc-switch-web) 对 Web 运行形态的探索和实现，为本仓库继续推进 Web Server、Docker 部署和 OpenClaw 集成提供了重要基础。
 
-本项目能够继续演进，建立在两个上游项目及其贡献者的工作之上。谢谢你们的付出。
+本项目能够继续演进，建立在官方 CC Switch 主线、历史 Web fork 参考及其贡献者工作的基础之上。谢谢你们的付出。

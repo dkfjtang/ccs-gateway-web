@@ -65,7 +65,13 @@ pub fn filter_private_params(body: Value) -> Value {
 /// ```
 pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
-    filter_recursive_with_whitelist(body, &mut Vec::new(), &whitelist_set, false, &mut Vec::new())
+    filter_recursive_with_whitelist(
+        body,
+        &mut Vec::new(),
+        &whitelist_set,
+        false,
+        &mut Vec::new(),
+    )
 }
 
 /// 递归过滤实现（支持白名单）
@@ -90,8 +96,9 @@ fn filter_recursive_with_whitelist(
                         removed_keys.push(key);
                         None
                     } else {
-                        let child_preserve_private_keys =
-                            preserve_schema_property_names && key == "properties" && val.is_object();
+                        let child_preserve_private_keys = preserve_schema_property_names
+                            && key == "properties"
+                            && val.is_object();
                         path.push(key.clone());
                         let filtered_value = filter_recursive_with_whitelist(
                             val,
@@ -101,10 +108,7 @@ fn filter_recursive_with_whitelist(
                             path,
                         );
                         path.pop();
-                        Some((
-                            key,
-                            filtered_value,
-                        ))
+                        Some((key, filtered_value))
                     }
                 })
                 .collect();
@@ -128,7 +132,10 @@ fn filter_recursive_with_whitelist(
 
 fn is_known_json_schema_path(path: &[String]) -> bool {
     let tail = path.last().map(String::as_str);
-    matches!(tail, Some("parameters" | "input_schema" | "schema" | "json_schema"))
+    matches!(
+        tail,
+        Some("parameters" | "input_schema" | "schema" | "json_schema")
+    )
 }
 
 #[cfg(test)]
