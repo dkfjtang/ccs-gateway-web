@@ -283,8 +283,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           {/* 已用 */}
           {firstUsage.used !== undefined && (
             <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400 text-[11px]">
-                {t("usage.usedShort", { defaultValue: "用" })}
+              <span className="text-gray-500 dark:text-gray-400">
+                {t("usage.used")}
               </span>
               <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
                 {firstUsage.used.toFixed(2)}
@@ -295,8 +295,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           {/* 剩余 */}
           {firstUsage.remaining !== undefined && (
             <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400 text-[11px]">
-                {t("usage.remainingShort", { defaultValue: "余" })}
+              <span className="text-gray-500 dark:text-gray-400">
+                {t("usage.remaining")}
               </span>
               <span
                 className={`font-semibold tabular-nums ${

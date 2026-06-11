@@ -184,7 +184,7 @@ describe("UsageFooter", () => {
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveAttribute("title", "当前倍率 2x");
     expect(screen.getByText("探测异常")).toBeInTheDocument();
-    expect(screen.getByText("用")).toBeInTheDocument();
+    expect(screen.getByText("usage.used")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();
     expect(screen.getByText(/总请求/)).toBeInTheDocument();
   });

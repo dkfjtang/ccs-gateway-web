@@ -21,8 +21,6 @@ describe("i18n bootstrap", () => {
     const keys = [
       "usage.currentRate",
       "usage.currentRateValue",
-      "usage.usedShort",
-      "usage.remainingShort",
       "usage.usagePartialError",
       "usage.probePartialError",
     ];
