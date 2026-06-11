@@ -31,6 +31,49 @@ interface UsageScriptModalProps {
   onSave: (script: UsageScript) => void;
 }
 
+const LEGACY_EMPTY_USAGE_CODE =
+  "({ request: {}, extractor: function() { return {}; } })";
+
+const parseUsageScriptJsonDraft = (value: string): Partial<UsageScript> | null => {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.probes)) {
+      return null;
+    }
+
+    return {
+      ...parsed,
+      enabled: parsed.enabled !== false,
+      language: "javascript",
+      code:
+        typeof parsed.code === "string" && parsed.code.trim()
+          ? parsed.code
+          : LEGACY_EMPTY_USAGE_CODE,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const mergeUsageScriptDraft = (
+  current: UsageScript,
+  draft: Partial<UsageScript>,
+): UsageScript => ({
+  ...current,
+  ...draft,
+  apiKey: draft.apiKey ?? current.apiKey,
+  baseUrl: draft.baseUrl ?? current.baseUrl,
+  accessToken: draft.accessToken ?? current.accessToken,
+  userId: draft.userId ?? current.userId,
+  language: "javascript",
+  code: draft.code ?? current.code,
+});
+
 // 生成预设模板的函数（支持国际化）
 const generatePresetTemplates = (
   t: (key: string) => string,
@@ -342,24 +385,29 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
+    const importedScript = parseUsageScriptJsonDraft(script.code);
+    const effectiveScript = importedScript
+      ? mergeUsageScriptDraft(script, importedScript)
+      : script;
+
     // Copilot、Coding Plan、Balance 模板不需要脚本验证
     if (
       selectedTemplate !== TEMPLATE_TYPES.GITHUB_COPILOT &&
       selectedTemplate !== TEMPLATE_TYPES.TOKEN_PLAN &&
       selectedTemplate !== TEMPLATE_TYPES.BALANCE
     ) {
-      if (script.enabled && !script.code.trim()) {
+      if (effectiveScript.enabled && !effectiveScript.code.trim()) {
         toast.error(t("usageScript.scriptEmpty"));
         return;
       }
-      if (script.enabled && !script.code.includes("return")) {
+      if (effectiveScript.enabled && !effectiveScript.code.includes("return")) {
         toast.error(t("usageScript.mustHaveReturn"), { duration: 5000 });
         return;
       }
     }
     // 保存时记录当前选择的模板类型
     const scriptWithTemplate = {
-      ...script,
+      ...effectiveScript,
       templateType: selectedTemplate as
         | "custom"
         | "general"
@@ -369,6 +417,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         | "balance"
         | undefined,
     };
+    if (importedScript) {
+      setScript(scriptWithTemplate);
+    }
     onSave(scriptWithTemplate);
     onClose();
   };
@@ -376,6 +427,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
+      const importedScript = parseUsageScriptJsonDraft(script.code);
+      const effectiveScript = importedScript
+        ? mergeUsageScriptDraft(script, importedScript)
+        : script;
+      if (importedScript) {
+        setScript(effectiveScript);
+      }
+
       // 官方余额查询模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.BALANCE) {
         const baseUrl = providerCredentials.baseUrl ?? "";
@@ -473,14 +532,14 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       const result = await usageApi.testScript(
         provider.id,
         appId,
-        script.code,
-        script.timeout,
-        script.apiKey,
-        script.baseUrl,
-        script.accessToken,
-        script.userId,
+        effectiveScript.code,
+        effectiveScript.timeout,
+        effectiveScript.apiKey,
+        effectiveScript.baseUrl,
+        effectiveScript.accessToken,
+        effectiveScript.userId,
         selectedTemplate as "custom" | "general" | "newapi" | undefined,
-        script,
+        effectiveScript,
       );
       if (result.success && result.data && result.data.length > 0) {
         const summary = result.data
@@ -518,6 +577,16 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const handleFormat = async () => {
     try {
+      const importedScript = parseUsageScriptJsonDraft(script.code);
+      if (importedScript) {
+        setScript((prev) => mergeUsageScriptDraft(prev, importedScript));
+        toast.success("已导入完整用量探测配置", {
+          duration: 1500,
+          closeButton: true,
+        });
+        return;
+      }
+
       const [{ format }, parserBabel, pluginEstree] = await Promise.all([
         import("prettier/standalone"),
         import("prettier/parser-babel"),
