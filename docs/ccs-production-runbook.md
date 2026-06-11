@@ -19,7 +19,7 @@ Required state:
 
 - `17666` is CCS Web UI/API and is published on the host loopback only.
 - `15721` is the model proxy and is published on the host loopback only.
-- `30033` is the external NGINX entry and proxies only to `127.0.0.1:17666`.
+- `30033` is the external NGINX entry, listens on `0.0.0.0`, and proxies only to `127.0.0.1:17666`.
 - External clients must not be able to reach `17666` or `15721` directly.
 - Web auth must be enabled before exposing `30033`.
 - The CCS proxy must start automatically after container restart.
@@ -33,7 +33,7 @@ Required state:
 | `/root/.cc-switch/web-auth-password.txt` | Local bootstrap password note, root-only; never commit or paste to chat |
 | `/root/.openclaw/openclaw.json` | OpenClaw config mounted read-only into the container |
 | `docker-compose.ccs-web.yml` | Docker runtime definition for this deployment |
-| `/etc/nginx/sites-available/ccs-gateway-web-30033` | NGINX entry that should proxy `30033 -> 127.0.0.1:17666` |
+| `/etc/nginx/sites-available/ccs-gateway-web-30033` | NGINX entry that should proxy `0.0.0.0:30033 -> 127.0.0.1:17666` |
 
 ## Host NGINX setup
 
@@ -46,7 +46,7 @@ cd /home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web
 sudo bash scripts/install-wsl-nginx-ccs.sh
 ```
 
-The script writes `/etc/nginx/sites-available/ccs-gateway-web-30033`, enables it from `sites-enabled`, validates `nginx -t`, and reloads NGINX. It does not proxy the model proxy port `15721`.
+The script writes `/etc/nginx/sites-available/ccs-gateway-web-30033`, enables it from `sites-enabled`, validates `nginx -t`, and reloads NGINX. The site must listen on IPv4 `0.0.0.0:30033` only; it must not open an IPv6 `[::]:30033` listener, and it does not proxy the model proxy port `15721`.
 
 ## Daily health check
 
@@ -61,6 +61,7 @@ curl -fsS http://127.0.0.1:17666/health
 curl -fsS http://127.0.0.1:15721/status
 curl -fsS http://127.0.0.1:30033/health
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env.web
 ```
 
 Expected:
@@ -69,11 +70,12 @@ Expected:
 ccs-gateway-web is running
 127.0.0.1:17666 is listening
 127.0.0.1:15721 is listening
-30033 is listening via NGINX
+0.0.0.0:30033 is listening via NGINX
 /health on 17666 returns success
 /status on 15721 returns success
 /health on 30033 returns success
 /.env on 30033 returns 404
+/.env.web on 30033 returns 404
 ```
 
 ## External exposure check
@@ -209,6 +211,9 @@ backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/$stamp"
 mkdir -p "$backup_dir/openclaw-config"
 tar -czf "$backup_dir/root-cc-switch.tar.gz" -C /root .cc-switch
 cp -a /root/.openclaw/openclaw.json "$backup_dir/openclaw-config/openclaw.json"
+if [ -f /etc/nginx/sites-available/ccs-gateway-web-30033 ]; then
+  cp -a /etc/nginx/sites-available/ccs-gateway-web-30033 "$backup_dir/nginx-ccs-gateway-web-30033"
+fi
 ```
 
 Confirm backup files exist before proceeding:
@@ -216,6 +221,7 @@ Confirm backup files exist before proceeding:
 ```bash
 ls -lh "$backup_dir"
 ls -lh "$backup_dir/openclaw-config"
+ls -lh "$backup_dir"/nginx-ccs-gateway-web-30033 2>/dev/null || true
 ```
 
 ## Rollback procedure
@@ -238,7 +244,25 @@ tar -xzf "$backup_dir/root-cc-switch.tar.gz" -C /root
 
 Only restore `/root/.openclaw/openclaw.json` if the OpenClaw config was also changed and you have an explicit reason to roll it back.
 
-### 3. Rebuild/restart the last known good image
+### 3. Restore or disable the host NGINX site if needed
+
+If the deployment changed the host NGINX site, restore the backed-up site before restarting NGINX:
+
+```bash
+backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/<timestamp>"
+sudo install -m 0644 "$backup_dir/nginx-ccs-gateway-web-30033" /etc/nginx/sites-available/ccs-gateway-web-30033
+sudo ln -sfn /etc/nginx/sites-available/ccs-gateway-web-30033 /etc/nginx/sites-enabled/ccs-gateway-web-30033
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+If no known-good NGINX site exists and the external entry is the source of failure, disable the CCS site until it can be repaired:
+
+```bash
+sudo rm -f /etc/nginx/sites-enabled/ccs-gateway-web-30033
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 4. Rebuild/restart the last known good image
 
 ```bash
 git log --oneline -5
@@ -253,7 +277,7 @@ Known good commits in this deployment line:
 2f6ffe9 Auto-start CCS local proxy in Docker
 ```
 
-### 4. Re-run minimum gates
+### 5. Re-run minimum gates
 
 ```bash
 curl -fsS http://127.0.0.1:17666/health
