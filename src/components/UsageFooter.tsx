@@ -59,9 +59,9 @@ const UsageRateBadge: React.FC<{ usage: UsageResult; compact?: boolean }> = ({
     usage.rateLabel ||
     t("usage.currentRateValue", {
       rate: usage.rate,
-      defaultValue: `${usage.rate}x`,
+      defaultValue: `${usage.rate}`,
     });
-  const title = `${t("usage.currentRate", { defaultValue: "当前倍率" })} ${label}`;
+  const title = `${t("usage.currentRate", { defaultValue: "单价" })} ${label}`;
 
   return (
     <span
@@ -70,7 +70,7 @@ const UsageRateBadge: React.FC<{ usage: UsageResult; compact?: boolean }> = ({
       }`}
       title={title}
     >
-      {compact ? label : `${t("usage.currentRate", { defaultValue: "当前倍率" })} ${label}`}
+      {compact ? label : `${t("usage.currentRate", { defaultValue: "单价" })} ${label}`}
     </span>
   );
 };

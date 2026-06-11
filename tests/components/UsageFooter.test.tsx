@@ -59,35 +59,35 @@ describe("UsageFooter", () => {
     });
   });
 
-  it("shows current rate when usage failed but rate probe succeeded", () => {
+  it("shows unit price when usage failed but price probe succeeded", () => {
     renderUsageFooter({
       success: false,
       error: "usage probe failed",
-      rate: 1.5,
-      rateLabel: "1.5x",
+      rate: 0.06,
+      rateLabel: "¥0.06",
       probeErrors: {
         usage: "usage probe failed",
       },
     });
 
-    expect(screen.getByText("当前倍率 1.5x")).toBeInTheDocument();
+    expect(screen.getByText("单价 ¥0.06")).toBeInTheDocument();
     expect(screen.getByText("用量异常")).toBeInTheDocument();
   });
 
-  it("keeps long rate labels constrained while exposing the full title", () => {
+  it("keeps long unit price labels constrained while exposing the full title", () => {
     const longRateLabel =
-      "current-rate-from-provider-is-very-long-and-should-not-expand-layout";
+      "unit-price-from-provider-is-very-long-and-should-not-expand-layout";
     renderUsageFooter({
       success: false,
       error: "usage probe failed",
       rateLabel: longRateLabel,
     });
 
-    const badge = screen.getByText(`当前倍率 ${longRateLabel}`);
+    const badge = screen.getByText(`单价 ${longRateLabel}`);
     expect(badge).toHaveClass("inline-block");
     expect(badge).toHaveClass("truncate");
     expect(badge).toHaveClass("max-w-[140px]");
-    expect(badge).toHaveAttribute("title", `当前倍率 ${longRateLabel}`);
+    expect(badge).toHaveAttribute("title", `单价 ${longRateLabel}`);
   });
 
   it("stops propagation when refreshing an inline failed usage result", () => {
@@ -108,13 +108,13 @@ describe("UsageFooter", () => {
     expect(usageApi.query).toHaveBeenCalledWith("provider-1", "claude");
   });
 
-  it("handles rate zero, label-only rate, and missing rate", () => {
+  it("handles unit price zero, label-only price, and missing price", () => {
     const { rerender } = renderUsageFooter({
       success: false,
       error: "usage probe failed",
       rate: 0,
     });
-    expect(screen.getByText("当前倍率 0x")).toBeInTheDocument();
+    expect(screen.getByText("单价 0")).toBeInTheDocument();
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -141,7 +141,7 @@ describe("UsageFooter", () => {
         />
       </QueryClientProvider>,
     );
-    expect(screen.getByText("当前倍率 provider label")).toBeInTheDocument();
+    expect(screen.getByText("单价 provider label")).toBeInTheDocument();
 
     queryClient.setQueryData(["usage", "provider-1", "claude"], {
       success: false,
@@ -159,7 +159,7 @@ describe("UsageFooter", () => {
         />
       </QueryClientProvider>,
     );
-    expect(screen.queryByText(/当前倍率/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/单价/)).not.toBeInTheDocument();
   });
 
   it("shows partial probe marker with successful usage data", () => {
@@ -174,15 +174,15 @@ describe("UsageFooter", () => {
           extra: "今日: $22.7450 / 2679 req, 总请求: 9999",
         },
       ],
-      rate: 2,
+      rateLabel: "¥0.06",
       probeErrors: {
         models: "models probe failed",
       },
     });
 
-    const badge = screen.getByText("2x");
+    const badge = screen.getByText("¥0.06");
     expect(badge).toBeInTheDocument();
-    expect(badge).toHaveAttribute("title", "当前倍率 2x");
+    expect(badge).toHaveAttribute("title", "单价 ¥0.06");
     expect(screen.getByText("探测异常")).toBeInTheDocument();
     expect(screen.getByText("usage.used")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();
