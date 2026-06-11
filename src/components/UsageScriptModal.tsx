@@ -38,9 +38,6 @@ interface UsageScriptModalProps {
   onSave: (script: UsageScript) => void;
 }
 
-const LEGACY_EMPTY_USAGE_CODE =
-  "({ request: {}, extractor: function() { return {}; } })";
-
 const USAGE_PROBE_TYPES = new Set<UsageProbeType>([
   "usage",
   "rate",
@@ -126,10 +123,7 @@ const parseUsageScriptDraft = (value: string): Partial<UsageScript> | null => {
       ...parsed,
       enabled: parsed.enabled !== false,
       language: "javascript",
-      code:
-        typeof parsed.code === "string" && parsed.code.trim()
-          ? parsed.code
-          : LEGACY_EMPTY_USAGE_CODE,
+      code: trimmed,
     };
   } catch {
     // Fall through to legacy JavaScript object/list syntax.
@@ -160,10 +154,7 @@ const parseUsageScriptDraft = (value: string): Partial<UsageScript> | null => {
         : {}),
       enabled: parsed?.enabled !== false,
       language: "javascript",
-      code:
-        typeof parsed?.code === "string" && parsed.code.trim()
-          ? parsed.code
-          : LEGACY_EMPTY_USAGE_CODE,
+      code: trimmed,
       probes,
     };
   } catch {
