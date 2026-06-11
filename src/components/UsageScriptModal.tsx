@@ -3,19 +3,16 @@ import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Provider,
-  UsageScript,
-  UsageData,
-  UsageProbe,
-  UsageProbeType,
-  createUsageScript,
-} from "@/types";
+import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import {
+  mergeUsageScriptDraft,
+  parseUsageScriptDraft,
+} from "@/utils/usageScriptDraft";
 import JsonEditor from "./JsonEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,144 +34,6 @@ interface UsageScriptModalProps {
   onClose: () => void;
   onSave: (script: UsageScript) => void;
 }
-
-const USAGE_PROBE_TYPES = new Set<UsageProbeType>([
-  "usage",
-  "rate",
-  "models",
-  "account",
-]);
-
-const extractFunctionBody = (extractor: unknown): string => {
-  if (typeof extractor === "string") {
-    return extractor;
-  }
-
-  if (typeof extractor !== "function") {
-    return "return response";
-  }
-
-  const source = extractor.toString();
-  const bodyStart = source.indexOf("{");
-  const bodyEnd = source.lastIndexOf("}");
-  if (bodyStart >= 0 && bodyEnd > bodyStart) {
-    return source.slice(bodyStart + 1, bodyEnd).trim();
-  }
-
-  const arrowIndex = source.indexOf("=>");
-  if (arrowIndex >= 0) {
-    return `return (${source.slice(arrowIndex + 2).trim()});`;
-  }
-
-  return "return response";
-};
-
-const normalizeProbeDraft = (value: any, index: number): UsageProbe | null => {
-  if (!value || typeof value !== "object" || !value.request) {
-    return null;
-  }
-
-  const type = USAGE_PROBE_TYPES.has(value.type)
-    ? (value.type as UsageProbeType)
-    : index === 0
-      ? "usage"
-      : "rate";
-  const request = value.request || {};
-  const body =
-    typeof request.body === "string"
-      ? request.body
-      : request.body === undefined
-        ? undefined
-        : JSON.stringify(request.body);
-
-  return {
-    id: value.id || `${type}-${index + 1}`,
-    type,
-    enabled: value.enabled !== false,
-    timeout: value.timeout,
-    request: {
-      url: request.url || "",
-      method: request.method || "GET",
-      headers: request.headers || {},
-      body,
-    },
-    extractor: extractFunctionBody(value.extractor),
-  };
-};
-
-const evaluateUsageScriptDraft = (value: string): unknown => {
-  const trimmed = value.trim();
-  return Function(`"use strict"; return (${trimmed});`)();
-};
-
-const parseUsageScriptDraft = (value: string): Partial<UsageScript> | null => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.probes)) {
-      return null;
-    }
-
-    return {
-      ...parsed,
-      enabled: parsed.enabled !== false,
-      language: "javascript",
-      code: trimmed,
-    };
-  } catch {
-    // Fall through to legacy JavaScript object/list syntax.
-  }
-
-  try {
-    const parsed = evaluateUsageScriptDraft(trimmed) as any;
-    const rawProbes = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray(parsed?.probes)
-        ? parsed.probes
-        : null;
-    if (!rawProbes) {
-      return null;
-    }
-
-    const probes = rawProbes
-      .map((probe: unknown, index: number) => normalizeProbeDraft(probe, index))
-      .filter(Boolean) as UsageProbe[];
-
-    if (probes.length === 0) {
-      return null;
-    }
-
-    return {
-      ...(!Array.isArray(parsed) && parsed && typeof parsed === "object"
-        ? parsed
-        : {}),
-      enabled: parsed?.enabled !== false,
-      language: "javascript",
-      code: trimmed,
-      probes,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const mergeUsageScriptDraft = (
-  current: UsageScript,
-  draft: Partial<UsageScript>,
-): UsageScript => ({
-  ...current,
-  ...draft,
-  apiKey: draft.apiKey ?? current.apiKey,
-  baseUrl: draft.baseUrl ?? current.baseUrl,
-  accessToken: draft.accessToken ?? current.accessToken,
-  userId: draft.userId ?? current.userId,
-  language: "javascript",
-  code: draft.code ?? current.code,
-});
 
 // 生成预设模板的函数（支持国际化）
 const generatePresetTemplates = (
