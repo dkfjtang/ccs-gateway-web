@@ -171,6 +171,7 @@ describe("UsageFooter", () => {
           used: 4,
           remaining: 6,
           unit: "USD",
+          extra: "今日: $22.7450 / 2679 req, 总请求: 9999",
         },
       ],
       rate: 2,
@@ -179,9 +180,13 @@ describe("UsageFooter", () => {
       },
     });
 
-    expect(screen.getByText("当前倍率 2x")).toBeInTheDocument();
+    const badge = screen.getByText("2x");
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute("title", "当前倍率 2x");
     expect(screen.getByText("探测异常")).toBeInTheDocument();
+    expect(screen.getByText("用")).toBeInTheDocument();
     expect(screen.getByText("4.00")).toBeInTheDocument();
+    expect(screen.queryByText(/总请求/)).not.toBeInTheDocument();
   });
 
   it("truncates long probe error titles", () => {

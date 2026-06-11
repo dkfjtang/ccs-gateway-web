@@ -48,7 +48,10 @@ function hasProbeDisplayContext(usage: UsageResult): boolean {
   );
 }
 
-const UsageRateBadge: React.FC<{ usage: UsageResult }> = ({ usage }) => {
+const UsageRateBadge: React.FC<{ usage: UsageResult; compact?: boolean }> = ({
+  usage,
+  compact = false,
+}) => {
   const { t } = useTranslation();
   if (usage.rate === undefined && !usage.rateLabel) return null;
 
@@ -62,10 +65,12 @@ const UsageRateBadge: React.FC<{ usage: UsageResult }> = ({ usage }) => {
 
   return (
     <span
-      className="inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300 min-w-0 max-w-[140px] truncate"
+      className={`inline-block text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-300 min-w-0 truncate ${
+        compact ? "max-w-[84px]" : "max-w-[140px]"
+      }`}
       title={title}
     >
-      {t("usage.currentRate", { defaultValue: "当前倍率" })} {label}
+      {compact ? label : `${t("usage.currentRate", { defaultValue: "当前倍率" })} ${label}`}
     </span>
   );
 };
@@ -226,8 +231,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           </button>
         </div>
         {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
-        <div className="flex items-center gap-2">
-          <UsageRateBadge usage={usage} />
+        <div className="flex items-center gap-2 justify-end">
+          <UsageRateBadge usage={usage} compact />
           <UsageProbeErrorBadge usage={usage} />
           {usageDataList.map((data, index) => (
             <TierBadge key={index} tier={toQuotaTier(data)} t={t} />
@@ -269,14 +274,17 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
         </div>
 
         {/* 第二行：用量和剩余 */}
-        <div className="flex items-center gap-2">
-          <UsageRateBadge usage={usage} />
+        <div
+          className="flex items-center gap-2 justify-end min-w-0"
+          title={firstUsage.extra || undefined}
+        >
+          <UsageRateBadge usage={usage} compact />
           <UsageProbeErrorBadge usage={usage} />
           {/* 已用 */}
           {firstUsage.used !== undefined && (
             <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.used")}
+              <span className="text-gray-500 dark:text-gray-400 text-[11px]">
+                {t("usage.usedShort", { defaultValue: "用" })}
               </span>
               <span className="tabular-nums text-gray-600 dark:text-gray-400 font-medium">
                 {firstUsage.used.toFixed(2)}
@@ -287,8 +295,8 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           {/* 剩余 */}
           {firstUsage.remaining !== undefined && (
             <div className="flex items-center gap-0.5">
-              <span className="text-gray-500 dark:text-gray-400">
-                {t("usage.remaining")}
+              <span className="text-gray-500 dark:text-gray-400 text-[11px]">
+                {t("usage.remainingShort", { defaultValue: "余" })}
               </span>
               <span
                 className={`font-semibold tabular-nums ${
@@ -312,15 +320,6 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             </span>
           )}
 
-          {/* 扩展字段 extra */}
-          {firstUsage.extra && (
-            <span
-              className="text-gray-500 dark:text-gray-400 truncate max-w-[150px]"
-              title={firstUsage.extra}
-            >
-              {firstUsage.extra}
-            </span>
-          )}
         </div>
       </div>
     );
