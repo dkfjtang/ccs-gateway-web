@@ -320,6 +320,15 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
             </span>
           )}
 
+          {/* 扩展字段 extra */}
+          {firstUsage.extra && (
+            <span
+              className="text-gray-500 dark:text-gray-400 truncate max-w-[150px]"
+              title={firstUsage.extra}
+            >
+              {firstUsage.extra}
+            </span>
+          )}
         </div>
       </div>
     );
