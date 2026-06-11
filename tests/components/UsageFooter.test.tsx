@@ -101,6 +101,8 @@ describe("UsageFooter", () => {
       true,
       onParentClick,
     );
+    expect(screen.getByText("单价 1")).toBeInTheDocument();
+    expect(screen.queryByText("单价 1x")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTitle("usage.refreshUsage"));
 
@@ -116,6 +118,12 @@ describe("UsageFooter", () => {
     });
     expect(screen.getByText("单价 0")).toBeInTheDocument();
 
+    const provider: Provider = {
+      id: "provider-1",
+      name: "Provider",
+      settingsConfig: {},
+    };
+
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -124,11 +132,6 @@ describe("UsageFooter", () => {
       error: "usage probe failed",
       rateLabel: "provider label",
     } satisfies UsageResult);
-    const provider: Provider = {
-      id: "provider-1",
-      name: "Provider",
-      settingsConfig: {},
-    };
     rerender(
       <QueryClientProvider client={queryClient}>
         <UsageFooter

@@ -48,6 +48,8 @@ function hasProbeDisplayContext(usage: UsageResult): boolean {
   );
 }
 
+// rate/rateLabel are kept as compatibility fields; the UI now treats their
+// returned value as the final unit price text.
 const UsageRateBadge: React.FC<{ usage: UsageResult; compact?: boolean }> = ({
   usage,
   compact = false,
