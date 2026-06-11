@@ -6,7 +6,7 @@ This runbook records the production operating checks for the WSL/Ubuntu + Docker
 
 ```text
 External clients
-  -> NGINX :30034
+  -> NGINX :30033
   -> 127.0.0.1:17666 inside WSL/Ubuntu
   -> CCS Web UI/API in Docker
 
@@ -19,9 +19,9 @@ Required state:
 
 - `17666` is CCS Web UI/API and is published on the host loopback only.
 - `15721` is the model proxy and is published on the host loopback only.
-- `30034` is the external NGINX entry and proxies only to `127.0.0.1:17666`.
+- `30033` is the external NGINX entry and proxies only to `127.0.0.1:17666`.
 - External clients must not be able to reach `17666` or `15721` directly.
-- Web auth must be enabled before exposing `30034`.
+- Web auth must be enabled before exposing `30033`.
 - The CCS proxy must start automatically after container restart.
 
 ## Important files
@@ -33,7 +33,20 @@ Required state:
 | `/root/.cc-switch/web-auth-password.txt` | Local bootstrap password note, root-only; never commit or paste to chat |
 | `/root/.openclaw/openclaw.json` | OpenClaw config mounted read-only into the container |
 | `docker-compose.ccs-web.yml` | Docker runtime definition for this deployment |
-| `/etc/nginx/sites-available/ccs-gateway-web-30034` | NGINX entry that should proxy `30034 -> 127.0.0.1:17666` |
+| `/etc/nginx/sites-available/ccs-gateway-web-30033` | NGINX entry that should proxy `30033 -> 127.0.0.1:17666` |
+
+## Host NGINX setup
+
+NGINX runs on the WSL/Ubuntu host, not inside the CCS Docker container. The container should only run `/usr/local/bin/cc-switch-web` and publish `17666` / `15721` to host loopback.
+
+Install or refresh the host NGINX site from the repository:
+
+```bash
+cd /home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web
+sudo bash scripts/install-wsl-nginx-ccs.sh
+```
+
+The script writes `/etc/nginx/sites-available/ccs-gateway-web-30033`, enables it from `sites-enabled`, validates `nginx -t`, and reloads NGINX. It does not proxy the model proxy port `15721`.
 
 ## Daily health check
 
@@ -43,11 +56,11 @@ Run from the WSL/Ubuntu host:
 cd /home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web
 
 docker ps --filter name=ccs-gateway-web
-ss -ltnp | grep -E ':(17666|15721|30034)\b' || true
+ss -ltnp | grep -E ':(17666|15721|30033)\b' || true
 curl -fsS http://127.0.0.1:17666/health
 curl -fsS http://127.0.0.1:15721/status
-curl -fsS http://127.0.0.1:30034/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30034/.env
+curl -fsS http://127.0.0.1:30033/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env
 ```
 
 Expected:
@@ -56,11 +69,11 @@ Expected:
 ccs-gateway-web is running
 127.0.0.1:17666 is listening
 127.0.0.1:15721 is listening
-30034 is listening via NGINX
+30033 is listening via NGINX
 /health on 17666 returns success
 /status on 15721 returns success
-/health on 30034 returns success
-/.env on 30034 returns 404
+/health on 30033 returns success
+/.env on 30033 returns 404
 ```
 
 ## External exposure check
@@ -71,7 +84,7 @@ Run from the WSL/Ubuntu host using its LAN-facing WSL IP:
 ip=$(hostname -I | awk '{print $1}')
 curl --connect-timeout 2 "http://$ip:17666/health" || echo '17666 blocked as expected'
 curl --connect-timeout 2 "http://$ip:15721/status" || echo '15721 blocked as expected'
-curl -fsS "http://$ip:30034/health"
+curl -fsS "http://$ip:30033/health"
 ```
 
 Expected:
@@ -79,7 +92,7 @@ Expected:
 ```text
 17666 blocked as expected
 15721 blocked as expected
-30034 returns health successfully
+30033 returns health successfully
 ```
 
 If `17666` or `15721` is reachable through `$ip`, stop and fix the Docker port publishing before continuing.
@@ -245,7 +258,7 @@ Known good commits in this deployment line:
 ```bash
 curl -fsS http://127.0.0.1:17666/health
 curl -fsS http://127.0.0.1:15721/status
-curl -fsS http://127.0.0.1:30034/health
+curl -fsS http://127.0.0.1:30033/health
 ```
 
 Then run the business smoke and OpenClaw last-hop checks.
@@ -288,7 +301,7 @@ A CCS deployment change is not complete until all are true:
 - Docker container is running with `restart: unless-stopped`.
 - `17666` and `15721` are host-loopback only.
 - External WSL IP cannot access `17666` or `15721`.
-- NGINX `30034` is reachable and proxies only to Web UI/API.
+- NGINX `30033` is reachable and proxies only to Web UI/API.
 - Web auth is enabled and unauthenticated protected RPC returns `401`.
 - Proxy auto-start works after container restart.
 - `/v1/responses` smoke through `127.0.0.1:15721` succeeds.

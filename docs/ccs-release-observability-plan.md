@@ -110,9 +110,10 @@ Use the same probe script with different host-level variables.
 export CCS_TARGET_NAME=zytang
 export CCS_WEB_BASE_URL=http://127.0.0.1:17666
 export CCS_PROXY_BASE_URL=http://127.0.0.1:15721
-export CCS_NGINX_BASE_URL=http://127.0.0.1:30034
+export CCS_NGINX_BASE_URL=http://127.0.0.1:30033
 export CCS_CONTAINER_NAME=ccs-gateway-web
 export CCS_REQUIRE_AUTH=true
+export CCS_REQUIRE_NGINX=true
 ./scripts/ccs-prod-probe.sh
 ```
 
@@ -122,9 +123,10 @@ export CCS_REQUIRE_AUTH=true
 export CCS_TARGET_NAME=tang
 export CCS_WEB_BASE_URL=http://127.0.0.1:17666
 export CCS_PROXY_BASE_URL=http://127.0.0.1:15721
-export CCS_NGINX_BASE_URL=http://127.0.0.1:30034
+export CCS_NGINX_BASE_URL=http://127.0.0.1:30033
 export CCS_CONTAINER_NAME=ccs-gateway-web
 export CCS_REQUIRE_AUTH=true
+export CCS_REQUIRE_NGINX=true
 ./scripts/ccs-prod-probe.sh
 ```
 
@@ -180,11 +182,11 @@ Manual fallback:
 ```bash
 docker ps --filter name=ccs-gateway-web
 docker logs --tail 200 ccs-gateway-web
-ss -ltnp | grep -E ':(17666|15721|30034)\b' || true
+ss -ltnp | grep -E ':(17666|15721|30033)\b' || true
 curl -fsS http://127.0.0.1:17666/health
 curl -fsS http://127.0.0.1:15721/status
-curl -fsS http://127.0.0.1:30034/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30034/.env
+curl -fsS http://127.0.0.1:30033/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env
 ```
 
 Token Saver aggregate report from copied or local logs:

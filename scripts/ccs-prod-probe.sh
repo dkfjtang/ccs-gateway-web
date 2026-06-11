@@ -5,7 +5,9 @@ set -euo pipefail
 TARGET_NAME="${CCS_TARGET_NAME:-local}"
 WEB_BASE_URL="${CCS_WEB_BASE_URL:-http://127.0.0.1:17666}"
 PROXY_BASE_URL="${CCS_PROXY_BASE_URL:-http://127.0.0.1:15721}"
+DEFAULT_NGINX_BASE_URL="http://127.0.0.1:30033"
 NGINX_BASE_URL="${CCS_NGINX_BASE_URL:-}"
+REQUIRE_NGINX="${CCS_REQUIRE_NGINX:-false}"
 CONTAINER_NAME="${CCS_CONTAINER_NAME:-ccs-gateway-web}"
 TAIL_LINES="${CCS_LOG_TAIL_LINES:-120}"
 TIMEOUT="${CCS_CURL_TIMEOUT:-5}"
@@ -41,6 +43,10 @@ probe_url() {
 }
 
 print_section "Target"
+if [[ "$REQUIRE_NGINX" == "true" && -z "$NGINX_BASE_URL" ]]; then
+  NGINX_BASE_URL="$DEFAULT_NGINX_BASE_URL"
+fi
+
 printf 'name=%s\n' "$TARGET_NAME"
 printf 'web=%s\n' "$WEB_BASE_URL"
 if [[ "$SKIP_PROXY" != "true" ]]; then
@@ -102,7 +108,7 @@ fi
 
 print_section "Listening Ports"
 if command -v ss >/dev/null 2>&1; then
-  ss -ltnp | grep -E ':(17666|15721|30034)\b' || true
+  ss -ltnp | grep -E ':(17666|15721|30033)\b' || true
 else
-  netstat -ltnp 2>/dev/null | grep -E ':(17666|15721|30034)\b' || true
+  netstat -ltnp 2>/dev/null | grep -E ':(17666|15721|30033)\b' || true
 fi

@@ -47,7 +47,8 @@
 - 默认生产部署建议：
   - Web UI/API：`127.0.0.1:17666`
   - 模型代理：`127.0.0.1:15721`
-  - 外部入口：`30034 -> 127.0.0.1:17666`
+  - 外部入口：`30033 -> 127.0.0.1:17666`
+  - NGINX 运行在 WSL/Ubuntu 宿主机，不运行在 CCS 容器内。
 - 加强 Web Auth、端口边界、容器持久化、OpenClaw smoke test 和运维 runbook。
 
 更多生产部署细节见：[`docs/ccs-production-runbook.md`](docs/ccs-production-runbook.md)。
@@ -122,7 +123,7 @@ curl -fsS http://127.0.0.1:17666/health
 curl -fsS http://127.0.0.1:15721/status
 
 # NGINX 外部入口健康检查
-curl -fsS http://127.0.0.1:30034/health
+curl -fsS http://127.0.0.1:30033/health
 
 # Web Auth 状态
 curl -sS -H 'Content-Type: application/json' \
