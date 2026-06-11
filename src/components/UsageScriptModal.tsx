@@ -3,7 +3,14 @@ import { Play, Wand2, Eye, EyeOff, Save } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
-import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
+import {
+  Provider,
+  UsageScript,
+  UsageData,
+  UsageProbe,
+  UsageProbeType,
+  createUsageScript,
+} from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
 import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
 import { useSettingsQuery } from "@/lib/query";
@@ -34,9 +41,78 @@ interface UsageScriptModalProps {
 const LEGACY_EMPTY_USAGE_CODE =
   "({ request: {}, extractor: function() { return {}; } })";
 
-const parseUsageScriptJsonDraft = (value: string): Partial<UsageScript> | null => {
+const USAGE_PROBE_TYPES = new Set<UsageProbeType>([
+  "usage",
+  "rate",
+  "models",
+  "account",
+]);
+
+const extractFunctionBody = (extractor: unknown): string => {
+  if (typeof extractor === "string") {
+    return extractor;
+  }
+
+  if (typeof extractor !== "function") {
+    return "return response";
+  }
+
+  const source = extractor.toString();
+  const bodyStart = source.indexOf("{");
+  const bodyEnd = source.lastIndexOf("}");
+  if (bodyStart >= 0 && bodyEnd > bodyStart) {
+    return source.slice(bodyStart + 1, bodyEnd).trim();
+  }
+
+  const arrowIndex = source.indexOf("=>");
+  if (arrowIndex >= 0) {
+    return `return (${source.slice(arrowIndex + 2).trim()});`;
+  }
+
+  return "return response";
+};
+
+const normalizeProbeDraft = (value: any, index: number): UsageProbe | null => {
+  if (!value || typeof value !== "object" || !value.request) {
+    return null;
+  }
+
+  const type = USAGE_PROBE_TYPES.has(value.type)
+    ? (value.type as UsageProbeType)
+    : index === 0
+      ? "usage"
+      : "rate";
+  const request = value.request || {};
+  const body =
+    typeof request.body === "string"
+      ? request.body
+      : request.body === undefined
+        ? undefined
+        : JSON.stringify(request.body);
+
+  return {
+    id: value.id || `${type}-${index + 1}`,
+    type,
+    enabled: value.enabled !== false,
+    timeout: value.timeout,
+    request: {
+      url: request.url || "",
+      method: request.method || "GET",
+      headers: request.headers || {},
+      body,
+    },
+    extractor: extractFunctionBody(value.extractor),
+  };
+};
+
+const evaluateUsageScriptDraft = (value: string): unknown => {
   const trimmed = value.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+  return Function(`"use strict"; return (${trimmed});`)();
+};
+
+const parseUsageScriptDraft = (value: string): Partial<UsageScript> | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
     return null;
   }
 
@@ -54,6 +130,41 @@ const parseUsageScriptJsonDraft = (value: string): Partial<UsageScript> | null =
         typeof parsed.code === "string" && parsed.code.trim()
           ? parsed.code
           : LEGACY_EMPTY_USAGE_CODE,
+    };
+  } catch {
+    // Fall through to legacy JavaScript object/list syntax.
+  }
+
+  try {
+    const parsed = evaluateUsageScriptDraft(trimmed) as any;
+    const rawProbes = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.probes)
+        ? parsed.probes
+        : null;
+    if (!rawProbes) {
+      return null;
+    }
+
+    const probes = rawProbes
+      .map((probe: unknown, index: number) => normalizeProbeDraft(probe, index))
+      .filter(Boolean) as UsageProbe[];
+
+    if (probes.length === 0) {
+      return null;
+    }
+
+    return {
+      ...(!Array.isArray(parsed) && parsed && typeof parsed === "object"
+        ? parsed
+        : {}),
+      enabled: parsed?.enabled !== false,
+      language: "javascript",
+      code:
+        typeof parsed?.code === "string" && parsed.code.trim()
+          ? parsed.code
+          : LEGACY_EMPTY_USAGE_CODE,
+      probes,
     };
   } catch {
     return null;
@@ -385,7 +496,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const handleSave = () => {
-    const importedScript = parseUsageScriptJsonDraft(script.code);
+    const importedScript = parseUsageScriptDraft(script.code);
     const effectiveScript = importedScript
       ? mergeUsageScriptDraft(script, importedScript)
       : script;
@@ -427,7 +538,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   const handleTest = async () => {
     setTesting(true);
     try {
-      const importedScript = parseUsageScriptJsonDraft(script.code);
+      const importedScript = parseUsageScriptDraft(script.code);
       const effectiveScript = importedScript
         ? mergeUsageScriptDraft(script, importedScript)
         : script;
@@ -577,7 +688,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const handleFormat = async () => {
     try {
-      const importedScript = parseUsageScriptJsonDraft(script.code);
+      const importedScript = parseUsageScriptDraft(script.code);
       if (importedScript) {
         setScript((prev) => mergeUsageScriptDraft(prev, importedScript));
         toast.success("已导入完整用量探测配置", {
