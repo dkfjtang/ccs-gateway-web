@@ -1353,14 +1353,6 @@
     "appType": "应用类型",
     "allApps": "全部应用",
     "statusCode": "状态码",
-    "statusGroups": {
-      "all": "全部状态",
-      "success": "成功 2xx",
-      "redirect": "重定向 3xx",
-      "clientError": "客户端错误 4xx",
-      "serverError": "服务端错误 5xx",
-      "other": "其它状态"
-    },
     "searchProviderPlaceholder": "搜索供应商...",
     "searchModelPlaceholder": "搜索模型...",
     "timeRange": "时间范围",

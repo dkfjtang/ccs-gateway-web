@@ -104,7 +104,6 @@ pub struct LogFilters {
     pub provider_name: Option<String>,
     pub model: Option<String>,
     pub status_code: Option<u16>,
-    pub status_group: Option<String>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
 }
@@ -1243,26 +1242,6 @@ impl Database {
             conditions.push("l.status_code = ?".to_string());
             params.push(Box::new(status as i64));
         }
-        if let Some(ref status_group) = filters.status_group {
-            match status_group.as_str() {
-                "success" => {
-                    conditions.push("l.status_code >= 200 AND l.status_code < 300".to_string())
-                }
-                "redirect" => {
-                    conditions.push("l.status_code >= 300 AND l.status_code < 400".to_string())
-                }
-                "client_error" => {
-                    conditions.push("l.status_code >= 400 AND l.status_code < 500".to_string())
-                }
-                "server_error" => {
-                    conditions.push("l.status_code >= 500 AND l.status_code < 600".to_string())
-                }
-                "other" => {
-                    conditions.push("(l.status_code < 200 OR l.status_code >= 600)".to_string())
-                }
-                _ => {}
-            }
-        }
         if let Some(start) = filters.start_date {
             conditions.push("l.created_at >= ?".to_string());
             params.push(Box::new(start));
@@ -2087,102 +2066,6 @@ mod tests {
             created_at: 1000,
         };
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_get_request_logs_filters_by_status_group() -> Result<(), AppError> {
-        let db = Database::memory()?;
-        {
-            let conn = lock_conn!(db.conn);
-            insert_usage_log(
-                &conn,
-                "status-success",
-                "codex",
-                "provider-1",
-                "gpt-5.5",
-                "proxy",
-                1_000,
-                10,
-                2,
-                0,
-                0,
-                200,
-                "0.01",
-            )?;
-            insert_usage_log(
-                &conn,
-                "status-redirect",
-                "codex",
-                "provider-1",
-                "gpt-5.5",
-                "proxy",
-                1_001,
-                10,
-                2,
-                0,
-                0,
-                302,
-                "0.01",
-            )?;
-            insert_usage_log(
-                &conn,
-                "status-client-error",
-                "codex",
-                "provider-1",
-                "gpt-5.5",
-                "proxy",
-                1_002,
-                10,
-                2,
-                0,
-                0,
-                404,
-                "0.01",
-            )?;
-            insert_usage_log(
-                &conn,
-                "status-server-error",
-                "codex",
-                "provider-1",
-                "gpt-5.5",
-                "proxy",
-                1_003,
-                10,
-                2,
-                0,
-                0,
-                502,
-                "0.01",
-            )?;
-        }
-
-        let client_errors = db.get_request_logs(
-            &LogFilters {
-                status_group: Some("client_error".to_string()),
-                ..Default::default()
-            },
-            0,
-            10,
-        )?;
-
-        assert_eq!(client_errors.total, 1);
-        assert_eq!(client_errors.data[0].request_id, "status-client-error");
-        assert_eq!(client_errors.data[0].status_code, 404);
-
-        let server_errors = db.get_request_logs(
-            &LogFilters {
-                status_group: Some("server_error".to_string()),
-                ..Default::default()
-            },
-            0,
-            10,
-        )?;
-
-        assert_eq!(server_errors.total, 1);
-        assert_eq!(server_errors.data[0].request_id, "status-server-error");
-        assert_eq!(server_errors.data[0].status_code, 502);
 
         Ok(())
     }

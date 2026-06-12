@@ -116,17 +116,9 @@ export interface LogFilters {
   providerName?: string;
   model?: string;
   statusCode?: number;
-  statusGroup?: LogStatusGroup;
   startDate?: number;
   endDate?: number;
 }
-
-export type LogStatusGroup =
-  | "success"
-  | "redirect"
-  | "client_error"
-  | "server_error"
-  | "other";
 
 export interface ProviderLimitStatus {
   providerId: string;
