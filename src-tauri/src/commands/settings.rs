@@ -226,7 +226,10 @@ mod tests {
             Some("ccs-backup")
         );
         assert_eq!(
-            merged.s3_sync.as_ref().map(|v| v.secret_access_key.as_str()),
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
             Some("SECRET")
         );
     }
@@ -254,7 +257,10 @@ mod tests {
         let merged = merge_settings_for_save(incoming, &existing);
 
         assert_eq!(
-            merged.s3_sync.as_ref().map(|v| v.secret_access_key.as_str()),
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
             Some("SECRET"),
             "empty S3 secret from frontend must not overwrite existing secret"
         );

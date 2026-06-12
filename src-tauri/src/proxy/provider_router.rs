@@ -527,23 +527,35 @@ mod tests {
         let _home = TempHome::new();
         let db = Arc::new(Database::memory().unwrap());
 
-        let provider_a =
-            Provider::with_id("shared".to_string(), "Provider A".to_string(), json!({}), None);
-        let provider_b =
-            Provider::with_id("shared".to_string(), "Provider B".to_string(), json!({}), None);
+        let provider_a = Provider::with_id(
+            "shared".to_string(),
+            "Provider A".to_string(),
+            json!({}),
+            None,
+        );
+        let provider_b = Provider::with_id(
+            "shared".to_string(),
+            "Provider B".to_string(),
+            json!({}),
+            None,
+        );
 
         db.save_provider("claude", &provider_a).unwrap();
         db.save_provider("codex", &provider_b).unwrap();
 
         let router = ProviderRouter::new(db);
-        assert!(router
-            .allow_provider_request("shared", "claude")
-            .await
-            .allowed);
-        assert!(router
-            .allow_provider_request("shared", "codex")
-            .await
-            .allowed);
+        assert!(
+            router
+                .allow_provider_request("shared", "claude")
+                .await
+                .allowed
+        );
+        assert!(
+            router
+                .allow_provider_request("shared", "codex")
+                .await
+                .allowed
+        );
 
         router
             .update_app_configs(

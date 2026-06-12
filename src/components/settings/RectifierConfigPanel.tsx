@@ -54,15 +54,18 @@ export function RectifierConfigPanel() {
     enabled: true,
     requestThinkingSignature: true,
     requestThinkingBudget: true,
+    requestMediaFallback: true,
+    requestMediaHeuristic: true,
   });
   const [optimizerConfig, setOptimizerConfig] = useState<OptimizerConfig>(
     DEFAULT_OPTIMIZER_CONFIG,
   );
-  const [openclawPrompts, setOpenclawPrompts] = useState<Record<string, Prompt>>(
-    {},
-  );
-  const [changingCavemanProfile, setChangingCavemanProfile] =
-    useState<CavemanProfile | "off" | null>(null);
+  const [openclawPrompts, setOpenclawPrompts] = useState<
+    Record<string, Prompt>
+  >({});
+  const [changingCavemanProfile, setChangingCavemanProfile] = useState<
+    CavemanProfile | "off" | null
+  >(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const reloadOpenclawPrompts = async () => {
@@ -81,7 +84,10 @@ export function RectifierConfigPanel() {
         ]);
         setConfig(rectifier);
         setOptimizerConfig(
-          normalizeOptimizerConfig({ ...DEFAULT_OPTIMIZER_CONFIG, ...optimizer }),
+          normalizeOptimizerConfig({
+            ...DEFAULT_OPTIMIZER_CONFIG,
+            ...optimizer,
+          }),
         );
         setOpenclawPrompts(prompts);
       } catch (e) {
@@ -107,7 +113,10 @@ export function RectifierConfigPanel() {
   };
 
   const handleOptimizerChange = async (updates: Partial<OptimizerConfig>) => {
-    const newConfig = normalizeOptimizerConfig({ ...optimizerConfig, ...updates });
+    const newConfig = normalizeOptimizerConfig({
+      ...optimizerConfig,
+      ...updates,
+    });
     setOptimizerConfig(newConfig);
     try {
       await settingsApi.setOptimizerConfig(newConfig);
@@ -223,6 +232,36 @@ export function RectifierConfigPanel() {
             }
           />
         </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.mediaFallback")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.mediaFallbackDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestMediaFallback}
+            disabled={!config.enabled}
+            onCheckedChange={(checked) =>
+              handleChange({ requestMediaFallback: checked })
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between pl-4">
+          <div className="space-y-0.5">
+            <Label>{t("settings.advanced.rectifier.mediaHeuristic")}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.advanced.rectifier.mediaHeuristicDescription")}
+            </p>
+          </div>
+          <Switch
+            checked={config.requestMediaHeuristic}
+            disabled={!config.enabled || !config.requestMediaFallback}
+            onCheckedChange={(checked) =>
+              handleChange({ requestMediaHeuristic: checked })
+            }
+          />
+        </div>
       </div>
 
       <div className="border-t pt-6 mt-6">
@@ -331,31 +370,45 @@ export function RectifierConfigPanel() {
             {optimizerConfig.tokenSaver && (
               <div className="grid grid-cols-2 gap-3">
                 <label className="space-y-1 text-xs text-muted-foreground">
-                  <span>{t("settings.advanced.optimizer.tokenSaverMinChars")}</span>
+                  <span>
+                    {t("settings.advanced.optimizer.tokenSaverMinChars")}
+                  </span>
                   <input
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
                     type="number"
                     min={160}
                     value={optimizerConfig.tokenSaverMinChars}
-                    disabled={!optimizerConfig.enabled || !optimizerConfig.tokenSaver}
+                    disabled={
+                      !optimizerConfig.enabled || !optimizerConfig.tokenSaver
+                    }
                     onChange={(e) =>
                       handleOptimizerChange({
-                        tokenSaverMinChars: Math.max(160, Number(e.target.value) || 4000),
+                        tokenSaverMinChars: Math.max(
+                          160,
+                          Number(e.target.value) || 4000,
+                        ),
                       })
                     }
                   />
                 </label>
                 <label className="space-y-1 text-xs text-muted-foreground">
-                  <span>{t("settings.advanced.optimizer.tokenSaverKeepChars")}</span>
+                  <span>
+                    {t("settings.advanced.optimizer.tokenSaverKeepChars")}
+                  </span>
                   <input
                     className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
                     type="number"
                     min={80}
                     value={optimizerConfig.tokenSaverKeepChars}
-                    disabled={!optimizerConfig.enabled || !optimizerConfig.tokenSaver}
+                    disabled={
+                      !optimizerConfig.enabled || !optimizerConfig.tokenSaver
+                    }
                     onChange={(e) =>
                       handleOptimizerChange({
-                        tokenSaverKeepChars: Math.max(80, Number(e.target.value) || 800),
+                        tokenSaverKeepChars: Math.max(
+                          80,
+                          Number(e.target.value) || 800,
+                        ),
                       })
                     }
                   />
@@ -365,9 +418,13 @@ export function RectifierConfigPanel() {
 
             <div className="flex items-center justify-between rounded-lg border border-border/50 p-3">
               <div className="space-y-0.5">
-                <Label>{t("settings.advanced.optimizer.passthroughServiceTier")}</Label>
+                <Label>
+                  {t("settings.advanced.optimizer.passthroughServiceTier")}
+                </Label>
                 <p className="text-xs text-muted-foreground">
-                  {t("settings.advanced.optimizer.passthroughServiceTierDescription")}
+                  {t(
+                    "settings.advanced.optimizer.passthroughServiceTierDescription",
+                  )}
                 </p>
               </div>
               <Switch
@@ -390,40 +447,47 @@ export function RectifierConfigPanel() {
                 </p>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {cavemanProfiles.map(({ profile, labelKey, exists, active }) => {
-                  const isChanging = changingCavemanProfile === profile;
-                  return (
-                    <button
-                      key={profile}
-                      type="button"
-                      className={`rounded-md border px-2 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                        active
-                          ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
-                          : "border-white/10 text-muted-foreground hover:text-foreground"
-                      }`}
-                      disabled={changingCavemanProfile !== null}
-                      onClick={() => activateCavemanProfile(profile)}
-                    >
-                      {active
-                        ? t("settings.advanced.optimizer.cavemanEnabled", {
-                            name: t(labelKey),
-                          })
-                        : isChanging
-                          ? t("settings.advanced.optimizer.cavemanChanging", {
+                {cavemanProfiles.map(
+                  ({ profile, labelKey, exists, active }) => {
+                    const isChanging = changingCavemanProfile === profile;
+                    return (
+                      <button
+                        key={profile}
+                        type="button"
+                        className={`rounded-md border px-2 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                          active
+                            ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                            : "border-white/10 text-muted-foreground hover:text-foreground"
+                        }`}
+                        disabled={changingCavemanProfile !== null}
+                        onClick={() => activateCavemanProfile(profile)}
+                      >
+                        {active
+                          ? t("settings.advanced.optimizer.cavemanEnabled", {
                               name: t(labelKey),
                             })
-                          : exists
-                            ? t("settings.advanced.optimizer.cavemanUseExisting", {
+                          : isChanging
+                            ? t("settings.advanced.optimizer.cavemanChanging", {
                                 name: t(labelKey),
                               })
-                            : t(labelKey)}
-                    </button>
-                  );
-                })}
+                            : exists
+                              ? t(
+                                  "settings.advanced.optimizer.cavemanUseExisting",
+                                  {
+                                    name: t(labelKey),
+                                  },
+                                )
+                              : t(labelKey)}
+                      </button>
+                    );
+                  },
+                )}
                 <button
                   type="button"
                   className="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!activeCavemanProfile || changingCavemanProfile !== null}
+                  disabled={
+                    !activeCavemanProfile || changingCavemanProfile !== null
+                  }
                   onClick={turnOffCaveman}
                 >
                   {changingCavemanProfile === "off"

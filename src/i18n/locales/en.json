@@ -352,7 +352,11 @@
         "thinkingSignature": "Thinking Signature Rectification",
         "thinkingSignatureDescription": "When an Anthropic-type provider returns thinking signature incompatibility or illegal request errors, automatically removes incompatible thinking-related blocks and retries once with the same provider",
         "thinkingBudget": "Thinking Budget Rectification",
-        "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once"
+        "thinkingBudgetDescription": "When an Anthropic-type provider returns budget_tokens constraint errors (such as at least 1024), automatically normalizes thinking to enabled, sets thinking budget to 32000, and raises max_tokens to 64000 if needed, then retries once",
+        "mediaFallback": "Unsupported Image Fallback",
+        "mediaFallbackDescription": "When a provider does not support image input (declared text-only capability, or an upstream unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation can continue",
+        "mediaHeuristic": "Heuristic Text-only Model Detection",
+        "mediaHeuristicDescription": "Before sending, predictively strips images using the built-in model-name list. When disabled, only declared text-only capability and upstream-error fallback remain, avoiding silent image removal from multimodal models misclassified by the built-in list"
       },
       "optimizer": {
         "title": "Request Cost Optimizer",
