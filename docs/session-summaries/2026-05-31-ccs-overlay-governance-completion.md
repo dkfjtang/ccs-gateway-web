@@ -1,8 +1,8 @@
-# 2026-05-31 - CCS overlay governance completion
+﻿# 2026-05-31 - CCS overlay governance completion
 
 ## Key Information
 
-- Repo: `F:\development\ccs-gateway-web`.
+- Repo: `<repo-root>`.
 - Baseline decision remains: treat local repo as `cp-yu/cc-switch-web` v3.15 fork plus local overlays; wait for `ccs-web` fork to catch up with 3.16 before following 3.16.
 - Completed five ordered governance items:
   1. Dirty worktree grouping: `docs/ccs-local-change-groups.md`.

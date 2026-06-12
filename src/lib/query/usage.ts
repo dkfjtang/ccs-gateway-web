@@ -3,7 +3,7 @@ import { usageApi } from "@/lib/api/usage";
 import { resolveUsageRange } from "@/lib/usageRange";
 import type { LogFilters, UsageRangeSelection } from "@/types/usage";
 
-const DEFAULT_REFETCH_INTERVAL_MS = 30000;
+const DEFAULT_REFETCH_INTERVAL_MS = 5000;
 
 type UsageQueryOptions = {
   refetchInterval?: number | false;
@@ -253,7 +253,7 @@ export function useRequestLogs({
       const effectiveFilters = { ...filters, ...resolveUsageRange(range) };
       return usageApi.getRequestLogs(effectiveFilters, page, pageSize);
     },
-    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS, // 每30秒自动刷新
+    refetchInterval: options?.refetchInterval ?? DEFAULT_REFETCH_INTERVAL_MS,
     refetchIntervalInBackground: options?.refetchIntervalInBackground ?? false,
   });
 }

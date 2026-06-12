@@ -152,6 +152,7 @@ export function ProviderCard({
   onSetAsDefault,
 }: ProviderCardProps) {
   const { t } = useTranslation();
+  const [areActionsVisible, setAreActionsVisible] = useState(false);
 
   // OMO and OMO Slim share the same card behavior
   const isAnyOmo = isOmo || isOmoSlim;
@@ -192,19 +193,10 @@ export function ProviderCard({
   const isCodexOauth =
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
-  // 获取用量数据以判断是否有多套餐
-  // 累加模式应用（OpenCode/OpenClaw/Hermes）：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery =
-    appId === "opencode" || appId === "openclaw" || appId === "hermes"
-      ? isInConfig
-      : isCurrent;
-  const autoQueryInterval = shouldAutoQuery
-    ? provider.meta?.usage_script?.autoQueryInterval || 0
-    : 0;
-
+  // 读取缓存用量数据以判断是否有多套餐；自动刷新由 UsageFooter 统一负责。
   const { data: usage } = useUsageQuery(provider.id, appId, {
     enabled: usageEnabled,
-    autoQueryInterval,
+    fetchOnMount: false,
   });
 
   const isTokenPlan =
@@ -250,6 +242,11 @@ export function ProviderCard({
     (!isAnyOmo &&
       !isProxyTakeover &&
       (isActiveProvider || hasPersistentConfigHighlight));
+  const shouldShowActions =
+    areActionsVisible ||
+    isActiveProvider ||
+    hasPersistentConfigHighlight ||
+    Boolean(dragHandleProps?.isDragging);
 
   return (
     <div
@@ -267,6 +264,22 @@ export function ProviderCard({
         dragHandleProps?.isDragging &&
           "cursor-grabbing border-primary shadow-lg scale-105 z-10",
       )}
+      onMouseEnter={() => setAreActionsVisible(true)}
+      onMouseLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement)) {
+          setAreActionsVisible(false);
+        }
+      }}
+      onFocusCapture={() => setAreActionsVisible(true)}
+      onBlurCapture={(event) => {
+        const nextTarget = event.relatedTarget;
+        if (
+          !(nextTarget instanceof Node) ||
+          !event.currentTarget.contains(nextTarget)
+        ) {
+          setAreActionsVisible(false);
+        }
+      }}
     >
       <div
         className={cn(
@@ -453,7 +466,14 @@ export function ProviderCard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 pointer-events-none group-hover:opacity-100 group-focus-within:opacity-100 group-hover:pointer-events-auto group-focus-within:pointer-events-auto transition-opacity duration-200">
+          <div
+            className={cn(
+              "flex items-center gap-1.5 flex-shrink-0 transition-opacity duration-200",
+              shouldShowActions
+                ? "opacity-100 pointer-events-auto"
+                : "opacity-0 pointer-events-none",
+            )}
+          >
             <ProviderActions
               appId={appId}
               isCurrent={isCurrent}

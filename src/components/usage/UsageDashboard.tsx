@@ -44,14 +44,14 @@ export function UsageDashboard() {
   const queryClient = useQueryClient();
   const [range, setRange] = useState<UsageRangeSelection>({ preset: "today" });
   const [appType, setAppType] = useState<AppTypeFilter>("all");
-  const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(5000);
 
   const refreshIntervalOptionsMs = [0, 5000, 10000, 30000, 60000] as const;
   const changeRefreshInterval = () => {
     const currentIndex = refreshIntervalOptionsMs.indexOf(
       refreshIntervalMs as (typeof refreshIntervalOptionsMs)[number],
     );
-    const safeIndex = currentIndex >= 0 ? currentIndex : 3;
+    const safeIndex = currentIndex >= 0 ? currentIndex : 1;
     const nextIndex = (safeIndex + 1) % refreshIntervalOptionsMs.length;
     const next = refreshIntervalOptionsMs[nextIndex];
     setRefreshIntervalMs(next);

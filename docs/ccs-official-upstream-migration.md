@@ -1,4 +1,4 @@
-# CCS Official Upstream Migration
+﻿# CCS Official Upstream Migration
 
 ## Decision
 
@@ -15,7 +15,7 @@ Use official `farion1231/cc-switch` as the primary upstream from now on.
 Expected local remote layout:
 
 ```text
-origin             https://github.com/dkfjtang/ccs-gateway-web.git
+origin             https://github.com/<fork-owner>/ccs-gateway-web.git
 upstream           https://github.com/farion1231/cc-switch.git
 ccs-web-reference  https://github.com/cp-yu/cc-switch-web.git
 ```
@@ -43,22 +43,22 @@ Local `git fetch upstream --tags` failed with:
 fatal: unable to access 'https://github.com/farion1231/cc-switch.git/': Recv failure: Connection was reset
 ```
 
-This happened both with command environment proxy variables and with git command-level proxy flags for `127.0.0.1:7890`.
+This happened both with command environment proxy variables and with git command-level proxy flags for `<proxy-host>:<proxy-port>`.
 
 Proxy checks on 2026-06-09 showed:
 
-- TCP proxy `127.0.0.1:7890` is reachable.
+- TCP proxy `<proxy-host>:<proxy-port>` is reachable.
 - GitHub release pages and the `v3.16.2` source archive are reachable through the proxy.
 - Git smart HTTP access still resets for `git ls-remote` / `git fetch`.
 
 Proxy retry on 2026-06-09 with command-level proxy variables and explicit Git proxy flags still failed for Git smart HTTP:
 
 ```powershell
-$env:HTTP_PROXY='http://127.0.0.1:7890'
-$env:HTTPS_PROXY='http://127.0.0.1:7890'
-$env:ALL_PROXY='socks5://127.0.0.1:7890'
+$env:HTTP_PROXY='http://<proxy-host>:<proxy-port>'
+$env:HTTPS_PROXY='http://<proxy-host>:<proxy-port>'
+$env:ALL_PROXY='socks5://<proxy-host>:<proxy-port>'
 rtk git ls-remote --tags upstream "v3.16.2"
-rtk git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 ls-remote --tags upstream "v3.16.2"
+rtk git -c http.proxy=http://<proxy-host>:<proxy-port> -c https.proxy=http://<proxy-host>:<proxy-port> ls-remote --tags upstream "v3.16.2"
 ```
 
 Both Git attempts ended with:
@@ -95,7 +95,7 @@ Desktop updater endpoints must point at the fork release channel, not the offici
 Current fork endpoint:
 
 ```text
-https://github.com/dkfjtang/ccs-gateway-web/releases/latest/download/latest.json
+https://github.com/<fork-owner>/ccs-gateway-web/releases/latest/download/latest.json
 ```
 
 Before publishing desktop updater artifacts, verify that the fork release channel publishes `latest.json` and updater artifacts signed by the configured updater key, or rotate the configured updater key and release signing key together.
@@ -110,9 +110,9 @@ rtk git ls-remote --tags upstream "v3.16*"
 Latest proxy retry on 2026-06-09:
 
 ```powershell
-$env:HTTP_PROXY='http://127.0.0.1:7890'
-$env:HTTPS_PROXY='http://127.0.0.1:7890'
-$env:ALL_PROXY='socks5://127.0.0.1:7890'
+$env:HTTP_PROXY='http://<proxy-host>:<proxy-port>'
+$env:HTTPS_PROXY='http://<proxy-host>:<proxy-port>'
+$env:ALL_PROXY='socks5://<proxy-host>:<proxy-port>'
 rtk git fetch upstream --tags --prune --verbose
 ```
 
@@ -125,9 +125,9 @@ fatal: unable to access 'https://github.com/farion1231/cc-switch.git/': Recv fai
 Additional proxy retry on 2026-06-10:
 
 ```powershell
-$env:HTTP_PROXY='http://127.0.0.1:7890'
-$env:HTTPS_PROXY='http://127.0.0.1:7890'
-$env:ALL_PROXY='socks5://127.0.0.1:7890'
+$env:HTTP_PROXY='http://<proxy-host>:<proxy-port>'
+$env:HTTPS_PROXY='http://<proxy-host>:<proxy-port>'
+$env:ALL_PROXY='socks5://<proxy-host>:<proxy-port>'
 rtk git fetch upstream --tags --prune
 rtk cargo test --manifest-path crates/core/Cargo.toml
 ```

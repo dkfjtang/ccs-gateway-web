@@ -201,6 +201,17 @@ impl ProviderRouter {
         }
     }
 
+    /// 更新指定应用已创建熔断器的配置（热更新）
+    pub async fn update_app_configs(&self, app_type: &str, config: CircuitBreakerConfig) {
+        let prefix = format!("{app_type}:");
+        let breakers = self.circuit_breakers.read().await;
+        for (key, breaker) in breakers.iter() {
+            if key.starts_with(&prefix) {
+                breaker.update_config(config.clone()).await;
+            }
+        }
+    }
+
     /// 获取熔断器状态
     #[allow(dead_code)]
     pub async fn get_circuit_breaker_stats(
@@ -508,5 +519,61 @@ mod tests {
         let third = router.allow_provider_request("a", "claude").await;
         assert!(third.allowed);
         assert!(third.used_half_open_permit);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_update_app_configs_only_updates_matching_app_breakers() {
+        let _home = TempHome::new();
+        let db = Arc::new(Database::memory().unwrap());
+
+        let provider_a =
+            Provider::with_id("shared".to_string(), "Provider A".to_string(), json!({}), None);
+        let provider_b =
+            Provider::with_id("shared".to_string(), "Provider B".to_string(), json!({}), None);
+
+        db.save_provider("claude", &provider_a).unwrap();
+        db.save_provider("codex", &provider_b).unwrap();
+
+        let router = ProviderRouter::new(db);
+        assert!(router
+            .allow_provider_request("shared", "claude")
+            .await
+            .allowed);
+        assert!(router
+            .allow_provider_request("shared", "codex")
+            .await
+            .allowed);
+
+        router
+            .update_app_configs(
+                "claude",
+                CircuitBreakerConfig {
+                    failure_threshold: 1,
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        router
+            .record_result("shared", "claude", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+        router
+            .record_result("shared", "codex", false, false, Some("fail".to_string()))
+            .await
+            .unwrap();
+
+        let claude_stats = router
+            .get_circuit_breaker_stats("shared", "claude")
+            .await
+            .unwrap();
+        let codex_stats = router
+            .get_circuit_breaker_stats("shared", "codex")
+            .await
+            .unwrap();
+
+        assert_eq!(claude_stats.state, crate::proxy::CircuitState::Open);
+        assert_eq!(codex_stats.state, crate::proxy::CircuitState::Closed);
     }
 }

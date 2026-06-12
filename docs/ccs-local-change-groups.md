@@ -1,4 +1,4 @@
-# CCS Gateway Web Local Change Groups
+﻿# CCS Gateway Web Local Change Groups
 
 This file groups the current dirty worktree into release/review buckets. Keep it updated before staging, committing, or rebasing onto a newer official `farion1231/cc-switch` baseline.
 
@@ -96,7 +96,7 @@ Validation:
 - `rtk cargo test --manifest-path src-tauri/Cargo.toml responses_session --lib`
 - `rtk cargo test --manifest-path src-tauri/Cargo.toml service_tier --lib`
 - `rtk cargo test --manifest-path src-tauri/Cargo.toml update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup --lib`
-- `rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --check'`
+- `rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --check'`
 
 ## Group 5 - Official 3.16.2 Core Backend
 
@@ -317,7 +317,7 @@ Related regression-watch entry points:
 
 Validation:
 
-- `rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && ./scripts/ccs-secret-preflight.sh'`
+- `rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && ./scripts/ccs-secret-preflight.sh'`
 - `rtk powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-ccs-3-16-2-release-gate.ps1`
 - local Docker build and smoke per `docs/ccs-release-observability-plan.md`
 

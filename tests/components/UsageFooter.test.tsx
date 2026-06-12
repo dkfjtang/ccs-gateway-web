@@ -12,14 +12,16 @@ vi.mock("@/lib/api/usage", () => ({
 }));
 
 function renderUsageFooter(
-  usage: UsageResult,
+  usage: UsageResult | null,
   inline = true,
   onParentClick = vi.fn(),
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  queryClient.setQueryData(["usage", "provider-1", "claude"], usage);
+  if (usage) {
+    queryClient.setQueryData(["usage", "provider-1", "claude"], usage);
+  }
 
   const provider: Provider = {
     id: "provider-1",
@@ -106,6 +108,17 @@ describe("UsageFooter", () => {
 
     fireEvent.click(screen.getByTitle("usage.refreshUsage"));
 
+    expect(onParentClick).not.toHaveBeenCalled();
+    expect(usageApi.query).toHaveBeenCalledWith("provider-1", "claude");
+  });
+
+  it("shows manual refresh before the first usage result is fetched", () => {
+    const onParentClick = vi.fn();
+    renderUsageFooter(null, true, onParentClick);
+
+    fireEvent.click(screen.getByTitle("usage.refreshUsage"));
+
+    expect(screen.getByText("从未更新")).toBeInTheDocument();
     expect(onParentClick).not.toHaveBeenCalled();
     expect(usageApi.query).toHaveBeenCalledWith("provider-1", "claude");
   });

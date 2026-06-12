@@ -32,6 +32,7 @@ import {
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
+import { usageApi } from "@/lib/api/usage";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
@@ -44,6 +45,7 @@ import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
+import { usageKeys } from "@/lib/query/usage";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UpdateBadge } from "@/components/UpdateBadge";
@@ -645,9 +647,83 @@ function App() {
   }, []);
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
+  const [isRefreshingAllUsage, setIsRefreshingAllUsage] = useState(false);
   const openHermesWebUI = useOpenHermesWebUI(() =>
     setLaunchDashboardOpen(true),
   );
+
+  const usageRefreshTargets = useMemo(
+    () =>
+      Object.values(providers).filter(
+        (provider) => provider.meta?.usage_script?.enabled,
+      ),
+    [providers],
+  );
+
+  const shouldShowRefreshAllUsageButton =
+    currentView === "providers" && usageRefreshTargets.length > 0;
+
+  const handleRefreshAllUsage = async () => {
+    if (usageRefreshTargets.length === 0 || isRefreshingAllUsage) {
+      return;
+    }
+
+    setIsRefreshingAllUsage(true);
+    try {
+      const results = await Promise.allSettled(
+        usageRefreshTargets.map(async (provider) => {
+          const usage = await usageApi.query(provider.id, activeApp);
+          queryClient.setQueryData(usageKeys.script(provider.id, activeApp), usage);
+          return provider.name;
+        }),
+      );
+
+      const successCount = results.filter(
+        (result) => result.status === "fulfilled",
+      ).length;
+      const failedResults = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+
+      if (failedResults.length === 0) {
+        toast.success(
+          t("usage.refreshAllSuccess", {
+            count: successCount,
+            defaultValue: `已刷新 ${successCount} 个自定义计费`,
+          }),
+        );
+        return;
+      }
+
+      const firstError = failedResults[0]?.reason;
+      const errorMessage =
+        firstError instanceof Error
+          ? firstError.message
+          : t("common.operationFailed");
+
+      if (successCount > 0) {
+        toast.warning(
+          t("usage.refreshAllPartial", {
+            success: successCount,
+            failed: failedResults.length,
+            error: errorMessage,
+            defaultValue: `已刷新 ${successCount} 个自定义计费，${failedResults.length} 个失败：${errorMessage}`,
+          }),
+        );
+        return;
+      }
+
+      toast.error(
+        t("usage.refreshAllFailed", {
+          failed: failedResults.length,
+          error: errorMessage,
+          defaultValue: `刷新 ${failedResults.length} 个自定义计费失败：${errorMessage}`,
+        }),
+      );
+    } finally {
+      setIsRefreshingAllUsage(false);
+    }
+  };
 
   const handleOpenWebsite = async (url: string) => {
     try {
@@ -1173,26 +1249,60 @@ function App() {
 
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
-              activeApp !== "opencode" &&
-              activeApp !== "openclaw" &&
-              activeApp !== "hermes" && (
+              (((activeApp !== "opencode" &&
+                activeApp !== "openclaw" &&
+                activeApp !== "hermes") ||
+                shouldShowRefreshAllUsageButton) && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
                 >
-                  {activeApp === "claude-desktop" ? (
-                    <ClaudeDesktopRouteToggle />
-                  ) : (
-                    settingsData?.enableLocalProxy && (
-                      <ProxyToggle activeApp={activeApp} />
-                    )
-                  )}
-                  {activeApp !== "claude-desktop" &&
-                    settingsData?.enableFailoverToggle && (
-                      <FailoverToggle activeApp={activeApp} />
+                  {activeApp !== "opencode" &&
+                    activeApp !== "openclaw" &&
+                    activeApp !== "hermes" && (
+                      <>
+                        {activeApp === "claude-desktop" ? (
+                          <ClaudeDesktopRouteToggle />
+                        ) : (
+                          settingsData?.enableLocalProxy && (
+                            <ProxyToggle activeApp={activeApp} />
+                          )
+                        )}
+                        {activeApp !== "claude-desktop" &&
+                          settingsData?.enableFailoverToggle && (
+                            <FailoverToggle activeApp={activeApp} />
+                          )}
+                      </>
                     )}
+                  {shouldShowRefreshAllUsageButton && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleRefreshAllUsage()}
+                      disabled={isRefreshingAllUsage}
+                      aria-label={t("usage.refreshAllUsage", {
+                        defaultValue: "刷新全部自定义计费",
+                      })}
+                      className="h-8 rounded-lg border border-border/60 bg-muted/45 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted gap-1.5"
+                      title={t("usage.refreshAllUsage", {
+                        defaultValue: "刷新全部自定义计费",
+                      })}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "w-4 h-4",
+                          isRefreshingAllUsage && "animate-spin",
+                        )}
+                      />
+                      <span className="text-[11px]">
+                        {t("usage.refreshBillingShort", {
+                          defaultValue: "刷新计费",
+                        })}
+                      </span>
+                    </Button>
+                  )}
                 </div>
-              )}
+              ))}
             <div
               ref={toolbarRef}
               className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"

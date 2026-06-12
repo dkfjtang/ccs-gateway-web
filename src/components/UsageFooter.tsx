@@ -101,7 +101,6 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   appId,
   usageEnabled,
   isCurrent,
-  isInConfig = false,
   inline = false,
 }) => {
   const { t } = useTranslation();
@@ -109,8 +108,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
     provider.meta?.usage_script?.templateType === "token_plan";
 
   // 统一的用量查询（自动查询仅对当前激活的供应商启用）
-  // OpenCode（累加模式）：使用 isInConfig 代替 isCurrent
-  const shouldAutoQuery = appId === "opencode" ? isInConfig : isCurrent;
+  const shouldAutoQuery = isCurrent;
   const autoQueryInterval = shouldAutoQuery
     ? provider.meta?.usage_script?.autoQueryInterval || 0
     : 0;
@@ -123,6 +121,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   } = useUsageQuery(providerId, appId, {
     enabled: usageEnabled,
     autoQueryInterval,
+    fetchOnMount: false,
   });
 
   // 🆕 定期更新当前时间，用于刷新相对时间显示
@@ -140,7 +139,60 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   }, [lastQueriedAt]);
 
   // 只在启用用量查询且有数据时显示
-  if (!usageEnabled || !usage) return null;
+  if (!usageEnabled) return null;
+
+  const renderRefreshControl = (className: string) => (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        refetch();
+      }}
+      disabled={loading}
+      className={className}
+      title={t("usage.refreshUsage")}
+    >
+      <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
+    </button>
+  );
+
+  const renderLastQueriedAt = (className: string) => (
+    <span className={className}>
+      <Clock size={10} />
+      {lastQueriedAt
+        ? formatRelativeTime(lastQueriedAt, now, t)
+        : t("usage.never", { defaultValue: "从未更新" })}
+    </span>
+  );
+
+  if (!usage) {
+    if (inline) {
+      return (
+        <div className="flex flex-col items-end gap-1 text-xs whitespace-nowrap flex-shrink-0">
+          <div className="flex items-center gap-2 justify-end">
+            {renderLastQueriedAt(
+              "text-[10px] text-muted-foreground/70 flex items-center gap-1",
+            )}
+            {renderRefreshControl(
+              "p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground",
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-3 rounded-xl border border-border-default bg-card px-4 py-3 shadow-sm">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          {renderLastQueriedAt(
+            "text-[10px] text-muted-foreground/70 flex items-center gap-1",
+          )}
+          {renderRefreshControl(
+            "p-1 rounded hover:bg-muted transition-colors disabled:opacity-50",
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const showCompactFailure = !usage.success && hasProbeDisplayContext(usage);
 
@@ -220,17 +272,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
               ? formatRelativeTime(lastQueriedAt, now, t)
               : t("usage.never", { defaultValue: "从未更新" })}
           </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              refetch();
-            }}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
+          {renderRefreshControl(
+            "p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground",
+          )}
         </div>
         {/* 第二行：tier 徽章（复用官方订阅的 TierBadge） */}
         <div className="flex items-center gap-2 justify-end">
@@ -262,17 +306,9 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
           </span>
 
           {/* 刷新按钮 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              refetch();
-            }}
-            disabled={loading}
-            className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground"
-            title={t("usage.refreshUsage")}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
+          {renderRefreshControl(
+            "p-1 rounded hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0 text-muted-foreground",
+          )}
         </div>
 
         {/* 第二行：用量和剩余 */}

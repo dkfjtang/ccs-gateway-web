@@ -1,23 +1,48 @@
 # syntax=docker/dockerfile:1
-FROM node:22-bookworm AS frontend
+ARG NODE_IMAGE=node:22-bookworm
+ARG RUST_IMAGE=rust:1.95-bookworm
+ARG DEBIAN_IMAGE=debian:bookworm-slim
+
+FROM ${NODE_IMAGE} AS frontend
 WORKDIR /app
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG http_proxy
+ARG https_proxy
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    http_proxy=${http_proxy} \
+    https_proxy=${https_proxy}
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 COPY package.json ./
-RUN pnpm install --no-frozen-lockfile
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm config set store-dir /pnpm/store \
+    && pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build:web
 
-FROM rust:1.95-bookworm AS server-builder
+FROM scratch AS frontend-dist
+COPY --from=frontend /app/dist /
+
+FROM ${RUST_IMAGE} AS server-builder
 WORKDIR /app
 COPY . .
 COPY --from=frontend /app/dist ./dist
-RUN mkdir -p .cargo && printf '[source.crates-io]\nreplace-with = "rsproxy-sparse"\n\n[source.rsproxy-sparse]\nregistry = "sparse+https://rsproxy.cn/index/"\n' > .cargo/config.toml     && rm -f rust-toolchain rust-toolchain.toml     && cargo build --manifest-path crates/server/Cargo.toml --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/.cargo-cache \
+    mkdir -p .cargo \
+    && printf '[source.crates-io]\nreplace-with = "rsproxy-sparse"\n\n[source.rsproxy-sparse]\nregistry = "sparse+https://rsproxy.cn/index/"\n' > .cargo/config.toml \
+    && rm -f rust-toolchain rust-toolchain.toml \
+    && CARGO_TARGET_DIR=/app/.cargo-cache cargo build --manifest-path crates/server/Cargo.toml --release \
+    && cp /app/.cargo-cache/release/cc-switch-web /app/cc-switch-web
 
-FROM debian:bookworm-slim AS runtime
+FROM ${DEBIAN_IMAGE} AS runtime
 COPY --from=server-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=server-builder /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/libssl.so.3
 COPY --from=server-builder /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/libcrypto.so.3
-COPY --from=server-builder /app/crates/server/target/release/cc-switch-web /usr/local/bin/cc-switch-web
+COPY --from=server-builder /app/cc-switch-web /usr/local/bin/cc-switch-web
 ENV CC_SWITCH_HOST=0.0.0.0 \
     CC_SWITCH_PORT=17666 \
     CC_SWITCH_AUTO_PORT=false \

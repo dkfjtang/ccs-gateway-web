@@ -1,48 +1,46 @@
-# 2026-05-28 - zytang / tang Production Deploy
+﻿# 2026-05-28 - <host-a> / <host-b> Production Deploy
 
 ## Key Information
 
-- Workspace: `F:\development\ccs-gateway-web`.
+- Workspace: `<repo-root>`.
 - User required a detect-first flow: first connect and inspect production only; no updates, restarts, file writes, Docker changes, or NGINX changes until explicit confirmation.
-- SSH passwords were provided through environment variables only:
-  - `CCS_ZYTANG_SSH_PASSWORD`
-  - `CCS_TANG_SSH_PASSWORD`
+- SSH passwords were provided through environment variables only, using host-specific password env vars.
   Do not store or print password values.
 - Production hosts used in this session:
-  - `zytang`: `root@81.71.156.28:20025`
-  - `tang`: `root@1.14.163.241:22`
+  - `<host-a>`: `<ssh-user>@<host-a>:<ssh-port>`
+  - `<host-b>`: `<ssh-user>@<host-b>:<ssh-port>`
 - NGINX was not changed.
-  - `zytang` CCS public NGINX port observed: `30034 -> 127.0.0.1:17666`
-  - `tang` CCS public NGINX port observed: `30002 -> 127.0.0.1:17666`
+  - `<host-a>` CCS public NGINX port observed: `30034 -> 127.0.0.1:17666`
+  - `<host-b>` CCS public NGINX port observed: `30002 -> 127.0.0.1:17666`
 - CCS Docker runtime parameters preserved:
   - container: `ccs-gateway-web`
   - command: `/usr/local/bin/cc-switch-web`
   - ports: `127.0.0.1:17666:17666`, `127.0.0.1:15721:15721`
   - mounts: `/root/.openclaw:/root/.openclaw:ro`, `/root/.cc-switch:/root/.cc-switch`
   - restart policy: `unless-stopped`
-  - network preserved per host (`zytang`: `ccs-gateway-web_default`; `tang`: `bridge`)
+  - network preserved per host (`<host-a>`: `ccs-gateway-web_default`; `<host-b>`: `bridge`)
 
 ## Deployment Result
 
-- `zytang`:
-  - New CCS image: `ccs-gateway-web:codex-prod-20260528202657`
-  - Backup container: `ccs-gateway-web-backup-before-codex-20260528202657`
+- `<host-a>`:
+  - New CCS image: `ccs-gateway-web:<tag>-<timestamp>`
+  - Backup container: `ccs-gateway-web-backup-before-<reason>-<timestamp>`
   - Final check: container running, `curl http://127.0.0.1:17666/` OK.
-- `tang`:
-  - New CCS image: `ccs-gateway-web:codex-prod-20260528205707`
-  - Backup container: `ccs-gateway-web-backup-before-codex-20260528205707`
+- `<host-b>`:
+  - New CCS image: `ccs-gateway-web:<tag>-<timestamp>`
+  - Backup container: `ccs-gateway-web-backup-before-<reason>-<timestamp>`
   - Final check: container running, `curl http://127.0.0.1:17666/` OK.
 - Deployment built from the current working tree on 2026-05-28, not from a clean committed tag. The worktree already had local changes before deployment.
 
 ## OpenClaw Fast Priority Patch
 
 - Both production hosts were running OpenClaw `2026.5.4`.
-- `zytang` OpenClaw:
+- `<host-a>` OpenClaw:
   - install root: `/usr/lib/node_modules/openclaw`
   - node: `/usr/bin/node`
   - service: `openclaw-gateway.service`
   - final service state: `active/running`
-- `tang` OpenClaw:
+- `<host-b>` OpenClaw:
   - install root: `/root/.nvm/versions/node/v24.14.1/lib/node_modules/openclaw`
   - node: `/root/.nvm/versions/node/v24.14.1/bin/node`
   - service: `openclaw-gateway.service`
@@ -62,8 +60,8 @@
   - proxy wrapper guard must allow `openai-responses` and `openai-codex-responses` even for non-official providers.
   - extra params wrapper must call `resolveOpenAIFastMode(ctx.effectiveExtraParams)` and wrap `ctx.agent.streamFn` with the real `createOpenAIFastModeWrapper` alias.
 - Do not rely on default install root detection only. Production paths differed:
-  - `zytang`: system global npm path under `/usr/lib/node_modules/openclaw`
-  - `tang`: nvm path under `/root/.nvm/versions/node/v24.14.1/lib/node_modules/openclaw`
+  - `<host-a>`: system global npm path under `/usr/lib/node_modules/openclaw`
+  - `<host-b>`: nvm path under `/root/.nvm/versions/node/v24.14.1/lib/node_modules/openclaw`
 - When packaging the repo for remote Docker build, do not `tar.add()` directories recursively after filtering. It can accidentally include `src-tauri/target` and produce a 1.5GB package. Add files only and exclude any path part named `target`, `node_modules`, `.git`, `dist`, etc. The corrected package size was about 16MB.
 - Local Docker CLI was unavailable, so production image builds were performed on the target hosts from an uploaded source tarball.
 

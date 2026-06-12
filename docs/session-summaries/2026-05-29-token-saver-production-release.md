@@ -1,18 +1,18 @@
-# 2026-05-29 - Token Saver / Caveman Production Release
+﻿# 2026-05-29 - Token Saver / Caveman Production Release
 
 ## Key Information
 
-- Workspace: `F:\development\ccs-gateway-web`.
+- Workspace: `<repo-root>`.
 - User asked to evaluate and deploy token-saving features in an overlay/patch style so future `ccs-web` upgrades do not require a broad reimplementation.
 - Local test environment designated by user:
   - Web/API: `http://127.0.0.1:17666`
   - Proxy: `http://127.0.0.1:15721`
   - Container used during local validation: `ccs-gateway-web-usage-status-filter-test`
-  - Local test image after publish: `ccs-gateway-web:token-saver-20260529-111452`
+  - Local test image after publish: `ccs-gateway-web:<tag>-<timestamp>`
 - Production targets:
-  - `zytang`: `root@81.71.156.28:20025`
-  - `tang`: `root@1.14.163.241:22`
-  - SSH passwords were used only through environment variable names: `CCS_ZYTANG_SSH_PASSWORD`, `CCS_TANG_SSH_PASSWORD`. No secret values were stored.
+  - `<host-a>`: `<ssh-user>@<host-a>:<ssh-port>`
+  - `<host-b>`: `<ssh-user>@<host-b>:<ssh-port>`
+  - SSH passwords were used only through host-specific environment variable names. No secret values were stored.
 
 ## Implementation / Behavior Decisions
 
@@ -29,12 +29,12 @@
 
 ## Verification Results
 
-- Local runtime verification on `127.0.0.1:15721` confirmed recent Codex requests used provider `聪明AI` and returned HTTP 200.
+- Local runtime verification on `127.0.0.1:15721` confirmed recent Codex requests used provider `<provider-name>` and returned HTTP 200.
 - Local optimizer config showed Token Saver on and Caveman off.
 - Automated local gates passed:
   - `scripts\verify-token-cost-savers.ps1`
   - `npm run typecheck`
-  - `scripts/ccs-secret-preflight.sh` after adding WSL safe.directory for `/mnt/f/development/ccs-gateway-web`
+  - `scripts/ccs-secret-preflight.sh` after adding WSL safe.directory for `<repo-root-wsl>`
 - `verify-token-cost-savers.ps1` covered:
   - `token_saver` tests: 22 passed
   - `token_filter_engine` tests: 12 passed
@@ -45,11 +45,11 @@
 ## Production Release Result
 
 - Source tarball for remote builds:
-  - `F:\development\ccs-gateway-web\.run\release\ccs-gateway-web-token-saver-prod-20260529121348.tar.gz`
+  - `<repo-root>\.run\release\ccs-gateway-web-<artifact>-<timestamp>`
   - Size: `17221249` bytes
   - File-only tar packaging excluded `.git`, `node_modules`, `target`, `dist`, `.run`, `.env*` except `.env.web`.
 - New production image tag on both hosts:
-  - `ccs-gateway-web:token-saver-prod-20260529121348`
+  - `ccs-gateway-web:<tag>-<timestamp>`
 - Both hosts built the image remotely from the tarball.
 - Final production container runtime contract preserved:
   - container name: `ccs-gateway-web`
@@ -59,32 +59,32 @@
   - restart policy: `unless-stopped`
   - env retained from old container: `CC_SWITCH_START_PROXY=true`, `CC_SWITCH_HOST=0.0.0.0`, `CC_SWITCH_PORT=17666`, `CC_SWITCH_AUTO_PORT=false`, `RUST_LOG=cc_switch_server=info,tower_http=info`
 - Network preserved per host:
-  - `zytang`: `ccs-gateway-web_default`
-  - `tang`: `bridge`
+  - `<host-a>`: `ccs-gateway-web_default`
+  - `<host-b>`: `bridge`
 
 ## Production Validation Evidence
 
-- `zytang` final checks:
+- `<host-a>` final checks:
   - Web health: `200`
   - Proxy status: `200`
   - NGINX health: `200`
   - NGINX `/.env`: `404`
   - Auth enabled: `true`
   - unauthenticated `get_settings`: `401`
-  - current image: `ccs-gateway-web:token-saver-prod-20260529121348`
-  - rollback container: `ccs-gateway-web-backup-before-token-saver-prod-20260529121348`
-  - rollback image: `ccs-gateway-web:codex-prod-20260528202657`
+  - current image: `ccs-gateway-web:<tag>-<timestamp>`
+  - rollback container: `ccs-gateway-web-backup-before-<reason>-<timestamp>`
+  - rollback image: `ccs-gateway-web:<tag>-<timestamp>`
   - `/root/.cc-switch/cc-switch.db` optimizer_config confirmed Token Saver on and Caveman off.
-- `tang` final checks:
+- `<host-b>` final checks:
   - Web health: `200`
   - Proxy status: `200`
   - NGINX health: `200`
   - NGINX `/.env`: `404`
   - Auth enabled: `true`
   - unauthenticated `get_settings`: `401`
-  - current image: `ccs-gateway-web:token-saver-prod-20260529121348`
-  - rollback container: `ccs-gateway-web-backup-before-token-saver-prod-20260529121348`
-  - rollback image: `ccs-gateway-web:codex-prod-20260528205707`
+  - current image: `ccs-gateway-web:<tag>-<timestamp>`
+  - rollback container: `ccs-gateway-web-backup-before-<reason>-<timestamp>`
+  - rollback image: `ccs-gateway-web:<tag>-<timestamp>`
   - `/root/.cc-switch/cc-switch.db` optimizer_config confirmed Token Saver on and Caveman off.
 - Production DB continuity was checked by reading table counts from `/root/.cc-switch/cc-switch.db`; provider/config/log tables were not empty.
 - Recent production logs after release had no `error`, `panic`, permission, failed/refused/reset hits in the scanned window.
@@ -92,7 +92,7 @@
 
 ## Incident / Lesson
 
-- First production deploy attempt on `zytang` started a new container without copying old container env. Web health returned `200`, but proxy status on `15721` stayed unavailable because `CC_SWITCH_START_PROXY=true` was missing. The deploy script automatically rolled back to the previous container.
+- First production deploy attempt on `<host-a>` started a new container without copying old container env. Web health returned `200`, but proxy status on `15721` stayed unavailable because `CC_SWITCH_START_PROXY=true` was missing. The deploy script automatically rolled back to the previous container.
 - Fix: production replacement must inherit the original container env, not only ports/mounts/network/restart/cmd. `CC_SWITCH_START_PROXY=true` is required for the production proxy port.
 - Future deploy automation must treat env as part of the runtime contract and should fail before replacement if expected env is missing.
 

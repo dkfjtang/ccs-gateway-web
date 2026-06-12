@@ -1,14 +1,14 @@
-# 2026-05-28 - OpenClaw Fast Priority Patch Session
+﻿# 2026-05-28 - OpenClaw Fast Priority Patch Session
 
 ## Key Information
 
-- Project workspace: `F:\development\ccs-gateway-web`.
-- Local WSL distro used for OpenClaw testing: `Ubuntu-24.04`, using root-owned OpenClaw installation.
+- Project workspace: `<repo-root>`.
+- Local WSL distro used for OpenClaw testing: `<wsl-distro>`, using root-owned OpenClaw installation.
 - Local CCS test gateway must use `127.0.0.1:15721`; never use `15722`, because it is reserved by the local CCS desktop instance.
 - Local CCS API used during verification: `http://127.0.0.1:17666/api/invoke`.
 - Local OpenClaw gateway systemd user service: `openclaw-gateway.service`.
 - OpenClaw gateway command path observed during this session: `/root/.hermes/node/bin/node /root/.hermes/node/lib/node_modules/openclaw/dist/index.js gateway --port 18789`.
-- Production hosts mentioned for later deployment: `zytang` and `tang`, both Ubuntu. They were not touched in this session.
+- Production hosts mentioned for later deployment: `<host-a>` and `<host-b>`, both Ubuntu. They were not touched in this session.
 
 ## Patch Artifact
 
@@ -34,8 +34,8 @@
   - model: `gpt-5.5`
   - `service_tier`: `priority`
   - `has_service_tier`: `true`
-- CCS latest usage log matched provider `聪明AI`, model `gpt-5.5`, status `200`.
-- The user provided a 聪明AI usage screenshot showing `Fast` service tier at `2026/05/28 19:55:00`.
+- CCS latest usage log matched provider `<provider-name>`, model `gpt-5.5`, status `200`.
+- The user provided a <provider-name> usage screenshot showing `Fast` service tier at `2026/05/28 19:55:00`.
 - CCS epoch timestamp `1779969299` converted to `2026-05-28 19:54:59 CST`, matching the screenshot within about one second.
 
 ## Commands Worth Reusing
@@ -49,13 +49,13 @@ Upgrade OpenClaw:
 Apply or reapply the skill patch:
 
 ```bash
-bash /mnt/f/development/ccs-gateway-web/skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --restart
+bash <repo-root-wsl>/skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --restart
 ```
 
 Check patch status without modifying files:
 
 ```bash
-bash /mnt/f/development/ccs-gateway-web/skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --dry-run
+bash <repo-root-wsl>/skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --dry-run
 ```
 
 Check OpenClaw version:
@@ -89,7 +89,7 @@ systemctl --user is-active openclaw-gateway.service
 
 ## Follow-ups
 
-- Prepare production deployment notes for `zytang` and `tang` before touching either host.
+- Prepare production deployment notes for `<host-a>` and `<host-b>` before touching either host.
 - For production, preserve each host's existing Docker and OpenClaw runtime parameters; only apply the patch and verification procedure after confirming paths and service names.
 - Consider adding a concise production runbook section for OpenClaw upgrade plus fast priority patch verification.
 

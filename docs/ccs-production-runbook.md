@@ -1,4 +1,4 @@
-# CCS Gateway Web Production Runbook
+﻿# CCS Gateway Web Production Runbook
 
 This runbook records the production operating checks for the WSL/Ubuntu + Docker + OpenClaw + NGINX deployment.
 
@@ -42,7 +42,7 @@ NGINX runs on the WSL/Ubuntu host, not inside the CCS Docker container. The cont
 Install or refresh the host NGINX site from the repository:
 
 ```bash
-cd /home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web
+cd <repo-root-on-host>
 sudo bash scripts/install-wsl-nginx-ccs.sh
 ```
 
@@ -53,7 +53,7 @@ The script writes `/etc/nginx/sites-available/ccs-gateway-web-30033`, enables it
 Run from the WSL/Ubuntu host:
 
 ```bash
-cd /home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web
+cd <repo-root-on-host>
 
 docker ps --filter name=ccs-gateway-web
 ss -ltnp | grep -E ':(17666|15721|30033)\b' || true
@@ -166,7 +166,7 @@ Expected:
 - HTTP 200.
 - Response status is completed.
 - Output contains `CCS_PING_OK`.
-- CCS request logs show the current production provider, currently `发现AI` / `发现ai-1779516790556`.
+- CCS request logs show the current production provider, currently `<provider-name>` / `<provider-id>`.
 
 ## OpenClaw last-hop check
 
@@ -231,7 +231,7 @@ Use this when a new image, compose change, auth change, or provider change break
 ### 1. Stop the container
 
 ```bash
-cd /home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web
+cd <repo-root-on-host>
 docker compose -f docker-compose.ccs-web.yml down
 ```
 

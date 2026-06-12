@@ -1,6 +1,6 @@
-# CCS Gateway Web Release and Observability Plan
+﻿# CCS Gateway Web Release and Observability Plan
 
-This document defines the local WSL build path and the production release/log probe workflow for the two Ubuntu production targets: `zytang` and `tang`.
+This document defines the local WSL build path and the production release/log probe workflow for the two Ubuntu production targets: `<host-a>` and `<host-b>`.
 
 The repository is public. Do not commit secrets, host-private values, tokens, passwords, provider keys, WebDAV credentials, or real bootstrap credentials. Load all sensitive values from host environment variables or server-local files.
 
@@ -8,7 +8,7 @@ The repository is public. Do not commit secrets, host-private values, tokens, pa
 
 - Build and test from WSL with Docker so the Windows host stays clean.
 - Keep production runtime state outside the repository.
-- Use the same release/probe commands for `zytang` and `tang`.
+- Use the same release/probe commands for `<host-a>` and `<host-b>`.
 - Add a mandatory pre-push secret check before publishing to GitHub.
 - Keep `15721` private to the host loopback; expose only the Web UI/API through the controlled NGINX entry.
 
@@ -17,37 +17,37 @@ The repository is public. Do not commit secrets, host-private values, tokens, pa
 Run from Windows PowerShell:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && docker build -f Dockerfile.web -t ccs-gateway-web:local .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build -f Dockerfile.web -t ccs-gateway-web:local .'
 ```
 
 If the Windows host has a local proxy, pass it explicitly into the Docker build. In this environment the proxy is:
 
 ```text
-http://127.0.0.1:7890
+http://<proxy-host>:<proxy-port>
 ```
 
 From WSL, `127.0.0.1` can resolve to the WSL network namespace rather than the Windows host. Prefer Docker Desktop's host alias first:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && docker build --build-arg HTTP_PROXY=http://host.docker.internal:7890 --build-arg HTTPS_PROXY=http://host.docker.internal:7890 --build-arg http_proxy=http://host.docker.internal:7890 --build-arg https_proxy=http://host.docker.internal:7890 -f Dockerfile.web -t ccs-gateway-web:local .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build --build-arg HTTP_PROXY=http://<proxy-host>:<proxy-port> --build-arg HTTPS_PROXY=http://<proxy-host>:<proxy-port> --build-arg http_proxy=http://<proxy-host>:<proxy-port> --build-arg https_proxy=http://<proxy-host>:<proxy-port> -f Dockerfile.web -t ccs-gateway-web:local .'
 ```
 
 If `host.docker.internal` is unavailable in the WSL Docker engine, resolve the WSL default gateway and use that address:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && proxy_host="$(ip route | awk "/default/ {print \$3; exit}")" && docker build --build-arg HTTP_PROXY="http://$proxy_host:7890" --build-arg HTTPS_PROXY="http://$proxy_host:7890" --build-arg http_proxy="http://$proxy_host:7890" --build-arg https_proxy="http://$proxy_host:7890" -f Dockerfile.web -t ccs-gateway-web:local .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && proxy_host="$(ip route | awk "/default/ {print \$3; exit}")" && docker build --build-arg HTTP_PROXY="http://$proxy_host:7890" --build-arg HTTPS_PROXY="http://$proxy_host:7890" --build-arg http_proxy="http://$proxy_host:7890" --build-arg https_proxy="http://$proxy_host:7890" -f Dockerfile.web -t ccs-gateway-web:local .'
 ```
 
 Run the local container without using production data:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && mkdir -p .run/local-cc-switch .run/local-openclaw && docker run --rm --name ccs-gateway-web-local -p 127.0.0.1:17666:17666 -p 127.0.0.1:15721:15721 -e CC_SWITCH_HOST=0.0.0.0 -e CC_SWITCH_PORT=17666 -e CC_SWITCH_AUTO_PORT=false -e CC_SWITCH_START_PROXY=true -e RUST_LOG=cc_switch_server=info,tower_http=info -v "$PWD/.run/local-cc-switch:/root/.cc-switch" -v "$PWD/.run/local-openclaw:/root/.openclaw" ccs-gateway-web:local'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && mkdir -p .run/local-cc-switch .run/local-openclaw && docker run --rm --name ccs-gateway-web-local -p 127.0.0.1:17666:17666 -p 127.0.0.1:15721:15721 -e CC_SWITCH_HOST=0.0.0.0 -e CC_SWITCH_PORT=17666 -e CC_SWITCH_AUTO_PORT=false -e CC_SWITCH_START_PROXY=true -e RUST_LOG=cc_switch_server=info,tower_http=info -v "$PWD/.run/local-cc-switch:/root/.cc-switch" -v "$PWD/.run/local-openclaw:/root/.openclaw" ccs-gateway-web:local'
 ```
 
 Smoke test from another shell:
 
 ```powershell
-rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && CCS_TARGET_NAME=local CCS_CONTAINER_NAME=ccs-gateway-web-local ./scripts/ccs-prod-probe.sh'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && CCS_TARGET_NAME=local CCS_CONTAINER_NAME=ccs-gateway-web-local ./scripts/ccs-prod-probe.sh'
 ```
 
 ## Sensitive Data Policy
@@ -104,10 +104,10 @@ Do not put secret values in the compose file. Put them in server-local environme
 
 Use the same probe script with different host-level variables.
 
-`zytang`:
+`<host-a>`:
 
 ```bash
-export CCS_TARGET_NAME=zytang
+export CCS_TARGET_NAME=<host-a>
 export CCS_WEB_BASE_URL=http://127.0.0.1:17666
 export CCS_PROXY_BASE_URL=http://127.0.0.1:15721
 export CCS_NGINX_BASE_URL=http://127.0.0.1:30033
@@ -117,10 +117,10 @@ export CCS_REQUIRE_NGINX=true
 ./scripts/ccs-prod-probe.sh
 ```
 
-`tang`:
+`<host-b>`:
 
 ```bash
-export CCS_TARGET_NAME=tang
+export CCS_TARGET_NAME=<host-b>
 export CCS_WEB_BASE_URL=http://127.0.0.1:17666
 export CCS_PROXY_BASE_URL=http://127.0.0.1:15721
 export CCS_NGINX_BASE_URL=http://127.0.0.1:30033
@@ -154,7 +154,7 @@ The upstream alignment gate also enforces that desktop updater endpoints use the
 3. Local smoke test with isolated `.run/local-*` volumes.
 4. Run `./scripts/ccs-secret-preflight.sh`.
 5. Commit only source, docs, scripts, and safe config templates.
-6. Build or pull the image on `zytang`.
+6. Build or pull the image on `<host-a>`.
 7. Back up `/root/.cc-switch` and `/root/.openclaw/openclaw.json`.
 8. Run the OpenClaw patch health check on the target host before and after OpenClaw upgrades:
 
@@ -165,8 +165,8 @@ bash skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_pa
 For automation, parse `check_status=` as well as the exit code: `0` means `ok`, `1` means `needs_patch`, and `2` means `unsupported_shape`.
 
 9. Deploy with loopback-only port publishing.
-10. Run `CCS_TARGET_NAME=zytang ./scripts/ccs-prod-probe.sh`.
-11. Repeat the same flow on `tang`.
+10. Run `CCS_TARGET_NAME=<host-a> ./scripts/ccs-prod-probe.sh`.
+11. Repeat the same flow on `<host-b>`.
 12. Verify the last hop from OpenClaw through `ccs/gpt-5.5` before declaring the release healthy.
 
 ## Log Analysis Baseline

@@ -133,8 +133,14 @@ $packageLockVersions = Get-NodePackageLockVersion (Join-Path $repoRoot "package-
 Assert-Equal "package-lock.json root version" $packageLockVersions[0] $expectedVersion
 Assert-Equal "package-lock.json package version" $packageLockVersions[1] $expectedVersion
 Assert-Equal "tauri.conf.json version" (Get-JsonVersion (Join-Path $repoRoot "src-tauri\tauri.conf.json")) $expectedVersion
-$tauriConfig = Get-Content -LiteralPath (Join-Path $repoRoot "src-tauri\tauri.conf.json") -Raw -Encoding UTF8
-Assert-Contains "fork updater endpoint" $tauriConfig "https://github.com/dkfjtang/ccs-gateway-web/releases/latest/download/latest.json"
+$tauriConfigPath = Join-Path $repoRoot "src-tauri\tauri.conf.json"
+$tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw -Encoding UTF8
+$tauriConfigJson = $tauriConfig | ConvertFrom-Json
+$updaterEndpoints = @($tauriConfigJson.plugins.updater.endpoints)
+if (-not ($updaterEndpoints | Where-Object { $_ -match '^https://github\.com/[^/]+/ccs-gateway-web/releases/latest/download/latest\.json$' })) {
+    throw "fork updater endpoint: expected a ccs-gateway-web fork release channel"
+}
+Write-Host "ok: fork updater endpoint"
 Assert-NotContains "official updater endpoint not used for fork builds" $tauriConfig "https://github.com/farion1231/cc-switch/releases/latest/download/latest.json"
 $runtimeRoots = @("src", "src-tauri\src", "crates")
 $runtimeExtensions = @(".rs", ".ts", ".tsx")

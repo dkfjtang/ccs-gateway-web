@@ -7,11 +7,31 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 Set-Location -LiteralPath $repoRoot
+$wslDistro = if ($env:CCS_WSL_DISTRO) { $env:CCS_WSL_DISTRO } else { "Ubuntu" }
 
 $CargoOfflineArgs = @()
 if ($OfflineCargo) {
     $CargoOfflineArgs = @("--offline")
 }
+
+function ConvertTo-WslPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WindowsPath
+    )
+
+    $resolved = Resolve-Path -LiteralPath $WindowsPath
+    $path = $resolved.Path
+    if ($path -notmatch '^([A-Za-z]):\\(.*)$') {
+        throw "Only drive-letter Windows paths are supported: $path"
+    }
+
+    $drive = $Matches[1].ToLowerInvariant()
+    $tail = $Matches[2] -replace '\\', '/'
+    return "/mnt/$drive/$tail"
+}
+
+$repoRootWsl = ConvertTo-WslPath -WindowsPath $repoRoot
 
 function Invoke-Gate {
     param(
@@ -77,16 +97,16 @@ Invoke-Gate "git diff whitespace" {
 }
 
 Invoke-Gate "secret preflight all scope" {
-    wsl.exe -d Ubuntu-24.04 -- bash -lc "cd /mnt/f/development/ccs-gateway-web && CCS_PREFLIGHT_SCOPE=all ./scripts/ccs-secret-preflight.sh"
+    wsl.exe -d $wslDistro -- bash -lc "cd '$repoRootWsl' && CCS_PREFLIGHT_SCOPE=all ./scripts/ccs-secret-preflight.sh"
 }
 
 if (-not $SkipDocker) {
     Invoke-Gate "docker compose build" {
-        wsl.exe -d Ubuntu-24.04 -- bash -lc "cd /mnt/f/development/ccs-gateway-web && docker compose -f docker-compose.ccs-web.yml build"
+        wsl.exe -d $wslDistro -- bash -lc "cd '$repoRootWsl' && docker compose -f docker-compose.ccs-web.yml build"
     }
 
     Invoke-Gate "docker compose runtime smoke with proxy" {
-        wsl.exe -d Ubuntu-24.04 -- bash -lc "cd /mnt/f/development/ccs-gateway-web && docker compose -f docker-compose.ccs-web.yml up -d && trap 'docker compose -f docker-compose.ccs-web.yml down' EXIT && sleep 5 && CCS_TARGET_NAME=local CCS_CONTAINER_NAME=ccs-gateway-web ./scripts/ccs-prod-probe.sh"
+        wsl.exe -d $wslDistro -- bash -lc "cd '$repoRootWsl' && docker compose -f docker-compose.ccs-web.yml up -d && trap 'docker compose -f docker-compose.ccs-web.yml down' EXIT && sleep 5 && CCS_TARGET_NAME=local CCS_CONTAINER_NAME=ccs-gateway-web ./scripts/ccs-prod-probe.sh"
     }
 }
 

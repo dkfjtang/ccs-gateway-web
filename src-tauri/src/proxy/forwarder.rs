@@ -2114,22 +2114,18 @@ impl RequestForwarder {
             ProxyError::Timeout(_) => ErrorCategory::Retryable,
             ProxyError::ForwardFailed(_) => ErrorCategory::Retryable,
             ProxyError::ProviderUnhealthy(_) => ErrorCategory::Retryable,
-            // 上游 HTTP 错误：gateway 明确只对容量/上游类故障做 failover。
+            // 上游 HTTP 错误：按官方 CC Switch 分桶。
             //
-            // Retryable:
-            //   408/409/425/429 以及全部 5xx —— 可能是限流、暂时冲突、上游故障或容量问题。
-            // NonRetryable:
-            //   400/401/403/404/405/406/413/414/415/422 等 —— 多数是请求、认证、权限、
-            //   路径或模型映射问题；默认不扫完整队列，避免浪费额度和污染熔断器。
+            // 请求自身确定无效的状态码不重试；其他 4xx 和全部 5xx 保留
+            // Retryable，让不同 key、配额、地域或模型映射的 provider 有机会接管。
             ProxyError::UpstreamError { status, .. } => match *status {
-                408 | 409 | 425 | 429 => ErrorCategory::Retryable,
-                500..=599 => ErrorCategory::Retryable,
-                _ => ErrorCategory::NonRetryable,
+                400 | 405 | 406 | 413 | 414 | 415 | 422 | 501 => ErrorCategory::NonRetryable,
+                _ => ErrorCategory::Retryable,
             },
-            // 本地配置/转换/认证错误不是换 provider 能稳定解决的问题，默认不 failover。
-            ProxyError::ConfigError(_) => ErrorCategory::NonRetryable,
-            ProxyError::TransformError(_) => ErrorCategory::NonRetryable,
-            ProxyError::AuthError(_) => ErrorCategory::NonRetryable,
+            // Provider 级配置/转换/认证问题：换一个 Provider 可能就能成功。
+            ProxyError::ConfigError(_) => ErrorCategory::Retryable,
+            ProxyError::TransformError(_) => ErrorCategory::Retryable,
+            ProxyError::AuthError(_) => ErrorCategory::Retryable,
             ProxyError::StreamIdleTimeout(_) => ErrorCategory::Retryable,
             // 无可用供应商：所有供应商都试过了，无法重试
             ProxyError::NoAvailableProvider => ErrorCategory::NonRetryable,
@@ -2712,6 +2708,41 @@ mod tests {
         assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
         assert!(message.contains("继续尝试下一个 (1/3)"));
         assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn upstream_http_status_retry_bucket_matches_upstream_cc_switch() {
+        let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+
+        // Keep this aligned with .upstream/cc-switch-v3.16.2:
+        // src-tauri/src/proxy/forwarder.rs::categorize_proxy_error.
+        let forbidden = ProxyError::UpstreamError {
+            status: 403,
+            body: None,
+        };
+        assert!(matches!(
+            forwarder.categorize_proxy_error(&forbidden),
+            ErrorCategory::Retryable
+        ));
+
+        for status in [400, 405, 406, 413, 414, 415, 422, 501] {
+            let error = ProxyError::UpstreamError { status, body: None };
+            assert!(matches!(
+                forwarder.categorize_proxy_error(&error),
+                ErrorCategory::NonRetryable
+            ));
+        }
+
+        for error in [
+            ProxyError::ConfigError("provider config mismatch".to_string()),
+            ProxyError::TransformError("provider transform failed".to_string()),
+            ProxyError::AuthError("provider auth failed".to_string()),
+        ] {
+            assert!(matches!(
+                forwarder.categorize_proxy_error(&error),
+                ErrorCategory::Retryable
+            ));
+        }
     }
 
     #[test]

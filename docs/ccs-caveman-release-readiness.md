@@ -1,4 +1,4 @@
-# CCS Caveman Release Readiness
+﻿# CCS Caveman Release Readiness
 
 ## Decision
 
@@ -219,9 +219,9 @@ rtk powershell -NoProfile -Command "npm exec -- tauri build --config .\.run\cave
 This completed renderer build, Rust release compilation, and installer generation on the post-fix tree:
 
 ```text
-Built application at: F:\development\ccs-gateway-web\src-tauri\target\release\cc-switch.exe
-F:\development\ccs-gateway-web\src-tauri\target\release\bundle\msi\CC Switch_3.14.1_x64_en-US.msi
-F:\development\ccs-gateway-web\src-tauri\target\release\bundle\nsis\CC Switch_3.14.1_x64-setup.exe
+Built application at: <repo-root>\src-tauri\target\release\cc-switch.exe
+<repo-root>\src-tauri\target\release\bundle\msi\CC Switch_3.14.1_x64_en-US.msi
+<repo-root>\src-tauri\target\release\bundle\nsis\CC Switch_3.14.1_x64-setup.exe
 ```
 
 The command exited non-zero only after installer generation because updater signing requires the release secret:
@@ -388,12 +388,12 @@ The evidence directory must include a manifest shaped like:
 {
   "installedAppPath": "C:\\Program Files\\CC Switch\\cc-switch.exe",
   "installedAppSha256": "<SHA256 of installed app exe>",
-  "releaseSigningManifestPath": "F:\\development\\ccs-gateway-web\\.run\\caveman-release-signing\\caveman-release-signing-manifest.json",
-  "sourceInstallerPath": "F:\\development\\ccs-gateway-web\\src-tauri\\target\\release\\bundle\\nsis\\CC Switch_<version>_x64-setup.exe",
+  "releaseSigningManifestPath": "<repo-root>\\.run\\caveman-release-signing\\caveman-release-signing-manifest.json",
+  "sourceInstallerPath": "<repo-root>\\src-tauri\\target\\release\\bundle\\nsis\\CC Switch_<version>_x64-setup.exe",
   "sourceInstallerSha256": "<SHA256 from signing manifest>",
-  "releaseAppExePath": "F:\\development\\ccs-gateway-web\\src-tauri\\target\\release\\cc-switch.exe",
+  "releaseAppExePath": "<repo-root>\\src-tauri\\target\\release\\cc-switch.exe",
   "releaseAppExeSha256": "<SHA256 from signing manifest appExeSha256; must match installedAppSha256>",
-  "sourceSignaturePath": "F:\\development\\ccs-gateway-web\\src-tauri\\target\\release\\bundle\\nsis\\CC Switch_<version>_x64-setup.exe.sig",
+  "sourceSignaturePath": "<repo-root>\\src-tauri\\target\\release\\bundle\\nsis\\CC Switch_<version>_x64-setup.exe.sig",
   "sourceSignatureSha256": "<SHA256 from signing manifest>",
   "evidenceFiles": ["prompt-panel-full.png", "prompt-panel-lite.png", "prompt-panel-ultra.png", "prompt-panel-off.png", "caveman-installed-smoke-confirmation.json"],
   "evidenceFileSha256": {

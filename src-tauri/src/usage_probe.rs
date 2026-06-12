@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{Duration, Local, NaiveDate};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rquickjs::{Context, Function, Runtime};
 use serde_json::Value;
@@ -21,8 +22,6 @@ pub(crate) fn has_enabled_probes(probes: &[UsageProbe]) -> bool {
 }
 
 pub(crate) fn validate_probe_list(probes: &[UsageProbe]) -> Result<(), AppError> {
-    let mut enabled_usage_count = 0;
-
     for probe in probes {
         if probe.id.is_empty() {
             return Err(AppError::InvalidInput(
@@ -38,15 +37,6 @@ pub(crate) fn validate_probe_list(probes: &[UsageProbe]) -> Result<(), AppError>
                 "usage probe id 仅允许 ASCII 字母数字、_、-: {}",
                 probe.id
             )));
-        }
-
-        if probe.enabled && probe.probe_type == UsageProbeType::Usage {
-            enabled_usage_count += 1;
-            if enabled_usage_count > 1 {
-                return Err(AppError::InvalidInput(
-                    "最多只能启用一个 usage probe".to_string(),
-                ));
-            }
         }
     }
 
@@ -185,6 +175,7 @@ fn build_probe_request(
     access_token: Option<&str>,
     user_id: Option<&str>,
 ) -> UsageProbeRequest {
+    let day_boundaries = local_day_boundary_template_values();
     let replace = |value: &str| {
         replace_probe_vars(
             value,
@@ -192,6 +183,7 @@ fn build_probe_request(
             base_url,
             access_token.unwrap_or(""),
             user_id.unwrap_or(""),
+            &day_boundaries,
         )
     };
 
@@ -213,12 +205,31 @@ fn replace_probe_vars(
     base_url: &str,
     access_token: &str,
     user_id: &str,
+    day_boundaries: &(String, String),
 ) -> String {
     value
         .replace("{{apiKey}}", api_key)
         .replace("{{baseUrl}}", base_url)
         .replace("{{accessToken}}", access_token)
         .replace("{{userId}}", user_id)
+        .replace("{{todayStart}}", &day_boundaries.0)
+        .replace("{{tomorrowStart}}", &day_boundaries.1)
+}
+
+fn local_day_boundary_template_values() -> (String, String) {
+    let today = Local::now().date_naive();
+    let tomorrow = today
+        .succ_opt()
+        .unwrap_or_else(|| today + Duration::days(1));
+
+    (
+        format_url_encoded_midnight(today),
+        format_url_encoded_midnight(tomorrow),
+    )
+}
+
+fn format_url_encoded_midnight(date: NaiveDate) -> String {
+    format!("{}T00%3A00%3A00", date.format("%Y-%m-%d"))
 }
 
 fn validate_probe_request_url(request_url: &str, _base_url: &str) -> Result<(), AppError> {
@@ -453,10 +464,7 @@ fn sanitize_usage_error_message(message: &str) -> String {
     message.to_string()
 }
 
-fn sanitize_probe_error_message(
-    message: &str,
-    secrets: ProbeSecretContext<'_>,
-) -> String {
+fn sanitize_probe_error_message(message: &str, secrets: ProbeSecretContext<'_>) -> String {
     let sanitized = sanitize_usage_error_message(message);
     if sanitized == "探测异常" {
         return sanitized;
@@ -504,8 +512,60 @@ fn apply_usage_value(
     }
     .map_err(|e| AppError::InvalidInput(format!("usage probe 数据格式错误: {e}")))?;
 
-    accumulator.usage_data = Some(usage_data);
+    merge_usage_data(accumulator, usage_data);
     Ok(())
+}
+
+fn merge_usage_data(accumulator: &mut ProbeAccumulator, mut usage_data: Vec<UsageData>) {
+    match accumulator.usage_data.as_mut() {
+        Some(existing)
+            if existing.len() == 1
+                && usage_data.len() == 1
+                && can_merge_usage_record(&existing[0], &usage_data[0]) =>
+        {
+            merge_usage_record(&mut existing[0], usage_data.remove(0));
+        }
+        Some(existing) => existing.append(&mut usage_data),
+        None => accumulator.usage_data = Some(usage_data),
+    }
+}
+
+fn can_merge_usage_record(existing: &UsageData, incoming: &UsageData) -> bool {
+    match (&existing.plan_name, &incoming.plan_name) {
+        (Some(existing_plan), Some(incoming_plan)) => existing_plan == incoming_plan,
+        (Some(_), None) | (None, Some(_)) => true,
+        (None, None) => false,
+    }
+}
+
+fn merge_usage_record(target: &mut UsageData, incoming: UsageData) {
+    if incoming.plan_name.is_some() {
+        target.plan_name = incoming.plan_name;
+    }
+    if incoming.extra.is_some() {
+        target.extra = incoming.extra;
+    }
+    if incoming.is_valid.is_some() {
+        target.is_valid = incoming.is_valid;
+    }
+    if incoming.invalid_message.is_some() {
+        target.invalid_message = incoming.invalid_message;
+    }
+    if incoming.total.is_some() {
+        target.total = incoming.total;
+    }
+    if incoming.used.is_some() {
+        target.used = incoming.used;
+    }
+    if incoming.remaining.is_some() {
+        target.remaining = incoming.remaining;
+    }
+    if incoming.unit.is_some() {
+        target.unit = incoming.unit;
+    }
+    if incoming.resets_at.is_some() {
+        target.resets_at = incoming.resets_at;
+    }
 }
 
 fn apply_rate_value(accumulator: &mut ProbeAccumulator, value: Value) -> Result<(), AppError> {
@@ -584,11 +644,12 @@ fn apply_account_value(
 mod tests {
     use super::{
         apply_probe_value, execute_usage_probes, finalize_probe_result, has_enabled_probes,
-        validate_probe_list, validate_probe_request_url, ProbeAccumulator,
+        local_day_boundary_template_values, replace_probe_vars, validate_probe_list,
+        validate_probe_request_url, ProbeAccumulator,
     };
     use crate::provider::{UsageProbe, UsageProbeRequest, UsageProbeType};
     use axum::{
-        extract::State,
+        extract::{OriginalUri, State},
         http::{header::LOCATION, HeaderMap, StatusCode},
         response::IntoResponse,
         routing::{get, post},
@@ -623,6 +684,11 @@ mod tests {
             Json(json!({ "planName": "Pro", "remaining": 42.0, "unit": "credits" }))
         }
 
+        async fn usage_dated(State(log): State<RequestLog>, uri: OriginalUri) -> impl IntoResponse {
+            log.0.lock().expect("request log").push(uri.0.to_string());
+            Json(json!({ "planName": "Pro", "remaining": 42.0, "unit": "credits" }))
+        }
+
         async fn rate(State(log): State<RequestLog>) -> impl IntoResponse {
             log.0.lock().expect("request log").push("rate".to_string());
             Json(json!({ "rate": 1.5, "rateLabel": "x1.5" }))
@@ -644,7 +710,9 @@ mod tests {
             Json(json!({ "success": false, "error": "Bearer secret-token" }))
         }
 
-        async fn usage_failure_with_raw_api_key(State(log): State<RequestLog>) -> impl IntoResponse {
+        async fn usage_failure_with_raw_api_key(
+            State(log): State<RequestLog>,
+        ) -> impl IntoResponse {
             log.0
                 .lock()
                 .expect("request log")
@@ -652,7 +720,9 @@ mod tests {
             Json(json!({ "success": false, "error": "sk-live-secret-123" }))
         }
 
-        async fn account_invalid_with_raw_token(State(log): State<RequestLog>) -> impl IntoResponse {
+        async fn account_invalid_with_raw_token(
+            State(log): State<RequestLog>,
+        ) -> impl IntoResponse {
             log.0
                 .lock()
                 .expect("request log")
@@ -731,15 +801,25 @@ mod tests {
         let log = RequestLog::default();
         let app = Router::new()
             .route("/usage", get(usage))
+            .route("/usage-dated", get(usage_dated))
             .route("/rate", get(rate))
             .route("/rate-schema-error", get(rate_schema_error))
             .route("/usage-failure", get(usage_failure))
-            .route("/usage-failure-api-key", get(usage_failure_with_raw_api_key))
-            .route("/account-invalid-token", get(account_invalid_with_raw_token))
+            .route(
+                "/usage-failure-api-key",
+                get(usage_failure_with_raw_api_key),
+            )
+            .route(
+                "/account-invalid-token",
+                get(account_invalid_with_raw_token),
+            )
             .route("/echo-auth", post(echo_auth))
             .route("/redirect-302", post(redirect_302))
             .route("/redirect-307", post(redirect_307))
-            .route("/redirect-target", post(redirect_target).get(redirect_target))
+            .route(
+                "/redirect-target",
+                post(redirect_target).get(redirect_target),
+            )
             .with_state(log.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("local addr");
@@ -761,13 +841,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multiple_enabled_usage_probes() {
+    fn allows_multiple_enabled_usage_probes() {
         let probes = vec![
             probe("usage-main", UsageProbeType::Usage, true),
             probe("usage-backup", UsageProbeType::Usage, true),
         ];
 
-        assert!(validate_probe_list(&probes).is_err());
+        validate_probe_list(&probes).expect("multiple usage probes are merged");
     }
 
     #[test]
@@ -775,6 +855,46 @@ mod tests {
         let probes = vec![probe("usage/main", UsageProbeType::Usage, true)];
 
         assert!(validate_probe_list(&probes).is_err());
+    }
+
+    #[test]
+    fn replaces_daily_boundary_template_variables() {
+        let replaced = replace_probe_vars(
+            "{{baseUrl}}/use-log/stats?start_date={{todayStart}}&end_date={{tomorrowStart}}",
+            "sk-test",
+            "https://right.codes",
+            "",
+            "",
+            &local_day_boundary_template_values(),
+        );
+
+        assert!(replaced.starts_with("https://right.codes/use-log/stats?start_date="));
+        assert!(replaced.contains("T00%3A00%3A00&end_date="));
+        assert!(replaced.ends_with("T00%3A00%3A00"));
+        assert!(!replaced.contains("{{todayStart}}"));
+        assert!(!replaced.contains("{{tomorrowStart}}"));
+        assert_daily_boundary_query_values(&replaced);
+    }
+
+    fn assert_daily_boundary_query_values(value: &str) {
+        let start = query_value(value, "start_date").expect("start_date");
+        let end = query_value(value, "end_date").expect("end_date");
+
+        assert!(start.ends_with("T00%3A00%3A00"));
+        assert!(end.ends_with("T00%3A00%3A00"));
+
+        let start_date =
+            chrono::NaiveDate::parse_from_str(&start[..10], "%Y-%m-%d").expect("start date");
+        let end_date = chrono::NaiveDate::parse_from_str(&end[..10], "%Y-%m-%d").expect("end date");
+        assert_eq!(end_date, start_date.succ_opt().expect("next day"));
+    }
+
+    fn query_value(value: &str, key: &str) -> Option<String> {
+        let query = value.split_once('?')?.1;
+        query.split('&').find_map(|pair| {
+            let (name, raw_value) = pair.split_once('=')?;
+            (name == key).then(|| raw_value.to_string())
+        })
     }
 
     #[test]
@@ -857,6 +977,68 @@ mod tests {
     }
 
     #[test]
+    fn multiple_usage_probes_merge_single_usage_record() {
+        let account_usage = probe("usage-account", UsageProbeType::Usage, true);
+        let stats_usage = probe("usage-stats", UsageProbeType::Usage, true);
+        let mut accumulator = ProbeAccumulator::default();
+
+        apply_probe_value(
+            &mut accumulator,
+            &account_usage,
+            json!({ "planName": "Wallet", "remaining": 42.0, "unit": "RMB" }),
+        )
+        .expect("record account usage");
+        apply_probe_value(
+            &mut accumulator,
+            &stats_usage,
+            json!({ "used": 8.0, "total": 50.0, "extra": "今日: ￥1.20" }),
+        )
+        .expect("record stats usage");
+
+        let result = finalize_probe_result(accumulator);
+        let data = result.data.expect("usage data");
+
+        assert!(result.success);
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].plan_name.as_deref(), Some("Wallet"));
+        assert_eq!(data[0].remaining, Some(42.0));
+        assert_eq!(data[0].used, Some(8.0));
+        assert_eq!(data[0].total, Some(50.0));
+        assert_eq!(data[0].unit.as_deref(), Some("RMB"));
+        assert_eq!(data[0].extra.as_deref(), Some("今日: ￥1.20"));
+    }
+
+    #[test]
+    fn multiple_usage_probes_keep_distinct_named_single_records() {
+        let primary_usage = probe("usage-primary", UsageProbeType::Usage, true);
+        let secondary_usage = probe("usage-secondary", UsageProbeType::Usage, true);
+        let mut accumulator = ProbeAccumulator::default();
+
+        apply_probe_value(
+            &mut accumulator,
+            &primary_usage,
+            json!({ "planName": "Wallet A", "remaining": 42.0, "unit": "RMB" }),
+        )
+        .expect("record primary usage");
+        apply_probe_value(
+            &mut accumulator,
+            &secondary_usage,
+            json!({ "planName": "Wallet B", "remaining": 7.0, "unit": "RMB" }),
+        )
+        .expect("record secondary usage");
+
+        let result = finalize_probe_result(accumulator);
+        let data = result.data.expect("usage data");
+
+        assert!(result.success);
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].plan_name.as_deref(), Some("Wallet A"));
+        assert_eq!(data[0].remaining, Some(42.0));
+        assert_eq!(data[1].plan_name.as_deref(), Some("Wallet B"));
+        assert_eq!(data[1].remaining, Some(7.0));
+    }
+
+    #[test]
     fn rejects_non_number_rate() {
         let rate_probe = probe("rate-main", UsageProbeType::Rate, true);
         let mut accumulator = ProbeAccumulator::default();
@@ -897,6 +1079,30 @@ mod tests {
         assert!(result.success);
         assert_eq!(result.data.expect("usage data").len(), 1);
         assert_eq!(*log.0.lock().expect("request log"), vec!["usage"]);
+    }
+
+    #[tokio::test]
+    async fn execute_usage_probes_replaces_daily_boundary_variables_in_request_url() {
+        let (base_url, log) = test_server().await;
+        let mut usage = probe("usage-main", UsageProbeType::Usage, true);
+        usage.request.url =
+            "{{baseUrl}}/usage-dated?start_date={{todayStart}}&end_date={{tomorrowStart}}"
+                .to_string();
+        usage.extractor = "return response".to_string();
+
+        execute_usage_probes(&[usage], "", &base_url, None, None)
+            .await
+            .expect("execute probes");
+
+        let entries = log.0.lock().expect("request log");
+        assert_eq!(entries.len(), 1);
+        let requested_path = entries.first().expect("request path");
+        assert!(requested_path.starts_with("/usage-dated?start_date="));
+        assert!(requested_path.contains("T00%3A00%3A00&end_date="));
+        assert!(requested_path.ends_with("T00%3A00%3A00"));
+        assert!(!requested_path.contains("{{todayStart}}"));
+        assert!(!requested_path.contains("{{tomorrowStart}}"));
+        assert_daily_boundary_query_values(requested_path);
     }
 
     #[tokio::test]
@@ -949,8 +1155,11 @@ mod tests {
 
     #[test]
     fn allows_https_probe_url_on_different_host_and_port() {
-        validate_probe_request_url("https://metrics.example.net:8443/rate", "https://api.example.com")
-            .expect("https probe URL may target a different metrics endpoint");
+        validate_probe_request_url(
+            "https://metrics.example.net:8443/rate",
+            "https://api.example.com",
+        )
+        .expect("https probe URL may target a different metrics endpoint");
     }
 
     #[tokio::test]
@@ -1024,10 +1233,15 @@ mod tests {
         usage.request.url = "http://example.com/usage".to_string();
         usage.extractor = "return response".to_string();
 
-        let result =
-            execute_usage_probes(&[usage], "secret-token", "https://api.example.com", None, None)
-                .await
-                .expect("usage probe config failures are represented as failed usage result");
+        let result = execute_usage_probes(
+            &[usage],
+            "secret-token",
+            "https://api.example.com",
+            None,
+            None,
+        )
+        .await
+        .expect("usage probe config failures are represented as failed usage result");
 
         assert!(!result.success);
         let message = result.error.expect("usage error");
@@ -1045,7 +1259,9 @@ mod tests {
             "Authorization".to_string(),
             "Bearer {{accessToken}}".to_string(),
         );
-        usage.request.body = Some("user={{userId}}&key={{apiKey}}".to_string());
+        usage.request.body = Some(
+            "user={{userId}}&key={{apiKey}}&start={{todayStart}}&end={{tomorrowStart}}".to_string(),
+        );
         usage.extractor = "return response".to_string();
 
         let result = execute_usage_probes(
@@ -1059,10 +1275,15 @@ mod tests {
         .expect("execute probes");
 
         assert!(result.success);
-        assert_eq!(
-            *log.0.lock().expect("request log"),
-            vec!["auth:Bearer token-1;body:user=user-1&key=api-key-1"]
-        );
+        let entries = log.0.lock().expect("request log");
+        assert_eq!(entries.len(), 1);
+        let entry = entries.first().expect("request log entry");
+        assert!(entry.starts_with("auth:Bearer token-1;body:user=user-1&key=api-key-1"));
+        assert!(entry.contains("&start="));
+        assert!(entry.contains("&end="));
+        assert!(entry.contains("T00%3A00%3A00"));
+        assert!(!entry.contains("{{todayStart}}"));
+        assert!(!entry.contains("{{tomorrowStart}}"));
     }
 
     #[tokio::test]
@@ -1075,20 +1296,20 @@ mod tests {
         let mut redirect_302 = probe("rate-302", UsageProbeType::Rate, true);
         redirect_302.request.url = "{{baseUrl}}/redirect-302".to_string();
         redirect_302.request.method = "POST".to_string();
-        redirect_302
-            .request
-            .headers
-            .insert("Authorization".to_string(), "Bearer {{accessToken}}".to_string());
+        redirect_302.request.headers.insert(
+            "Authorization".to_string(),
+            "Bearer {{accessToken}}".to_string(),
+        );
         redirect_302.request.body = Some("key={{apiKey}}".to_string());
         redirect_302.extractor = "return response".to_string();
 
         let mut redirect_307 = probe("rate-307", UsageProbeType::Rate, true);
         redirect_307.request.url = "{{baseUrl}}/redirect-307".to_string();
         redirect_307.request.method = "POST".to_string();
-        redirect_307
-            .request
-            .headers
-            .insert("Authorization".to_string(), "Bearer {{accessToken}}".to_string());
+        redirect_307.request.headers.insert(
+            "Authorization".to_string(),
+            "Bearer {{accessToken}}".to_string(),
+        );
         redirect_307.request.body = Some("key={{apiKey}}".to_string());
         redirect_307.extractor = "return response".to_string();
 
@@ -1116,6 +1337,8 @@ mod tests {
                 "redirect-307 auth:Bearer token-redirect;body:key=api-key-redirect",
             ]
         );
-        assert!(!entries.iter().any(|entry| entry.contains("redirect-target")));
+        assert!(!entries
+            .iter()
+            .any(|entry| entry.contains("redirect-target")));
     }
 }

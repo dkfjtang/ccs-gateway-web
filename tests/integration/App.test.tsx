@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { providersApi } from "@/lib/api/providers";
 import { settingsApi } from "@/lib/api/settings";
+import { usageApi } from "@/lib/api/usage";
 
 vi.mock("@/lib/api/auth", () => ({
   authApi: {
@@ -23,11 +24,19 @@ import { emitTauriEvent } from "../msw/tauriMocks";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
+const toastWarningMock = vi.fn();
 
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
     error: (...args: unknown[]) => toastErrorMock(...args),
+    warning: (...args: unknown[]) => toastWarningMock(...args),
+  },
+}));
+
+vi.mock("@/lib/api/usage", () => ({
+  usageApi: {
+    query: vi.fn(),
   },
 }));
 
@@ -181,12 +190,28 @@ const waitForProvidersReady = async () => {
   );
 };
 
+const dismissFirstRunNoticeIfPresent = async () => {
+  const confirmButton = screen.queryByRole("button", {
+    name: "firstRunNotice.confirm",
+  });
+  if (confirmButton) {
+    fireEvent.click(confirmButton);
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "firstRunNotice.confirm" }),
+      ).not.toBeInTheDocument();
+    });
+  }
+};
+
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+    toastWarningMock.mockReset();
     vi.mocked(settingsApi.openExternal).mockClear();
+    vi.mocked(usageApi.query).mockReset();
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -258,6 +283,74 @@ describe("App integration with MSW", () => {
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it("renders refresh-all usage button in the top toolbar and refreshes enabled providers only", async () => {
+    setProviders("claude", {
+      "claude-1": {
+        id: "claude-1",
+        name: "Claude One",
+        settingsConfig: {},
+        category: "custom",
+        sortIndex: 0,
+        createdAt: Date.now(),
+        meta: {
+          usage_script: {
+            enabled: true,
+            language: "javascript",
+            code: "",
+          },
+        },
+      },
+      "claude-2": {
+        id: "claude-2",
+        name: "Claude Two",
+        settingsConfig: {},
+        category: "custom",
+        sortIndex: 1,
+        createdAt: Date.now() + 1,
+        meta: {
+          usage_script: {
+            enabled: true,
+            language: "javascript",
+            code: "",
+          },
+        },
+      },
+      "claude-3": {
+        id: "claude-3",
+        name: "Claude Three",
+        settingsConfig: {},
+        category: "custom",
+        sortIndex: 2,
+        createdAt: Date.now() + 2,
+      },
+    });
+    setCurrentProviderId("claude", "claude-1");
+
+    vi.mocked(usageApi.query).mockImplementation(async (providerId) => ({
+      success: true,
+      data: [{ used: providerId === "claude-1" ? 1 : 2 }],
+    }));
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitForProvidersReady();
+    await dismissFirstRunNoticeIfPresent();
+
+    const refreshButton = screen.getByRole("button", {
+      name: "刷新全部自定义计费",
+    });
+    expect(refreshButton).toBeInTheDocument();
+
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expect(usageApi.query).toHaveBeenCalledTimes(2);
+    });
+    expect(usageApi.query).toHaveBeenNthCalledWith(1, "claude-1", "claude");
+    expect(usageApi.query).toHaveBeenNthCalledWith(2, "claude-2", "claude");
   });
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {

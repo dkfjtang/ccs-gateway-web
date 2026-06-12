@@ -1,10 +1,10 @@
-# CCS RTK Source Audit
+﻿# CCS RTK Source Audit
 
 ## Source
 
 - Repository: <https://github.com/rtk-ai/rtk>
 - Audited checkout: `805caf7 Merge pull request #1741 from gitbluf/develop`
-- Local audit path: `/home/zytang/openclaw/workspace-ccs-gateway-web/repos/source-audit/rtk`
+- Local audit path: `<source-audit-root>/rtk`
 - License evidence:
   - `LICENSE`: Apache-2.0
   - `Cargo.toml`: currently says MIT

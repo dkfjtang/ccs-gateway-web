@@ -1,7 +1,7 @@
-## 2026-06-10 - CCS 3.16.2 upstream alignment and WSL container publish
+﻿## 2026-06-10 - CCS 3.16.2 upstream alignment and WSL container publish
 
 ### Key Information
-- Repo: `F:\development\ccs-gateway-web`.
+- Repo: `<repo-root>`.
 - Branch used during the work: `codex/ccs-3.16.2-align`.
 - Official upstream decision: track `https://github.com/farion1231/cc-switch.git` as the primary upstream; keep `https://github.com/cp-yu/cc-switch-web.git` only as historical/reference material.
 - Target version: `3.16.2-ccs-gateway.1`.
@@ -28,7 +28,7 @@
 - `rtk cargo test --manifest-path crates/server/Cargo.toml`: passed, 14 tests.
 - `rtk cargo test --manifest-path crates/core/Cargo.toml`: passed, 6 tests.
 - `rtk powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-official-upstream-alignment.ps1`: passed with `official_upstream_alignment=ready`.
-- `rtk wsl.exe -d Ubuntu-24.04 -- bash -lc 'cd /mnt/f/development/ccs-gateway-web && CCS_PREFLIGHT_SCOPE=all ./scripts/ccs-secret-preflight.sh'`: passed. `gitleaks` was not installed, so only local regex preflight ran.
+- `rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && CCS_PREFLIGHT_SCOPE=all ./scripts/ccs-secret-preflight.sh'`: passed. `gitleaks` was not installed, so only local regex preflight ran.
 - `rtk git diff --check`: passed.
 - `rtk powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-ccs-3-16-2-release-gate.ps1`: first run timed out at 10 minutes; re-run with a 20-minute command timeout passed in about 470 seconds.
 

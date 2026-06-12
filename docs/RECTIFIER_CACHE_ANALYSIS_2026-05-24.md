@@ -1,4 +1,4 @@
-# CCS Gateway Web Rectifier / Cache Analysis - 2026-05-24
+﻿# CCS Gateway Web Rectifier / Cache Analysis - 2026-05-24
 
 ## Why This Matters
 
@@ -10,11 +10,11 @@ This document records the current analysis and turns rectifier/cache behavior in
 
 Target repo:
 
-- `/home/zytang/openclaw/workspace-ccs-gateway-web/ccs-gateway-web`
+- `<repo-root-on-host>`
 
 Upstream reference:
 
-- `/home/zytang/openclaw/workspace-ccs-gateway-web/repos/cc-switch-official`
+- `<official-source-root>`
 - Official snapshot: `farion1231/cc-switch v3.15.0`, commit `9e3f168`
 
 ## Current Parity Snapshot

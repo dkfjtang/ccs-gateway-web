@@ -1,8 +1,8 @@
-# 2026-05-31 - CCS Web 3.16 Follow-Up Decision
+﻿# 2026-05-31 - CCS Web 3.16 Follow-Up Decision
 
 ## Key Information
 
-- Local `F:\development\ccs-gateway-web` is based on the `cp-yu/cc-switch-web` fork line, not a direct fresh fork from official CC Switch 3.16.
+- Local `<repo-root>` is based on the `cp-yu/cc-switch-web` fork line, not a direct fresh fork from official CC Switch 3.16.
 - Local git evidence:
   - Initial local baseline commit: `2baf9a96 Initialize ccs-gateway-web from cp-yu cc-switch-web`.
   - Follow-up baseline sync commits include `f446c936 Sync v3.15 JSON canonical helpers`, `bbb1a877 Sync v3.15 proxy lifecycle and retry behavior`, `79bc28ac Sync v3.15 usage summary metrics`, and `eadc6c73 Sync v3.15 transform cache identity handling`.

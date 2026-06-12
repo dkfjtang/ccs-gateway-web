@@ -72,6 +72,7 @@ vi.mock("@/components/UsageFooter", () => ({
   default: () => <div data-testid="usage-footer" />,
 }));
 
+
 vi.mock("@dnd-kit/sortable", async () => {
   const actual = await vi.importActual<any>("@dnd-kit/sortable");
 
@@ -124,6 +125,7 @@ beforeEach(() => {
   useDragSortMock.mockReset();
   useSortableMock.mockReset();
   providerCardRenderSpy.mockClear();
+  vi.clearAllMocks();
 
   useSortableMock.mockImplementation(({ id }: { id: string }) => ({
     setNodeRef: vi.fn(),
@@ -306,4 +308,5 @@ describe("ProviderList Component", () => {
       screen.getByText("No providers match your search."),
     ).toBeInTheDocument();
   });
+
 });

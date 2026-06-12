@@ -121,5 +121,5 @@ CC Switch User Manual
 
 Feel free to submit Issues or PRs to improve the documentation:
 
-- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
-- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)
+- [Fork GitHub Issues](https://github.com/<fork-owner>/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/<fork-owner>/ccs-gateway-web)

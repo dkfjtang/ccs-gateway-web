@@ -1,10 +1,10 @@
-# CCS Caveman Source Audit
+﻿# CCS Caveman Source Audit
 
 ## Source
 
 - Repository: <https://github.com/JuliusBrussee/caveman>
 - Audited checkout: `655b7d9 docs: feature caveman-code with a callout card after Before/After`
-- Local audit path: `/home/zytang/openclaw/workspace-ccs-gateway-web/repos/source-audit/caveman`
+- Local audit path: `<source-audit-root>/caveman`
 - License: MIT
 
 ## What Caveman Actually Is

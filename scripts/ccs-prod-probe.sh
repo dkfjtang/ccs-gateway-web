@@ -138,6 +138,8 @@ if [[ -n "$NGINX_BASE_URL" ]]; then
   probe_url "NGINX health" "$NGINX_BASE_URL/health" "200"
   probe_url "NGINX env guard" "$NGINX_BASE_URL/.env" "404"
   probe_url "NGINX env variant guard" "$NGINX_BASE_URL/.env.web" "404"
+  probe_url "NGINX hidden file guard" "$NGINX_BASE_URL/.git/config" "404"
+  probe_url "NGINX well-known passthrough" "$NGINX_BASE_URL/.well-known/ccs-probe" "200"
 fi
 
 print_section "Auth Boundary"
