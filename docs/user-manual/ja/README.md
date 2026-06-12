@@ -142,5 +142,5 @@ CC Switch ユーザーマニュアル
 
 Issue や PR でドキュメントの改善にご協力ください：
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)

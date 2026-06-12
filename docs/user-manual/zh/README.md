@@ -142,5 +142,5 @@
 
 欢迎提交 Issue 或 PR 改进文档：
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)

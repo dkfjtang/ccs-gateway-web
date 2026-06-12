@@ -142,5 +142,5 @@ Operational notes use placeholders for local paths, loopback ports, image tags, 
 
 Feel free to submit Issues or PRs to improve the documentation:
 
-- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
-- [GitHub Repository](https://github.com/farion1231/cc-switch)
+- [Fork GitHub Issues](https://github.com/dkfjtang/ccs-gateway-web/issues)
+- [Fork GitHub Repository](https://github.com/dkfjtang/ccs-gateway-web)
