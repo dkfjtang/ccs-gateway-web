@@ -1353,6 +1353,14 @@
     "appType": "アプリ種別",
     "allApps": "すべてのアプリ",
     "statusCode": "ステータスコード",
+    "statusGroups": {
+      "all": "すべてのステータス",
+      "success": "成功 2xx",
+      "redirect": "リダイレクト 3xx",
+      "clientError": "クライアントエラー 4xx",
+      "serverError": "サーバーエラー 5xx",
+      "other": "その他のステータス"
+    },
     "searchProviderPlaceholder": "プロバイダーを検索...",
     "searchModelPlaceholder": "モデルを検索...",
     "timeRange": "期間",

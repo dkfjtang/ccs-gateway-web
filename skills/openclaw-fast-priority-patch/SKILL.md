@@ -9,7 +9,7 @@ Use this skill when OpenClaw must route non-official `openai-responses` provider
 
 ## Scope
 
-- Target hosts are Ubuntu systems running OpenClaw Gateway, such as `zytang` and `tang`.
+- Target hosts are Ubuntu systems running OpenClaw Gateway, represented in public docs as placeholders such as `<host-a>` and `<host-b>`.
 - This is an OpenClaw installed-package patch, not a `ccs-gateway-web` source patch.
 - Do not print or copy API keys, bearer tokens, provider headers, or raw `models.json` / `openclaw.json` contents.
 - Never touch production until the target host and rollback point are explicit.

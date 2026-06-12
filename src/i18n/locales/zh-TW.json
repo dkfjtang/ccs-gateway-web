@@ -1383,6 +1383,14 @@
     "appType": "應用程式類型",
     "allApps": "全部應用程式",
     "statusCode": "狀態碼",
+    "statusGroups": {
+      "all": "全部狀態",
+      "success": "成功 2xx",
+      "redirect": "重新導向 3xx",
+      "clientError": "用戶端錯誤 4xx",
+      "serverError": "伺服器錯誤 5xx",
+      "other": "其他狀態"
+    },
     "searchProviderPlaceholder": "搜尋供應商...",
     "searchModelPlaceholder": "搜尋模型...",
     "timeRange": "時間範圍",

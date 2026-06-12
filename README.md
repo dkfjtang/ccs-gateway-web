@@ -19,7 +19,7 @@
 
 - 在本地或 WSL/Ubuntu 中长期运行一个 Web 版 CC Switch 管理端。
 - 通过 Web UI 管理 Claude Code、Codex、Gemini、OpenCode、OpenClaw 等应用的供应商配置。
-- 为 OpenClaw 提供 OpenAI-compatible 本地代理入口，例如 `http://127.0.0.1:15721/v1`。
+- 为 OpenClaw 提供 OpenAI-compatible 本地代理入口，例如 `<proxy-url>/v1`。
 - 通过 NGINX 暴露唯一 Web 管理入口，同时把模型代理端口限制在本机内部。
 - 使用 Docker 方式部署，并通过持久化目录保留供应商配置、SQLite 数据库、Web Auth、备份与同步状态。
 - 在保留上游能力的同时，逐步增强 Web runtime、生产部署、安全边界、OpenClaw 集成和本地运维体验。
@@ -45,13 +45,14 @@
 - 增加 `crates/server` / `crates/core` 的 Web Server 运行路径。
 - 增加 Docker 生产部署文件和 NGINX 反代运行手册。
 - 默认生产部署建议：
-  - Web UI/API：`127.0.0.1:17666`
-  - 模型代理：`127.0.0.1:15721`
-  - 外部入口：`0.0.0.0:30033 -> 127.0.0.1:17666`
+  - Web UI/API 只绑定宿主机回环地址。
+  - 模型代理只绑定宿主机回环地址。
+  - 外部入口由 NGINX 代理到 Web UI/API。
   - NGINX 运行在 WSL/Ubuntu 宿主机，不运行在 CCS 容器内。
 - 加强 Web Auth、端口边界、容器持久化、OpenClaw smoke test 和运维 runbook。
 
 更多生产部署细节见：[`docs/ccs-production-runbook.md`](docs/ccs-production-runbook.md)。
+分支维护、上游对齐和公开仓脱敏规则见：[`docs/ccs-branch-maintenance-ledger.md`](docs/ccs-branch-maintenance-ledger.md)。
 
 ## 运行方式
 
@@ -61,7 +62,7 @@
 ./start-web.sh
 ```
 
-默认访问：
+默认本地访问：
 
 ```text
 http://127.0.0.1:17666
@@ -115,13 +116,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-
 
 建议生产形态：
 
-- 容器发布端口只绑定本机：
-  - `127.0.0.1:17666:17666`
-  - `127.0.0.1:15721:15721`
+- 容器发布端口只绑定宿主机回环地址：
+  - `<host-loopback>:<web-port>:<web-port>`
+  - `<host-loopback>:<proxy-port>:<proxy-port>`
 - 外部只通过 NGINX 访问 Web UI/API。
-- 不要把 `15721` 模型代理端口暴露到公网或局域网。
-- 启用 `/root/.cc-switch/web-auth.json` 保护管理 UI/API。
-- 持久化 `/root/.cc-switch`，可写挂载 `/root/.openclaw`，以便 OpenClaw/Caveman prompt 配置能够写回。
+- 不要把模型代理端口暴露到公网或局域网。
+- 启用服务端 Web Auth 配置保护管理 UI/API。
+- 持久化 CCS 数据目录；如需 OpenClaw/Caveman prompt 配置写回，再按受控权限挂载 OpenClaw 配置目录。
 
 ### NGINX 入口安装
 
@@ -137,17 +138,17 @@ sudo bash scripts/install-wsl-nginx-ccs.sh
 
 ```bash
 # Web UI/API 健康检查
-curl -fsS http://127.0.0.1:17666/health
+curl -fsS <web-url>/health
 
 # 本地模型代理状态
-curl -fsS http://127.0.0.1:15721/status
+curl -fsS <proxy-url>/status
 
 # NGINX 外部入口健康检查
-curl -fsS http://127.0.0.1:30033/health
+curl -fsS <nginx-url>/health
 
 # Web Auth 状态
 curl -sS -H 'Content-Type: application/json' \
-  -X POST http://127.0.0.1:17666/api/invoke \
+  -X POST <web-url>/api/invoke \
   -d '{"command":"auth.status","payload":{}}'
 ```
 
@@ -202,9 +203,9 @@ cargo build --release --manifest-path crates/server/Cargo.toml
 ## 安全说明
 
 - Web 管理端暴露到局域网或外部网络前，必须启用 Web Auth。
-- 不要提交 `/root/.cc-switch/web-auth-password.txt`、API Key、供应商 Token、WebDAV 密码等敏感信息。
-- 生产部署中不要暴露 `15721` 模型代理端口。
-- Docker 重建、迁移或清理前，先备份 `/root/.cc-switch` 和关键 OpenClaw 配置。
+- 不要提交 Web Auth 密码文件、API Key、供应商 Token、WebDAV 密码等敏感信息。
+- 生产部署中不要暴露模型代理端口。
+- Docker 重建、迁移或清理前，先备份 CCS 持久化数据和关键 OpenClaw 配置。
 - WebDAV 同步会上传数据库和 Skills 快照，请确认远端目录和账号权限。
 - 本仓库是公共仓库；文档和提交中只能使用 `<repo-root>`、`<wsl-distro>`、`<host>`、`<proxy-url>` 等占位符，不要写入本机路径、私有主机、真实运行日志、容器 ID、镜像 digest 或账号信息。
 

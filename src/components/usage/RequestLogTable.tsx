@@ -18,7 +18,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useRequestLogs } from "@/lib/query/usage";
-import type { LogFilters, UsageRangeSelection } from "@/types/usage";
+import type {
+  LogFilters,
+  LogStatusGroup,
+  UsageRangeSelection,
+} from "@/types/usage";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import {
@@ -144,33 +148,6 @@ export function RequestLogTable({
             </SelectContent>
           </Select>
 
-          {/* Status code */}
-          <Select
-            value={draftFilters.statusCode?.toString() || "all"}
-            onValueChange={(v) =>
-              applySelectFilter(
-                "statusCode",
-                v === "all"
-                  ? undefined
-                  : Number.isFinite(Number.parseInt(v, 10))
-                    ? Number.parseInt(v, 10)
-                    : undefined,
-              )
-            }
-          >
-            <SelectTrigger className="h-8 w-[100px] bg-background text-xs">
-              <SelectValue placeholder={t("usage.statusCode")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("common.all")}</SelectItem>
-              <SelectItem value="200">200 OK</SelectItem>
-              <SelectItem value="400">400</SelectItem>
-              <SelectItem value="401">401</SelectItem>
-              <SelectItem value="429">429</SelectItem>
-              <SelectItem value="500">500</SelectItem>
-            </SelectContent>
-          </Select>
-
           {/* Provider search */}
           <div className="relative min-w-[140px] flex-1">
             <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
@@ -207,6 +184,39 @@ export function RequestLogTable({
               }}
             />
           </div>
+
+          {/* Status */}
+          <Select
+            value={draftFilters.statusGroup || "all"}
+            onValueChange={(v) =>
+              applySelectFilter(
+                "statusGroup",
+                v === "all" ? undefined : (v as LogStatusGroup),
+              )
+            }
+          >
+            <SelectTrigger className="h-8 w-[128px] bg-background text-xs">
+              <SelectValue placeholder={t("usage.status")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("usage.statusGroups.all")}</SelectItem>
+              <SelectItem value="success">
+                {t("usage.statusGroups.success")}
+              </SelectItem>
+              <SelectItem value="redirect">
+                {t("usage.statusGroups.redirect")}
+              </SelectItem>
+              <SelectItem value="client_error">
+                {t("usage.statusGroups.clientError")}
+              </SelectItem>
+              <SelectItem value="server_error">
+                {t("usage.statusGroups.serverError")}
+              </SelectItem>
+              <SelectItem value="other">
+                {t("usage.statusGroups.other")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
 
           {onRangeChange && (
             <UsageDateRangePicker

@@ -1353,6 +1353,14 @@
     "appType": "App Type",
     "allApps": "All Apps",
     "statusCode": "Status Code",
+    "statusGroups": {
+      "all": "All Status",
+      "success": "Success 2xx",
+      "redirect": "Redirect 3xx",
+      "clientError": "Client Error 4xx",
+      "serverError": "Server Error 5xx",
+      "other": "Other Status"
+    },
     "searchProviderPlaceholder": "Search provider...",
     "searchModelPlaceholder": "Search model...",
     "timeRange": "Time Range",

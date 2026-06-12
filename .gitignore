@@ -22,6 +22,7 @@ crates/core/target
 release-web
 nul
 .run/
+docs/session-summaries/2026-06-12-*.md
 /.upstream/
 
 # Flatpak build artifacts
