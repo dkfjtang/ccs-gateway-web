@@ -1,4 +1,4 @@
-﻿# CCS Gateway Web Rectifier / Cache Analysis - 2026-05-24
+# CCS Gateway Web Rectifier / Cache Analysis - 2026-05-24
 
 ## Why This Matters
 

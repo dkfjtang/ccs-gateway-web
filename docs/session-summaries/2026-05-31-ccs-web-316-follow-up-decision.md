@@ -1,4 +1,4 @@
-﻿# 2026-05-31 - CCS Web 3.16 Follow-Up Decision
+# 2026-05-31 - CCS Web 3.16 Follow-Up Decision
 
 ## Key Information
 

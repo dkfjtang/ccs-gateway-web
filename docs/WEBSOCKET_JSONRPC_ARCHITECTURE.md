@@ -682,7 +682,7 @@ async fn main() {
     let app = Router::new()
         .nest("/api", api_routes);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3160").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("<local-dev-host>:<port>").await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 ```
@@ -1231,7 +1231,7 @@ mod tests {
 ```typescript
 describe("JsonRpcWebSocketClient", () => {
   it("should send request and receive response", async () => {
-    const client = new JsonRpcWebSocketClient("ws://localhost:3160/api/ws");
+    const client = new JsonRpcWebSocketClient("ws://<local-dev-host>:<port>/api/ws");
     const result = await client.sendRequest("get_providers", { app: "claude" });
     expect(result).toBeDefined();
   });
@@ -1251,7 +1251,7 @@ describe("JsonRpcWebSocketClient", () => {
 npm install -g wscat
 
 # 连接 WebSocket
-wscat -c ws://localhost:3160/api/ws
+wscat -c ws://<local-dev-host>:<port>/api/ws
 
 # 发送命令
 > {"jsonrpc":"2.0","id":1,"method":"get_providers","params":{"app":"claude"}}
@@ -1267,7 +1267,7 @@ wscat -c ws://localhost:3160/api/ws
 使用 Playwright:
 ```typescript
 test("WebSocket command invocation", async ({ page }) => {
-  await page.goto("http://localhost:3160");
+  await page.goto("http://<local-dev-host>:<port>");
 
   // 等待 WebSocket 连接建立
   await page.waitForFunction(() => window.__WS_CONNECTED === true);
@@ -1409,7 +1409,7 @@ pub async fn upgrade_handler(
 ) -> impl IntoResponse {
     // 验证 Origin
     if let Some(origin) = headers.get("origin") {
-        let allowed = vec!["http://localhost:3160", "https://your-domain.com"];
+        let allowed = vec!["http://<local-dev-host>:<port>", "https://your-domain.com"];
         if !allowed.contains(&origin.to_str().unwrap_or("")) {
             return StatusCode::FORBIDDEN.into_response();
         }

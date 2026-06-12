@@ -1,4 +1,4 @@
-﻿# CCS Gateway Web Release and Observability Plan
+# CCS Gateway Web Release and Observability Plan
 
 This document defines the local WSL build path and the production release/log probe workflow for the two Ubuntu production targets: `<host-a>` and `<host-b>`.
 
@@ -17,7 +17,7 @@ The repository is public. Do not commit secrets, host-private values, tokens, pa
 Run from Windows PowerShell:
 
 ```powershell
-rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build -f Dockerfile.web -t ccs-gateway-web:local .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build -f Dockerfile.web -t ccs-gateway-web:<local-image-tag> .'
 ```
 
 If the Windows host has a local proxy, pass it explicitly into the Docker build. In this environment the proxy is:
@@ -29,19 +29,19 @@ http://<proxy-host>:<proxy-port>
 From WSL, `127.0.0.1` can resolve to the WSL network namespace rather than the Windows host. Prefer Docker Desktop's host alias first:
 
 ```powershell
-rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build --build-arg HTTP_PROXY=http://<proxy-host>:<proxy-port> --build-arg HTTPS_PROXY=http://<proxy-host>:<proxy-port> --build-arg http_proxy=http://<proxy-host>:<proxy-port> --build-arg https_proxy=http://<proxy-host>:<proxy-port> -f Dockerfile.web -t ccs-gateway-web:local .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build --build-arg HTTP_PROXY=http://<proxy-host>:<proxy-port> --build-arg HTTPS_PROXY=http://<proxy-host>:<proxy-port> --build-arg http_proxy=http://<proxy-host>:<proxy-port> --build-arg https_proxy=http://<proxy-host>:<proxy-port> -f Dockerfile.web -t ccs-gateway-web:<local-image-tag> .'
 ```
 
 If `host.docker.internal` is unavailable in the WSL Docker engine, resolve the WSL default gateway and use that address:
 
 ```powershell
-rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && proxy_host="$(ip route | awk "/default/ {print \$3; exit}")" && docker build --build-arg HTTP_PROXY="http://$proxy_host:7890" --build-arg HTTPS_PROXY="http://$proxy_host:7890" --build-arg http_proxy="http://$proxy_host:7890" --build-arg https_proxy="http://$proxy_host:7890" -f Dockerfile.web -t ccs-gateway-web:local .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && proxy_host="$(ip route | awk "/default/ {print \$3; exit}")" && docker build --build-arg HTTP_PROXY="http://$proxy_host:7890" --build-arg HTTPS_PROXY="http://$proxy_host:7890" --build-arg http_proxy="http://$proxy_host:7890" --build-arg https_proxy="http://$proxy_host:7890" -f Dockerfile.web -t ccs-gateway-web:<local-image-tag> .'
 ```
 
 Run the local container without using production data:
 
 ```powershell
-rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && mkdir -p .run/local-cc-switch .run/local-openclaw && docker run --rm --name ccs-gateway-web-local -p 127.0.0.1:17666:17666 -p 127.0.0.1:15721:15721 -e CC_SWITCH_HOST=0.0.0.0 -e CC_SWITCH_PORT=17666 -e CC_SWITCH_AUTO_PORT=false -e CC_SWITCH_START_PROXY=true -e RUST_LOG=cc_switch_server=info,tower_http=info -v "$PWD/.run/local-cc-switch:/root/.cc-switch" -v "$PWD/.run/local-openclaw:/root/.openclaw" ccs-gateway-web:local'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && mkdir -p .run/local-cc-switch .run/local-openclaw && docker run --rm --name ccs-gateway-web-local -p <loopback-host>:<port>:17666 -p <loopback-host>:<port>:15721 -e CC_SWITCH_HOST=0.0.0.0 -e CC_SWITCH_PORT=17666 -e CC_SWITCH_AUTO_PORT=false -e CC_SWITCH_START_PROXY=true -e RUST_LOG=cc_switch_server=info,tower_http=info -v "$PWD/.run/local-cc-switch:<app-data-dir>" -v "$PWD/.run/local-openclaw:<openclaw-data-dir>" ccs-gateway-web:<local-image-tag>'
 ```
 
 Smoke test from another shell:
@@ -62,8 +62,8 @@ Allowed in the public repository:
 Not allowed in the public repository:
 
 - API keys, provider tokens, OAuth tokens, passwords, cookies, private keys.
-- Real contents of `/root/.cc-switch/web-auth.json`.
-- Real contents of `/root/.cc-switch/web-auth-password.txt`.
+- Real contents of `<app-data-dir>/web-auth.json`.
+- Real contents of `<app-data-dir>/web-auth-password.txt`.
 - Real WebDAV password or token values.
 - Host-private notes that reveal credentials or account recovery data.
 
@@ -83,10 +83,10 @@ Each production host keeps runtime data outside the repo:
 
 | Path | Purpose |
 | --- | --- |
-| `/root/.cc-switch` | CCS database, settings, proxy config, backups, Web auth |
-| `/root/.cc-switch/web-auth.json` | Server-local Web Auth config |
-| `/root/.cc-switch/web-auth-password.txt` | Server-local password note, never committed |
-| `/root/.openclaw` | OpenClaw config mounted read-write so OpenClaw/Caveman prompt config can be updated |
+| `<app-data-dir>` | CCS database, settings, proxy config, backups, Web auth |
+| `<app-data-dir>/web-auth.json` | Server-local Web Auth config |
+| `<app-data-dir>/web-auth-password.txt` | Server-local password note, never committed |
+| `<openclaw-data-dir>` | OpenClaw config mounted read-write so OpenClaw/Caveman prompt config can be updated |
 
 Required runtime environment:
 
@@ -108,9 +108,9 @@ Use the same probe script with different host-level variables.
 
 ```bash
 export CCS_TARGET_NAME=<host-a>
-export CCS_WEB_BASE_URL=http://127.0.0.1:17666
-export CCS_PROXY_BASE_URL=http://127.0.0.1:15721
-export CCS_NGINX_BASE_URL=http://127.0.0.1:30033
+export CCS_WEB_BASE_URL=http://<loopback-host>:<port>
+export CCS_PROXY_BASE_URL=http://<loopback-host>:<port>
+export CCS_NGINX_BASE_URL=http://<loopback-host>:<port>
 export CCS_CONTAINER_NAME=ccs-gateway-web
 export CCS_REQUIRE_AUTH=true
 export CCS_REQUIRE_NGINX=true
@@ -121,9 +121,9 @@ export CCS_REQUIRE_NGINX=true
 
 ```bash
 export CCS_TARGET_NAME=<host-b>
-export CCS_WEB_BASE_URL=http://127.0.0.1:17666
-export CCS_PROXY_BASE_URL=http://127.0.0.1:15721
-export CCS_NGINX_BASE_URL=http://127.0.0.1:30033
+export CCS_WEB_BASE_URL=http://<loopback-host>:<port>
+export CCS_PROXY_BASE_URL=http://<loopback-host>:<port>
+export CCS_NGINX_BASE_URL=http://<loopback-host>:<port>
 export CCS_CONTAINER_NAME=ccs-gateway-web
 export CCS_REQUIRE_AUTH=true
 export CCS_REQUIRE_NGINX=true
@@ -155,7 +155,7 @@ The upstream alignment gate also enforces that desktop updater endpoints use the
 4. Run `./scripts/ccs-secret-preflight.sh`.
 5. Commit only source, docs, scripts, and safe config templates.
 6. Build or pull the image on `<host-a>`.
-7. Back up `/root/.cc-switch` and `/root/.openclaw/openclaw.json`.
+7. Back up `<app-data-dir>` and `<openclaw-data-dir>/openclaw.json`.
 8. Run the OpenClaw patch health check on the target host before and after OpenClaw upgrades:
 
 ```bash
@@ -183,10 +183,10 @@ Manual fallback:
 docker ps --filter name=ccs-gateway-web
 docker logs --tail 200 ccs-gateway-web
 ss -ltnp | grep -E ':(17666|15721|30033)\b' || true
-curl -fsS http://127.0.0.1:17666/health
-curl -fsS http://127.0.0.1:15721/status
-curl -fsS http://127.0.0.1:30033/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env
+curl -fsS http://<loopback-host>:<port>/health
+curl -fsS http://<loopback-host>:<port>/status
+curl -fsS http://<loopback-host>:<port>/health
+curl -s -o /dev/null -w '%{http_code}\n' http://<loopback-host>:<port>/.env
 ```
 
 Token Saver aggregate report from copied or local logs:

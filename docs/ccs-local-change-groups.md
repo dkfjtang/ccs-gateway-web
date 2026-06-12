@@ -1,4 +1,4 @@
-﻿# CCS Gateway Web Local Change Groups
+# CCS Gateway Web Local Change Groups
 
 This file groups the current dirty worktree into release/review buckets. Keep it updated before staging, committing, or rebasing onto a newer official `farion1231/cc-switch` baseline.
 

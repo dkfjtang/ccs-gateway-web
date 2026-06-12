@@ -1,4 +1,4 @@
-﻿# CCS RTK Source Audit
+# CCS RTK Source Audit
 
 ## Source
 

@@ -1,4 +1,4 @@
-﻿# 2026-05-31 - Caveman Publish And Fix Notes
+# 2026-05-31 - Caveman Publish And Fix Notes
 
 ## Key Information
 

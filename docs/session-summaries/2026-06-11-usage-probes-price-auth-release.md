@@ -1,4 +1,4 @@
-﻿## 2026-06-11 - Usage probes, price display, local release and auth
+## 2026-06-11 - Usage probes, price display, local release and auth
 
 ### Key Information
 - Branch: `codex/ccs-3.16.2-align`.
@@ -37,17 +37,17 @@
   - `docker compose -f docker-compose.ccs-web.yml build`
   - `docker compose -f docker-compose.ccs-web.yml up -d`
 - Container: `ccs-gateway-web`.
-- Image: `ccs-gateway-web:local`.
-- Internal local web/API: `http://127.0.0.1:17666`.
-- WSL NGINX external entry: `http://127.0.0.1:30033`.
-- WSL NGINX listens on `0.0.0.0:30033` and proxies to `127.0.0.1:17666`.
+- Image: `ccs-gateway-web:<local-image-tag>`.
+- Internal local web/API: `http://<loopback-host>:<port>`.
+- WSL NGINX external entry: `http://<loopback-host>:<port>`.
+- WSL NGINX listens on `<bind-host>:<port>` and proxies to `<loopback-host>:<port>`.
 - Do not expose port `15721` publicly.
 - NGINX should stay on host WSL, not inside the container.
 
 ### Auth And Security
 - Local CCS Web auth is enabled for public exposure.
-- Auth config path: `/root/.cc-switch/web-auth.json`.
-- Password file path: `/root/.cc-switch/web-auth-password.txt`.
+- Auth config path: `<app-data-dir>/web-auth.json`.
+- Password file path: `<app-data-dir>/web-auth-password.txt`.
 - Do not store or print the generated password in summaries.
 - Operator-only password retrieval commands are intentionally omitted from public documentation.
 - Auth verification completed:
@@ -64,8 +64,8 @@
   - `<repo-root>\.dockerignore`
   - `<repo-root>\pnpm-workspace.yaml`
 - Container port bindings should remain local-only:
-  - `127.0.0.1:17666`
-  - `127.0.0.1:15721`
+  - `<loopback-host>:<port>`
+  - `<loopback-host>:<port>`
 - Public access should go through WSL NGINX port `30033`.
 
 ### Follow-ups

@@ -1,4 +1,4 @@
-﻿# 2026-06-11 - Usage Probes, Local WSL Publish, Provider Actions
+# 2026-06-11 - Usage Probes, Local WSL Publish, Provider Actions
 
 ## Key Information
 

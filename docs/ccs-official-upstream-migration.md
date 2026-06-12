@@ -1,4 +1,4 @@
-﻿# CCS Official Upstream Migration
+# CCS Official Upstream Migration
 
 ## Decision
 

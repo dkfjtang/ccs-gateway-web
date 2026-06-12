@@ -1,13 +1,13 @@
-﻿# 2026-05-28 - OpenClaw Fast Priority Patch Session
+# 2026-05-28 - OpenClaw Fast Priority Patch Session
 
 ## Key Information
 
 - Project workspace: `<repo-root>`.
 - Local WSL distro used for OpenClaw testing: `<wsl-distro>`, using root-owned OpenClaw installation.
-- Local CCS test gateway must use `127.0.0.1:15721`; never use `15722`, because it is reserved by the local CCS desktop instance.
-- Local CCS API used during verification: `http://127.0.0.1:17666/api/invoke`.
+- Local CCS test gateway must use `<loopback-host>:<port>`; never use `15722`, because it is reserved by the local CCS desktop instance.
+- Local CCS API used during verification: `http://<loopback-host>:<port>/api/invoke`.
 - Local OpenClaw gateway systemd user service: `openclaw-gateway.service`.
-- OpenClaw gateway command path observed during this session: `/root/.hermes/node/bin/node /root/.hermes/node/lib/node_modules/openclaw/dist/index.js gateway --port 18789`.
+- OpenClaw gateway command path observed during this session: `<hermes-data-dir>/node/bin/node <hermes-data-dir>/node/lib/node_modules/openclaw/dist/index.js gateway --port 18789`.
 - Production hosts mentioned for later deployment: `<host-a>` and `<host-b>`, both Ubuntu. They were not touched in this session.
 
 ## Patch Artifact
@@ -23,11 +23,11 @@
 - OpenClaw was upgraded from `2026.5.12` to `2026.5.27`.
 - Final version check returned: `OpenClaw 2026.5.27 (27ae826)`.
 - The skill patch script successfully patched the upgraded OpenClaw dist files:
-  - `/root/.hermes/node/lib/node_modules/openclaw/dist/proxy-stream-wrappers-Dte4KBWq.js`
-  - `/root/.hermes/node/lib/node_modules/openclaw/dist/extra-params-BxDvfOci.js`
+  - `<hermes-data-dir>/node/lib/node_modules/openclaw/dist/proxy-stream-wrappers-Dte4KBWq.js`
+  - `<hermes-data-dir>/node/lib/node_modules/openclaw/dist/extra-params-BxDvfOci.js`
 - A post-patch dry run returned `dry_run_status=already_patched`.
 - Local wrapper verification returned `local_wrapper_test=service_tier:priority`.
-- Real request verification used a temporary safe capture proxy on `127.0.0.1:15720`, forwarding to local CCS `127.0.0.1:15721`.
+- Real request verification used a temporary safe capture proxy on `<loopback-host>:<port>`, forwarding to local CCS `<loopback-host>:<port>`.
 - Capture proxy logged only safe fields and confirmed:
   - method: `POST`
   - URL: `/v1/responses`
@@ -43,7 +43,7 @@
 Upgrade OpenClaw:
 
 ```bash
-/root/.hermes/node/bin/node /root/.hermes/node/lib/node_modules/openclaw/openclaw.mjs update --yes --json --timeout 1800
+<hermes-data-dir>/node/bin/node <hermes-data-dir>/node/lib/node_modules/openclaw/openclaw.mjs update --yes --json --timeout 1800
 ```
 
 Apply or reapply the skill patch:
@@ -61,7 +61,7 @@ bash <repo-root-wsl>/skills/openclaw-fast-priority-patch/scripts/apply_openclaw_
 Check OpenClaw version:
 
 ```bash
-/root/.hermes/node/bin/node /root/.hermes/node/lib/node_modules/openclaw/openclaw.mjs --version
+<hermes-data-dir>/node/bin/node <hermes-data-dir>/node/lib/node_modules/openclaw/openclaw.mjs --version
 ```
 
 Check gateway service:
@@ -81,10 +81,10 @@ systemctl --user is-active openclaw-gateway.service
 
 ## Security And Safety Notes
 
-- Do not print raw `/root/.openclaw/openclaw.json` or `/root/.openclaw/agents/main/agent/models.json`; they may contain secret-bearing fields.
+- Do not print raw `<openclaw-data-dir>/openclaw.json` or `<openclaw-data-dir>/agents/main/agent/models.json`; they may contain secret-bearing fields.
 - During the OpenClaw update, doctor warned about plaintext secret-bearing fields and a memory search provider without API key. This was not remediated in this session.
 - Any temporary capture proxy must log only safe fields such as method, URL, model, `service_tier`, `has_service_tier`, and body size. It must not log prompts, headers, API keys, tokens, or raw request bodies.
-- After capture verification, restore `zdy.baseUrl` from `127.0.0.1:15720/v1` back to `127.0.0.1:15721/v1`, restart `openclaw-gateway.service`, and stop the temporary capture proxy.
+- After capture verification, restore `zdy.baseUrl` from `<loopback-host>:<port>/v1` back to `<loopback-host>:<port>/v1`, restart `openclaw-gateway.service`, and stop the temporary capture proxy.
 - Before pushing this public repo, re-run sensitive keyword checks on touched files.
 
 ## Follow-ups

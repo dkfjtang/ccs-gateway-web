@@ -1,4 +1,4 @@
-﻿# CCS Gateway Web Production Runbook
+# CCS Gateway Web Production Runbook
 
 This runbook records the production operating checks for the WSL/Ubuntu + Docker + OpenClaw + NGINX deployment.
 
@@ -7,11 +7,11 @@ This runbook records the production operating checks for the WSL/Ubuntu + Docker
 ```text
 External clients
   -> NGINX :30033
-  -> 127.0.0.1:17666 inside WSL/Ubuntu
+  -> <loopback-host>:<port> inside WSL/Ubuntu
   -> CCS Web UI/API in Docker
 
 OpenClaw inside WSL/Ubuntu
-  -> 127.0.0.1:15721/v1
+  -> <loopback-host>:<port>/v1
   -> CCS OpenAI-compatible proxy in Docker
 ```
 
@@ -19,7 +19,7 @@ Required state:
 
 - `17666` is CCS Web UI/API and is published on the host loopback only.
 - `15721` is the model proxy and is published on the host loopback only.
-- `30033` is the external NGINX entry, listens on `0.0.0.0`, and proxies only to `127.0.0.1:17666`.
+- `30033` is the external NGINX entry, listens on `0.0.0.0`, and proxies only to `<loopback-host>:<port>`.
 - External clients must not be able to reach `17666` or `15721` directly.
 - Web auth must be enabled before exposing `30033`.
 - The CCS proxy must start automatically after container restart.
@@ -28,12 +28,12 @@ Required state:
 
 | Path | Purpose |
 | --- | --- |
-| `/root/.cc-switch` | CCS persistent data: database, providers, settings, proxy config, backups, Web auth config |
-| `/root/.cc-switch/web-auth.json` | Web auth configuration; must exist in production |
-| `/root/.cc-switch/web-auth-password.txt` | Local bootstrap password note, root-only; never commit or paste to chat |
-| `/root/.openclaw/openclaw.json` | OpenClaw config mounted read-only into the container |
+| `<app-data-dir>` | CCS persistent data: database, providers, settings, proxy config, backups, Web auth config |
+| `<app-data-dir>/web-auth.json` | Web auth configuration; must exist in production |
+| `<app-data-dir>/web-auth-password.txt` | Local bootstrap password note, root-only; never commit or paste to chat |
+| `<openclaw-data-dir>/openclaw.json` | OpenClaw config mounted read-only into the container |
 | `docker-compose.ccs-web.yml` | Docker runtime definition for this deployment |
-| `/etc/nginx/sites-available/ccs-gateway-web-30033` | NGINX entry that should proxy `0.0.0.0:30033 -> 127.0.0.1:17666` |
+| `/etc/nginx/sites-available/ccs-gateway-web-30033` | NGINX entry that should proxy `<bind-host>:<port> -> <loopback-host>:<port>` |
 
 ## Host NGINX setup
 
@@ -46,7 +46,7 @@ cd <repo-root-on-host>
 sudo bash scripts/install-wsl-nginx-ccs.sh
 ```
 
-The script writes `/etc/nginx/sites-available/ccs-gateway-web-30033`, enables it from `sites-enabled`, validates `nginx -t`, and reloads NGINX. The site must listen on IPv4 `0.0.0.0:30033` only; it must not open an IPv6 `[::]:30033` listener, and it does not proxy the model proxy port `15721`.
+The script writes `/etc/nginx/sites-available/ccs-gateway-web-30033`, enables it from `sites-enabled`, validates `nginx -t`, and reloads NGINX. The site must listen on IPv4 `<bind-host>:<port>` only; it must not open an IPv6 `[::]:30033` listener, and it does not proxy the model proxy port `15721`.
 
 ## Daily health check
 
@@ -57,20 +57,20 @@ cd <repo-root-on-host>
 
 docker ps --filter name=ccs-gateway-web
 ss -ltnp | grep -E ':(17666|15721|30033)\b' || true
-curl -fsS http://127.0.0.1:17666/health
-curl -fsS http://127.0.0.1:15721/status
-curl -fsS http://127.0.0.1:30033/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:30033/.env.web
+curl -fsS http://<loopback-host>:<port>/health
+curl -fsS http://<loopback-host>:<port>/status
+curl -fsS http://<loopback-host>:<port>/health
+curl -s -o /dev/null -w '%{http_code}\n' http://<loopback-host>:<port>/.env
+curl -s -o /dev/null -w '%{http_code}\n' http://<loopback-host>:<port>/.env.web
 ```
 
 Expected:
 
 ```text
 ccs-gateway-web is running
-127.0.0.1:17666 is listening
-127.0.0.1:15721 is listening
-0.0.0.0:30033 is listening via NGINX
+<loopback-host>:<port> is listening
+<loopback-host>:<port> is listening
+<bind-host>:<port> is listening via NGINX
 /health on 17666 returns success
 /status on 15721 returns success
 /health on 30033 returns success
@@ -102,13 +102,13 @@ If `17666` or `15721` is reachable through `$ip`, stop and fix the Docker port p
 ## Web auth check
 
 ```bash
-ls -l /root/.cc-switch/web-auth.json
+ls -l <app-data-dir>/web-auth.json
 curl -sS -H 'Content-Type: application/json' \
-  -X POST http://127.0.0.1:17666/api/invoke \
+  -X POST http://<loopback-host>:<port>/api/invoke \
   -d '{"command":"auth.status","payload":{}}'
 
 curl -sS -i -H 'Content-Type: application/json' \
-  -X POST http://127.0.0.1:17666/api/invoke \
+  -X POST http://<loopback-host>:<port>/api/invoke \
   -d '{"command":"get_settings","payload":{}}'
 ```
 
@@ -122,7 +122,7 @@ Password handling:
 
 - Do not commit `web-auth.json` or `web-auth-password.txt`.
 - Do not paste the bootstrap password into chat.
-- If the password needs to be rotated, update `/root/.cc-switch/web-auth.json`, keep the local root-only note current, and restart the container.
+- If the password needs to be rotated, update `<app-data-dir>/web-auth.json`, keep the local root-only note current, and restart the container.
 
 ## Proxy auto-start check
 
@@ -132,8 +132,8 @@ The compose file must include:
 environment:
   CC_SWITCH_START_PROXY: "true"
 ports:
-  - "127.0.0.1:17666:17666"
-  - "127.0.0.1:15721:15721"
+  - "<loopback-host>:<port>:17666"
+  - "<loopback-host>:<port>:15721"
 ```
 
 After a restart, verify that the proxy comes back without manually pressing start in the Web UI:
@@ -141,21 +141,21 @@ After a restart, verify that the proxy comes back without manually pressing star
 ```bash
 docker compose -f docker-compose.ccs-web.yml restart ccs-gateway-web
 sleep 5
-curl -fsS http://127.0.0.1:15721/status
+curl -fsS http://<loopback-host>:<port>/status
 ```
 
 Expected status includes `running: true` or an equivalent healthy proxy state.
 
 ## Business smoke test
 
-Use the CCS proxy directly, not the historical temporary upstream `127.0.0.1:20128`:
+Use the CCS proxy directly, not the historical temporary upstream `<loopback-host>:<port>`:
 
 ```bash
 curl -sS --max-time 120 \
   -D /tmp/ccs_smoke_headers.txt \
   -o /tmp/ccs_smoke_body.json \
   -H 'Content-Type: application/json' \
-  -X POST http://127.0.0.1:15721/v1/responses \
+  -X POST http://<loopback-host>:<port>/v1/responses \
   -d '{"model":"gpt-5.5","input":[{"role":"user","content":"Return exactly: CCS_PING_OK"}],"max_output_tokens":32}'
 
 cat /tmp/ccs_smoke_body.json
@@ -175,7 +175,7 @@ After any deployment, provider, auth, or proxy change, also verify OpenClaw can 
 Expected model path:
 
 ```text
-OpenClaw -> ccs/gpt-5.5 -> http://127.0.0.1:15721/v1 -> CCS current provider
+OpenClaw -> ccs/gpt-5.5 -> http://<loopback-host>:<port>/v1 -> CCS current provider
 ```
 
 Do not mark the deployment healthy only because `curl` succeeds. A complete verification also needs one OpenClaw model call through `ccs/gpt-5.5` returning the expected sentinel text.
@@ -192,14 +192,14 @@ CCS_AUTOSTART_OK
 
 Before switching provider:
 
-1. Back up `/root/.cc-switch`.
+1. Back up `<app-data-dir>`.
 2. Confirm Web auth is enabled.
 3. Switch provider from the Web UI/API.
-4. Run `/v1/responses` smoke through `127.0.0.1:15721`.
+4. Run `/v1/responses` smoke through `<loopback-host>:<port>`.
 5. Confirm request logs and `get_proxy_status` show the intended provider.
 6. Run one OpenClaw last-hop check through `ccs/gpt-5.5`.
 
-Do not treat `127.0.0.1:20128` as production verification. It belongs to another local service and is not the CCS production route.
+Do not treat `<loopback-host>:<port>` as production verification. It belongs to another local service and is not the CCS production route.
 
 ## Backup before risky changes
 
@@ -210,7 +210,7 @@ stamp=$(date +%Y%m%d-%H%M%S)
 backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/$stamp"
 mkdir -p "$backup_dir/openclaw-config"
 tar -czf "$backup_dir/root-cc-switch.tar.gz" -C /root .cc-switch
-cp -a /root/.openclaw/openclaw.json "$backup_dir/openclaw-config/openclaw.json"
+cp -a <openclaw-data-dir>/openclaw.json "$backup_dir/openclaw-config/openclaw.json"
 if [ -f /etc/nginx/sites-available/ccs-gateway-web-30033 ]; then
   cp -a /etc/nginx/sites-available/ccs-gateway-web-30033 "$backup_dir/nginx-ccs-gateway-web-30033"
 fi
@@ -242,7 +242,7 @@ backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/<timestamp>"
 tar -xzf "$backup_dir/root-cc-switch.tar.gz" -C /root
 ```
 
-Only restore `/root/.openclaw/openclaw.json` if the OpenClaw config was also changed and you have an explicit reason to roll it back.
+Only restore `<openclaw-data-dir>/openclaw.json` if the OpenClaw config was also changed and you have an explicit reason to roll it back.
 
 ### 3. Restore or disable the host NGINX site if needed
 
@@ -280,9 +280,9 @@ Known good commits in this deployment line:
 ### 5. Re-run minimum gates
 
 ```bash
-curl -fsS http://127.0.0.1:17666/health
-curl -fsS http://127.0.0.1:15721/status
-curl -fsS http://127.0.0.1:30033/health
+curl -fsS http://<loopback-host>:<port>/health
+curl -fsS http://<loopback-host>:<port>/status
+curl -fsS http://<loopback-host>:<port>/health
 ```
 
 Then run the business smoke and OpenClaw last-hop checks.
@@ -293,7 +293,7 @@ Then run the business smoke and OpenClaw last-hop checks.
 
 Likely cause: the proxy inside the container is bound to container-local `127.0.0.1` instead of `0.0.0.0`.
 
-Fix: keep host publishing restricted to `127.0.0.1:15721:15721`, but ensure the proxy inside the container listens on an address Docker bridge can reach.
+Fix: keep host publishing restricted to `<loopback-host>:<port>:15721`, but ensure the proxy inside the container listens on an address Docker bridge can reach.
 
 ### Proxy is down after container restart
 
@@ -305,7 +305,7 @@ Fix: set `CC_SWITCH_START_PROXY=true`, rebuild/restart, and re-run the proxy aut
 
 Likely cause: Web auth is disabled or bypassed.
 
-Fix: enable `/root/.cc-switch/web-auth.json`, restart, and verify unauthenticated protected RPC returns `401`.
+Fix: enable `<app-data-dir>/web-auth.json`, restart, and verify unauthenticated protected RPC returns `401`.
 
 ### GitHub push fails with TLS/GnuTLS errors
 
@@ -328,6 +328,6 @@ A CCS deployment change is not complete until all are true:
 - NGINX `30033` is reachable and proxies only to Web UI/API.
 - Web auth is enabled and unauthenticated protected RPC returns `401`.
 - Proxy auto-start works after container restart.
-- `/v1/responses` smoke through `127.0.0.1:15721` succeeds.
+- `/v1/responses` smoke through `<loopback-host>:<port>` succeeds.
 - One OpenClaw last-hop call through `ccs/gpt-5.5` succeeds.
 - Any source/docs changes are committed, and remote push is verified when a push is explicitly requested.

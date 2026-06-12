@@ -19,7 +19,7 @@
 - RightCode daily extractor should read `Number(response?.total_cost ?? 0)` and return `extra: "今日: ￥..."`.
 - Earlier dynamic `request.url: (function () { ... })()` failed because the probe runner treats `request.url` as a string template and does not evaluate JS for URL construction.
 - For zxai / New API investigation:
-  - `/api/usage/token/` works with `Authorization: Bearer sk-...` and no Cookie.
+  - `/api/usage/token/` works with `Authorization: Bearer <api-key>` and no Cookie.
   - `/api/user/self` still requires user login/session and rejected Bearer key for zxai.
   - `/api/usage/token/` is token-level usage, not necessarily user-account-level quota.
 
@@ -48,21 +48,21 @@
 
 ## Local Publish
 
-- First publish attempt used the default WSL distro name and failed preflight with `WSL_E_DISTRO_NOT_FOUND`; no build or container recreate happened.
+- First publish attempt used the default WSL distro name and failed preflight with `<wsl-distro-error>`; no build or container recreate happened.
 - The successful run used the operator's configured `<wsl-distro>`.
 - Successful publish command:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -Distro '<wsl-distro>'`
 - Published local image:
-  - `ccs-gateway-web:local`
+  - `ccs-gateway-web:<local-image-tag>`
   - image ID intentionally omitted from this public summary.
 - Container:
   - `ccs-gateway-web`
   - state: `Up`
-  - ports: `127.0.0.1:17666->17666`, `127.0.0.1:15721->15721`
+  - ports: `<loopback-host>:<port>->17666`, `<loopback-host>:<port>->15721`
 - Health checks passed:
   - Web UI: `200`
   - API health: `200 {"result":{"enabled":true}}`
-  - Proxy TCP: `127.0.0.1:15721 reachable=True`
+  - Proxy TCP: `<loopback-host>:<port> reachable=True`
   - served build asset matched local `dist`: `assets/index-BPLTNd7t.js`
 - Publish log:
   - `.run/local-wsl-publish/<timestamped-log>.log`

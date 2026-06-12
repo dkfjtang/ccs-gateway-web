@@ -1,4 +1,4 @@
-﻿# CCS Caveman Source Audit
+# CCS Caveman Source Audit
 
 ## Source
 

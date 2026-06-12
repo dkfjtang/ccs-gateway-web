@@ -1,4 +1,4 @@
-﻿# 2026-05-31 - CCS overlay governance completion
+# 2026-05-31 - CCS overlay governance completion
 
 ## Key Information
 

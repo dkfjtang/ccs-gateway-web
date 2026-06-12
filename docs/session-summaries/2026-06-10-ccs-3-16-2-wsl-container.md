@@ -1,4 +1,4 @@
-﻿## 2026-06-10 - CCS 3.16.2 upstream alignment and WSL container publish
+## 2026-06-10 - CCS 3.16.2 upstream alignment and WSL container publish
 
 ### Key Information
 - Repo: `<repo-root>`.
@@ -35,17 +35,17 @@
 ### WSL Container Publish
 - Built existing compose image without changing container config: `docker compose -f docker-compose.ccs-web.yml build`.
 - Started existing compose service: `docker compose -f docker-compose.ccs-web.yml up -d`.
-- Published image: `ccs-gateway-web:local`, image ID observed as `6e06d3f5d516`.
+- Published image: `ccs-gateway-web:<local-image-tag>`, image ID observed as `<image-id>`.
 - Container: `ccs-gateway-web`.
-- Ports from existing compose config: `127.0.0.1:17666->17666` and `127.0.0.1:15721->15721`.
-- Final Windows-side check: `curl.exe -I --max-time 5 http://127.0.0.1:17666/health` returned `HTTP/1.1 200 OK`.
-- Final WSL-side check: `curl -I --max-time 5 http://127.0.0.1:17666/health` returned `HTTP/1.1 200 OK`.
+- Ports from existing compose config: `<loopback-host>:<port>->17666` and `<loopback-host>:<port>->15721`.
+- Final Windows-side check: `curl.exe -I --max-time 5 http://<loopback-host>:<port>/health` returned `HTTP/1.1 200 OK`.
+- Final WSL-side check: `curl -I --max-time 5 http://<loopback-host>:<port>/health` returned `HTTP/1.1 200 OK`.
 - Final publish probe passed: `CCS_TARGET_NAME=local-wsl-test CCS_CONTAINER_NAME=ccs-gateway-web ./scripts/ccs-prod-probe.sh`.
 - Probe showed `auth.status` as `{"result":{"enabled":false}}`; this was left unchanged because the user requested not changing container config and this is a test environment.
 - `git status --short -- docker-compose.ccs-web.yml Dockerfile.web .dockerignore` produced no output after publish checks, confirming those container config files were not modified.
 
 ### Observations / Risks
-- During initial post-publish access, `http://127.0.0.1:17666/health` intermittently failed while the container was in a short startup/restart window. Later checks showed the container was up for 8 minutes and both Windows/WSL health probes passed.
+- During initial post-publish access, `http://<loopback-host>:<port>/health` intermittently failed while the container was in a short startup/restart window. Later checks showed the container was up for 8 minutes and both Windows/WSL health probes passed.
 - WSL printed a localhost/NAT warning with garbled encoding in some commands. This did not block final Windows localhost access, but it is worth remembering if localhost forwarding becomes intermittent.
 - Docker logs showed repeated startup banners from earlier short lifecycle attempts, but final probe succeeded and the service was reachable.
 

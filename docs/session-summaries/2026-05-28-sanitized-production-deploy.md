@@ -1,4 +1,4 @@
-﻿# 2026-05-28 - Sanitized Production Deploy Notes
+# 2026-05-28 - Sanitized Production Deploy Notes
 
 ## Key Information
 

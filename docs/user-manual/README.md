@@ -1,6 +1,6 @@
 # CC Switch User Manual / 用户手册 / ユーザーマニュアル
 
-> Claude Code / Codex / Gemini CLI / OpenCode / OpenClaw
+> Claude Code / Claude Desktop / Codex / Gemini CLI / OpenCode / OpenClaw / Hermes
 
 ## Language / 语言 / 言語
 
@@ -12,11 +12,11 @@
 
 ## Version / 版本 / バージョン
 
-- Documentation version: v3.16.2-ccs-gateway.1
-- Last updated: 2026-06-10
-- Compatible with CC Switch v3.16.2+
+- Documentation version: v3.16.0
+- Last updated: 2026-05-29
+- Compatible with CC Switch v3.16.0+
 
 ## Links
 
-- [Fork GitHub Issues](https://github.com/<fork-owner>/ccs-gateway-web/issues)
-- [Fork GitHub Repository](https://github.com/<fork-owner>/ccs-gateway-web)
+- [GitHub Issues](https://github.com/farion1231/cc-switch/issues)
+- [GitHub Repository](https://github.com/farion1231/cc-switch)

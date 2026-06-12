@@ -1,4 +1,4 @@
-﻿# 2026-05-29 - Token Saver / Caveman Release Notes
+# 2026-05-29 - Token Saver / Caveman Release Notes
 
 ## Key Information
 

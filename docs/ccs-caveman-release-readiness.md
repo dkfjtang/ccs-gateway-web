@@ -1,4 +1,4 @@
-﻿# CCS Caveman Release Readiness
+# CCS Caveman Release Readiness
 
 ## Decision
 
@@ -143,7 +143,7 @@ Additional main-agent evidence after round 2:
   - evidence manifest: `.run\caveman-ui-smoke\caveman-ui-smoke-evidence.json`, including SHA256 hashes for each screenshot
   - UI path: OpenClaw -> Prompts -> Full -> Lite -> Ultra -> Turn off
   - backend assertions: `ui_full=ok`, `ui_lite=ok`, `ui_ultra=ok`, `ui_off=ok`
-- Replaced the local Docker test environment with the current worktree image `ccs-gateway-web:local`, container `ccs-gateway-web`, mounted `/root/.openclaw` as writable for prompt-file testing, and ran `scripts/verify-caveman-deployed-smoke.ps1` against the deployed environment through `http://127.0.0.1:17666/api/invoke`. Evidence: `.run\caveman-deployed-smoke\current.json`. The deployed smoke now snapshots the starting prompt state and restores it by default after proving the Caveman flow, so it should not leave test-created Caveman presets or clear a user's pre-existing enabled prompt.
+- Replaced the local Docker test environment with the current worktree image `ccs-gateway-web:<local-image-tag>`, container `ccs-gateway-web`, mounted `<openclaw-data-dir>` as writable for prompt-file testing, and ran `scripts/verify-caveman-deployed-smoke.ps1` against the deployed environment through `http://<loopback-host>:<port>/api/invoke`. Evidence: `.run\caveman-deployed-smoke\current.json`. The deployed smoke now snapshots the starting prompt state and restores it by default after proving the Caveman flow, so it should not leave test-created Caveman presets or clear a user's pre-existing enabled prompt.
   - `fullEnabled=true`
   - `liteEnabled=true`, `liteDisabledFull=true`
   - `ultraEnabled=true`, `ultraDisabledLite=true`, `ultraDisabledFull=true`
