@@ -224,6 +224,33 @@ ls -lh "$backup_dir/openclaw-config"
 ls -lh "$backup_dir"/nginx-ccs-gateway-web-30033 2>/dev/null || true
 ```
 
+## Image-only Source Package Release
+
+For routine production updates, prefer an image-only release:
+
+1. Create the source package from committed files only:
+
+```bash
+git archive --format=tar.gz --output=<release-archive>.tar.gz HEAD
+```
+
+2. Before uploading, confirm key build inputs are present:
+
+```bash
+tar -tzf <release-archive>.tar.gz | grep -E '^(Dockerfile\.web|package\.json|pnpm-lock\.yaml|src/icons/extracted/claude\.svg)$'
+```
+
+3. On the target host, build a new image tag from the unpacked source while preserving the existing runtime contract from `docker inspect`.
+4. Stop and rename the old container to a rollback container before starting the new same-name container.
+5. Start the new container with the original env, loopback-only ports, mounts, restart policy, network, and command.
+6. Run the probe. If the archive did not preserve executable bits, invoke it with Bash:
+
+```bash
+bash ./scripts/ccs-prod-probe.sh
+```
+
+Do not mutate NGINX, server-local env files, compose files, `<app-data-dir>`, or `<openclaw-data-dir>` during a routine image-only release.
+
 ## Rollback procedure
 
 Use this when a new image, compose change, auth change, or provider change breaks the deployment.

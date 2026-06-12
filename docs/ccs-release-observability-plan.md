@@ -154,7 +154,7 @@ The upstream alignment gate also enforces that desktop updater endpoints use the
 3. Local smoke test with isolated `.run/local-*` volumes.
 4. Run `./scripts/ccs-secret-preflight.sh`.
 5. Commit only source, docs, scripts, and safe config templates.
-6. Build or pull the image on `<host-a>`.
+6. Build or pull the image on `<host-a>`. For source-upload releases, prefer `git archive HEAD` so the package only contains committed, public-safe files; verify the archive includes `Dockerfile.web`, `package.json`, `pnpm-lock.yaml`, and `src/icons/extracted/claude.svg` before uploading.
 7. Back up `<app-data-dir>` and `<openclaw-data-dir>/openclaw.json`.
 8. Run the OpenClaw patch health check on the target host before and after OpenClaw upgrades:
 
@@ -175,6 +175,12 @@ Primary command:
 
 ```bash
 ./scripts/ccs-prod-probe.sh
+```
+
+If the source package was restored from an archive and the executable bit was not preserved, run the probe through Bash:
+
+```bash
+bash ./scripts/ccs-prod-probe.sh
 ```
 
 Manual fallback:
