@@ -2,6 +2,16 @@
 
 This file groups the current dirty worktree into release/review buckets. Keep it updated before staging, committing, or rebasing onto a newer official `farion1231/cc-switch` baseline.
 
+## Official 3.16.3 Alignment Matrix
+
+| Item | Scope | Status | Review / validation anchor |
+| --- | --- | --- | --- |
+| 1 | Version and official upstream anchor | Aligned to `3.16.3-ccs-gateway.1` with official `v3.16.3` archive as the local reference. | `docs/ccs-official-upstream-migration.md`; `scripts/verify-official-upstream-alignment.ps1` |
+| 2 | Usage accounting accuracy | Implemented with `pricing_model` in request logs, daily rollups, schema migration, and app-aware cache token pricing. | Group 10; `src-tauri/src/proxy/usage/*`; `src-tauri/src/services/usage_stats.rs` |
+| 3 | Provider-level custom User-Agent | Implemented for local proxy/model-fetch/stream-check compatibility; official Copilot and Codex OAuth fingerprints remain protected. | `docs/ccs-specified-change-ledger.md`; `src-tauri/src/provider.rs`; `src-tauri/src/proxy/forwarder.rs` |
+| 4 | Usage Dashboard / updater / health safe subset | Implemented as a fork-safe subset: dashboard filters and 30s default refresh are specified fork behavior; updater preserves install handle; health remains unchanged unless behavior diverges. | `docs/ccs-specified-change-ledger.md`; `tests/components/UsageDashboard.test.tsx`; `tests/lib/updater.test.ts` |
+| 5 | Official Codex unified session history migration | Intentionally not implemented by product decision. Current fork keeps the existing third-party provider bucket migration only. | `docs/ccs-official-upstream-migration.md`; `docs/ccs-specified-change-ledger.md` |
+
 ## Group 1 - Fork Overlay Governance
 
 Purpose: make official `farion1231/cc-switch` the primary upstream and keep local overlays auditable before future CC Switch upgrades. `ccs-web` is now an auxiliary reference, not the primary upstream.
@@ -11,6 +21,7 @@ Files:
 - `docs/ccs-fork-overlay-ledger.md`
 - `docs/ccs-local-change-groups.md`
 - `docs/ccs-official-upstream-migration.md`
+- `docs/ccs-specified-change-ledger.md`
 - `scripts/verify-official-upstream-alignment.ps1`
 - `scripts/verify-local-overlays.ps1`
 - `docs/session-summaries/*`
@@ -19,6 +30,8 @@ Related regression-watch entry points:
 
 - `skills/cc-switch-release/*`
 - active user entry links in `README.md`, `SUPPORT.md`, `SECURITY.md`, `CONTRIBUTING.md`, `docs/user-manual/**`, and Flatpak metadata
+- official `v3.16.3` Codex unified session history migration remains an intentional non-implementation; see `docs/ccs-official-upstream-migration.md`
+- user-specified fork behavior is fixed in `docs/ccs-specified-change-ledger.md`; review upstream differences against that ledger before treating them as regressions
 
 Validation:
 
@@ -98,9 +111,9 @@ Validation:
 - `rtk cargo test --manifest-path src-tauri/Cargo.toml update_current_claude_provider_syncs_live_when_proxy_takeover_detected_without_backup --lib`
 - `rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && skills/openclaw-fast-priority-patch/scripts/apply_openclaw_fast_priority_patch.sh --check'`
 
-## Group 5 - Official 3.16.2 Core Backend
+## Group 5 - Official 3.16.3 Core Backend
 
-Purpose: align with official CC Switch `v3.16.2` backend behavior while preserving local routing, token, sync, and provider overlays.
+Purpose: align with official CC Switch `v3.16.3` backend behavior while preserving local routing, token, sync, and provider overlays.
 
 Current dirty files:
 
@@ -323,7 +336,7 @@ Validation:
 
 ## Group 13 - Version Metadata
 
-Purpose: make the official 3.16.2 alignment explicit instead of leaving stale runtime package metadata.
+Purpose: make the official 3.16.3 alignment explicit instead of leaving stale runtime package metadata.
 
 Files:
 
@@ -337,10 +350,10 @@ Files:
 
 Current fork version policy:
 
-- Base version: `3.16.2`
+- Base version: `3.16.3`
 - Fork suffix: `ccs-gateway`
 - Patch counter: increment the numeric suffix for local overlay release candidates
-- Current value: `3.16.2-ccs-gateway.1`
+- Current value: `3.16.3-ccs-gateway.1`
 - Desktop updater endpoint: fork release channel only; do not point fork builds at official `farion1231/cc-switch` updater artifacts.
 
 ## Staging Guidance

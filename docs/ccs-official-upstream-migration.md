@@ -33,11 +33,11 @@ ccs-web-reference  https://github.com/cp-yu/cc-switch-web.git
 
 ## Current Target
 
-Official GitHub Releases currently show `v3.16.2` as the latest release dated 2026-06-08.
+Official GitHub Releases currently show `v3.16.3` as the latest release dated 2026-06-14.
 
 ## Current Fetch Status
 
-Local `git fetch upstream --tags` failed with:
+Historical note: local `git fetch upstream --tags` failed on 2026-06-09 with:
 
 ```text
 fatal: unable to access 'https://github.com/farion1231/cc-switch.git/': Recv failure: Connection was reset
@@ -48,7 +48,7 @@ This happened both with command environment proxy variables and with git command
 Proxy checks on 2026-06-09 showed:
 
 - TCP proxy `<proxy-host>:<proxy-port>` is reachable.
-- GitHub release pages and the `v3.16.2` source archive are reachable through the proxy.
+- GitHub release pages and the `v3.16.2` source archive were reachable through the proxy.
 - Git smart HTTP access still resets for `git ls-remote` / `git fetch`.
 
 Proxy retry on 2026-06-09 with command-level proxy variables and explicit Git proxy flags still failed for Git smart HTTP:
@@ -67,22 +67,22 @@ Both Git attempts ended with:
 Recv failure: Connection was reset
 ```
 
-Archive download through the same command-level proxy path remained usable, so the official `v3.16.2` source archive is the current local source of truth until `git fetch upstream` becomes stable again.
+Current note: `git fetch upstream --tags` succeeded on 2026-06-15 and brought in the official `v3.16.3` tag. The tag object resolves to commit `21e695f68a00190b127501994e8d0cd0a26d972d`. The current local source of truth is the generated archive from that tag.
 
-As a fallback, the official `v3.16.2` source archive was downloaded and extracted to:
+The official `v3.16.3` source archive is stored and extracted to:
 
 ```text
-.upstream/cc-switch-v3.16.2
+.upstream/cc-switch-v3.16.3
 ```
 
 The local archive zip currently used for fallback comparison is:
 
 ```text
-.upstream/cc-switch-v3.16.2.zip
-SHA256: 9589AD28CE3F9D44F1A6C57A45AB6212CE17FB5E6B0A61CEAE9DA00D6A897431
+.upstream/cc-switch-v3.16.3.zip
+SHA256: 604159D6DA8D98C6CDED340F6FC386543DF7AB52F7F8A98B47D73FA3EF26F803
 ```
 
-`scripts/verify-official-upstream-alignment.ps1` verifies this zip hash and asserts that the extracted official `package.json` and `src-tauri/tauri.conf.json` both report version `3.16.2`.
+`scripts/verify-official-upstream-alignment.ps1` verifies this zip hash and asserts that the extracted official `package.json` and `src-tauri/tauri.conf.json` both report version `3.16.3`.
 
 `.upstream/` is a local comparison cache only. It must stay ignored by git, excluded from Vitest discovery, and absent from source-controlled or release-packaged inputs.
 
@@ -141,15 +141,16 @@ Result:
 
 | Area | Local status | Evidence / remaining condition |
 |------|--------------|--------------------------------|
-| Official upstream source | Locally validated from official `v3.16.2` archive | `scripts/verify-official-upstream-alignment.ps1` verifies archive SHA256 and extracted official versions. Git smart HTTP fetch still resets and must be retried when connectivity is stable. |
+| Official upstream source | Locally validated from official `v3.16.3` archive | `scripts/verify-official-upstream-alignment.ps1` verifies archive SHA256 and extracted official versions. |
 | Core/Web integration | Local gate covered | TypeScript, Vitest, Rust core/server/src-tauri targeted tests, Web build, and grouped release gate have passed in local validation runs. |
+| Codex unified session history | Intentionally not implemented | Official `v3.16.3` adds a local Codex history unification migration that mutates Codex JSONL/state data. This fork keeps the existing third-party provider bucket migration only; any broader history rewrite needs a separate opt-in migration project. |
 | Secret scan | Local regex preflight covered | `scripts/ccs-secret-preflight.sh` checks tracked plus untracked files when `CCS_PREFLIGHT_SCOPE=all`; `gitleaks` is not installed in the current environment. |
 | Docker runtime | Local runtime gate covered | Included in `scripts/verify-ccs-3-16-2-release-gate.ps1`; production host deployment remains a separate operation. |
 | S3 live sync | External condition | Ignored live tests require real `S3_TEST_*` credentials and endpoint before release evidence can be claimed. |
 | OpenClaw target host | External condition | Local presets and proxy paths are tested; target-host smoke with the real OpenClaw environment is still required. |
 | Desktop installer/update signing | External condition | Local no-bundle desktop checks are not a substitute for signed updater artifacts and installed desktop smoke. |
 
-Implemented from official `v3.16.2` archive:
+Implemented from official `v3.16.3` archive:
 
 - Codex Responses -> Chat Completions request conversion in the forwarder.
 - Codex Chat -> Responses response conversion for `/responses` and `/responses/compact`.

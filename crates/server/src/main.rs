@@ -4,9 +4,10 @@ use axum::{
     http::{header, Response, StatusCode, Uri},
     response::{Html, IntoResponse},
     routing::{get, post},
-    Router,
+    Json, Router,
 };
 use rust_embed::RustEmbed;
+use serde::Serialize;
 use std::net::{IpAddr, TcpListener as StdTcpListener};
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +26,12 @@ use cc_switch_server::{
 #[derive(RustEmbed)]
 #[folder = "../../dist/"]
 struct Assets;
+
+#[derive(Serialize)]
+struct BuildInfo {
+    build_id: String,
+    assets: Vec<String>,
+}
 
 // 静态文件处理器
 async fn static_handler(uri: Uri) -> impl IntoResponse {
@@ -63,6 +70,51 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
                 .unwrap()
         }
     }
+}
+
+async fn build_info_handler() -> impl IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(current_build_info()),
+    )
+}
+
+fn current_build_info() -> BuildInfo {
+    let assets = Assets::get("index.html")
+        .and_then(|content| String::from_utf8(content.data.into_owned()).ok())
+        .map(|html| index_assets_from_html(&html))
+        .unwrap_or_default();
+    let build_id = if assets.is_empty() {
+        env!("CARGO_PKG_VERSION").to_string()
+    } else {
+        assets.join(",")
+    };
+
+    BuildInfo { build_id, assets }
+}
+
+fn build_id_from_index_html(html: &str) -> String {
+    index_assets_from_html(html).join(",")
+}
+
+fn index_assets_from_html(html: &str) -> Vec<String> {
+    let mut assets = Vec::new();
+    let mut remaining = html;
+
+    while let Some(start) = remaining.find("assets/index-") {
+        let candidate = &remaining[start..];
+        let end = candidate
+            .find(|ch| matches!(ch, '"' | '\'' | '<' | '>' | ' ' | '\n' | '\r' | '\t'))
+            .unwrap_or(candidate.len());
+        let asset = candidate[..end].trim_start_matches('/').to_string();
+        if !assets.contains(&asset) {
+            assets.push(asset);
+        }
+        remaining = &candidate[end..];
+    }
+
+    assets.sort();
+    assets
 }
 
 // 健康检查和欢迎页面
@@ -116,6 +168,23 @@ fn is_loopback_host(host: &str) -> bool {
             .parse::<IpAddr>()
             .map(|addr| addr.is_loopback())
             .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_id_from_index_html_uses_main_assets() {
+        let html = r#"<!doctype html>
+<script type="module" crossorigin src="./assets/index-BTaiIF1Z.js"></script>
+<link rel="stylesheet" crossorigin href="./assets/index-CY8IdWrI.css">
+<script type="module" crossorigin src="./assets/vendor-react.js"></script>"#;
+
+        let build_id = build_id_from_index_html(html);
+
+        assert_eq!(build_id, "assets/index-BTaiIF1Z.js,assets/index-CY8IdWrI.css");
+    }
 }
 
 #[tokio::main]
@@ -197,6 +266,7 @@ async fn main() {
         tracing::info!("Frontend assets embedded, serving SPA");
         Router::new()
             .nest("/api", api_routes)
+            .route("/build-info.json", get(build_info_handler))
             .route("/health", get(welcome_handler))
             .fallback(static_handler)
             .layer(cors)
@@ -206,6 +276,7 @@ async fn main() {
         Router::new()
             .route("/", get(welcome_handler))
             .route("/health", get(welcome_handler))
+            .route("/build-info.json", get(build_info_handler))
             .nest("/api", api_routes)
             .layer(cors)
     };

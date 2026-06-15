@@ -4,7 +4,7 @@ use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::services::usage_stats::find_model_pricing_row;
+use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
 use rust_decimal::Decimal;
 use std::{str::FromStr, time::SystemTime};
 
@@ -16,6 +16,10 @@ pub struct RequestLog {
     pub app_type: String,
     pub model: String,
     pub request_model: String,
+    /// 写入时实际用于计价的模型名（pricing_model_source 解析后的结果）。
+    /// 落库供回填使用：缺价行补价后必须按写入时的基准重算，而不是
+    /// 用 model/request_model 猜；路由接管下三者可能各不相同。
+    pub pricing_model: String,
     pub usage: TokenUsage,
     pub cost: Option<CostBreakdown>,
     pub latency_ms: u64,
@@ -74,18 +78,19 @@ impl<'a> UsageLogger<'a> {
 
         conn.execute(
             "INSERT OR REPLACE INTO proxy_request_logs (
-                request_id, provider_id, app_type, model, request_model,
+                request_id, provider_id, app_type, model, request_model, pricing_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             rusqlite::params![
                 log.request_id,
                 log.provider_id,
                 log.app_type,
                 log.model,
                 log.request_model,
+                log.pricing_model,
                 log.usage.input_tokens,
                 log.usage.output_tokens,
                 log.usage.cache_read_tokens,
@@ -134,6 +139,7 @@ impl<'a> UsageLogger<'a> {
             app_type,
             model,
             request_model,
+            pricing_model: String::new(),
             usage: TokenUsage::default(),
             cost: None,
             latency_ms,
@@ -173,6 +179,7 @@ impl<'a> UsageLogger<'a> {
             app_type,
             model,
             request_model,
+            pricing_model: String::new(),
             usage: TokenUsage::default(),
             cost: None,
             latency_ms,
@@ -305,11 +312,16 @@ impl<'a> UsageLogger<'a> {
     ) -> Result<(), AppError> {
         let pricing = self.get_model_pricing(&pricing_model)?;
 
-        if pricing.is_none() {
+        if pricing.is_none() && !is_placeholder_pricing_model(&pricing_model) {
             log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
         }
 
-        let cost = CostCalculator::try_calculate(&usage, pricing.as_ref(), cost_multiplier);
+        let cost = CostCalculator::try_calculate_for_app(
+            &app_type,
+            &usage,
+            pricing.as_ref(),
+            cost_multiplier,
+        );
 
         let log = RequestLog {
             request_id,
@@ -317,6 +329,7 @@ impl<'a> UsageLogger<'a> {
             app_type,
             model,
             request_model,
+            pricing_model,
             usage,
             cost,
             latency_ms,

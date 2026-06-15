@@ -46,6 +46,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 import { usageKeys } from "@/lib/query/usage";
+import { startBuildUpdateMonitor } from "@/lib/buildInfo";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UpdateBadge } from "@/components/UpdateBadge";
@@ -260,6 +261,26 @@ function App() {
   const isToolbarCompact = useAutoCompact(toolbarRef);
 
   useUsageCacheBridge();
+
+  useEffect(() => {
+    return startBuildUpdateMonitor({
+      onUpdateAvailable: () => {
+        toast.info(
+          t("buildUpdate.available", {
+            defaultValue: "检测到本机服务已更新，刷新页面后生效。",
+          }),
+          {
+            closeButton: true,
+            duration: Infinity,
+            action: {
+              label: t("buildUpdate.reload", { defaultValue: "刷新" }),
+              onClick: () => window.location.reload(),
+            },
+          },
+        );
+      },
+    });
+  }, [t]);
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);

@@ -3,15 +3,16 @@
 Publishes the local CCS Web build to the WSL Docker container.
 
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -Distro '<wsl-distro>'
 
 .EXAMPLE
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -SkipBuild
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -Distro '<wsl-distro>' -SkipBuild
 #>
 
 param(
-    [string]$Distro = $(if ($env:CCS_WSL_DISTRO) { $env:CCS_WSL_DISTRO } else { "Ubuntu" }),
+    [string]$Distro = $env:CCS_WSL_DISTRO,
     [string]$ComposeFile = "docker-compose.ccs-web.yml",
+    [string]$LocalComposeFile = "docker-compose.ccs-web.local.yml",
     [string]$Service = "ccs-gateway-web",
     [string]$ContainerName = "ccs-gateway-web",
     [string]$Image = "ccs-gateway-web:local",
@@ -21,16 +22,23 @@ param(
     [int]$ProxyPort = 15721,
     [int]$HealthRetries = 12,
     [int]$HealthDelaySeconds = 5,
+    [int]$StopTimeoutSeconds = 20,
     [string]$LogDir = ".run/local-wsl-publish",
     [switch]$SkipBuild,
     [switch]$SkipFrontendBuild,
     [switch]$NoStart,
     [switch]$SkipHealthCheck,
+    [switch]$ForceWslShutdownOnStaleRelay,
+    [switch]$ConfirmWslShutdown,
     [switch]$NoCache
 )
 
 $ErrorActionPreference = "Stop"
 $transcriptStarted = $false
+
+if ([string]::IsNullOrWhiteSpace($Distro)) {
+    throw "WSL distro is required. Pass -Distro '<wsl-distro>' or set CCS_WSL_DISTRO for this command."
+}
 
 function Write-Step {
     param([string]$Message)
@@ -697,13 +705,21 @@ function Write-FailureDiagnostics {
     param(
         [string]$ProjectRootWsl,
         [string]$ComposeFile,
+        [string]$LocalComposeFile,
         [string]$ContainerName,
         [string]$Service
     )
 
     Write-Warning "Collecting failure diagnostics..."
     try {
-        $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && docker compose -f " + (Quote-BashArg $ComposeFile) + " ps || true"
+        $composeArgs = " -f " + (Quote-BashArg $ComposeFile)
+        if (-not [string]::IsNullOrWhiteSpace($LocalComposeFile)) {
+            $localComposeWsl = ConvertTo-WslPath -WindowsPath (Join-Path $ProjectRoot $LocalComposeFile)
+            if (Test-Path -LiteralPath (Join-Path $ProjectRoot $LocalComposeFile) -PathType Leaf) {
+                $composeArgs += " -f " + (Quote-BashArg $localComposeWsl)
+            }
+        }
+        $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && docker compose$composeArgs ps || true"
         Invoke-Wsl $command
     } catch {
         Write-Warning ("Failed to collect docker compose ps: {0}" -f $_.Exception.Message)
@@ -727,6 +743,100 @@ function Write-FailureDiagnostics {
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptRoot "..")
 $composePath = Join-Path $projectRoot $ComposeFile
+$localComposePath = if ([string]::IsNullOrWhiteSpace($LocalComposeFile)) { $null } else { Join-Path $projectRoot $LocalComposeFile }
+$composeFiles = New-Object System.Collections.Generic.List[string]
+$composeFiles.Add($ComposeFile)
+if ($localComposePath -and (Test-Path -LiteralPath $localComposePath -PathType Leaf)) {
+    $composeFiles.Add($LocalComposeFile)
+}
+
+function Test-WslTcpPortsReleased {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports
+    )
+
+    $pattern = ($Ports | ForEach-Object { "$_" }) -join "|"
+    $command = "if ss -H -ltn | awk '{print `$4}' | grep -Eq ':($pattern)$'; then exit 1; else exit 0; fi"
+    wsl -d $Distro -- bash -lc $command | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Wait-WslTcpPortsReleased {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $joinedPorts = $Ports -join ","
+    for ($attempt = 1; $attempt -le $HealthRetries; $attempt++) {
+        $released = Test-WslTcpPortsReleased -Ports $Ports
+        Write-Host ("{0}: attempt {1}/{2}: ports {3} released={4}" -f $Name, $attempt, $HealthRetries, $joinedPorts, $released)
+        if ($released) {
+            return
+        }
+
+        if ($attempt -lt $HealthRetries) {
+            Start-Sleep -Seconds $HealthDelaySeconds
+        }
+    }
+
+    throw "$Name check failed after $HealthRetries attempts: ports $joinedPorts are still listening in WSL."
+}
+
+function Get-WindowsTcpConnectionsForPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports
+    )
+
+    try {
+        return @(Get-NetTCPConnection -LocalPort $Ports -ErrorAction SilentlyContinue)
+    } catch {
+        return @()
+    }
+}
+
+function Write-WindowsTcpConnectionsForPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $connections = Get-WindowsTcpConnectionsForPorts -Ports $Ports
+    if ($connections.Count -eq 0) {
+        Write-Host ("{0}: no Windows TCP connections for ports {1}" -f $Name, ($Ports -join ","))
+        return
+    }
+
+    Write-Host ("{0}: Windows TCP connections for ports {1}" -f $Name, ($Ports -join ","))
+    $connections |
+        Sort-Object LocalPort, State, RemotePort |
+        Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess, @{Name = "ProcessName"; Expression = { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } } |
+        Format-Table -AutoSize
+}
+
+function Test-WindowsStaleWslRelayConnectionsForPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports
+    )
+
+    $connections = Get-WindowsTcpConnectionsForPorts -Ports $Ports
+    $staleRelayConnections = @(
+        $connections |
+            Where-Object {
+                $process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+                $process -and $process.ProcessName -eq "wslrelay" -and $_.State -ne "Listen"
+            }
+    )
+
+    return ($staleRelayConnections.Count -gt 0)
+}
 
 if (-not (Test-Path -LiteralPath $composePath)) {
     throw "Compose file not found: $composePath"
@@ -748,12 +858,17 @@ try {
     Write-Step "Preflight"
     Write-Host "Distro:          $Distro"
     Write-Host "Compose file:    $ComposeFile"
+    if ($composeFiles.Count -gt 1) {
+        Write-Host "Local compose:   $LocalComposeFile"
+    }
     Write-Host "Service:         $Service"
     Write-Host "Container:       $ContainerName"
     Write-Host "Image:           $Image"
     Write-Host "Web URL:         $WebHealthUrl"
     Write-Host "API health URL:  $ApiHealthUrl"
     Write-Host "Proxy TCP:       ${ProxyHost}:${ProxyPort}"
+    Write-Host "Stop timeout:    ${StopTimeoutSeconds}s"
+    Write-Host "WSL shutdown on stale relay: $ForceWslShutdownOnStaleRelay"
     Write-Host "Log file:        $logPath"
     Write-Host "Build cache:     $($cacheLayout.BuildCacheRoot)"
     Write-Host "Docker cache:    $($cacheLayout.DockerCache)"
@@ -808,13 +923,45 @@ try {
     }
 
     if (-not $NoStart) {
+        $publishedPorts = @($ProxyPort, 17666) | Sort-Object -Unique
+        $composeArgString = " -f " + (Quote-BashArg $ComposeFile)
+        if ($composeFiles.Count -gt 1) {
+            $localComposeWsl = ConvertTo-WslPath -WindowsPath $localComposePath
+            $composeArgString += " -f " + (Quote-BashArg $localComposeWsl)
+        }
+
+        Write-Step "Stopping existing local WSL container"
+        Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "Before stop"
+        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString stop -t $StopTimeoutSeconds " + (Quote-BashArg $Service) + " || true"
+        Invoke-Wsl $command
+        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString rm -f " + (Quote-BashArg $Service) + " || true"
+        Invoke-Wsl $command
+
+        Write-Step "Waiting for old published ports to release"
+        Wait-WslTcpPortsReleased -Ports $publishedPorts -Name "WSL port release"
+        Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "After WSL port release"
+        if (Test-WindowsStaleWslRelayConnectionsForPorts -Ports $publishedPorts) {
+            if ($ForceWslShutdownOnStaleRelay -and $ConfirmWslShutdown) {
+                Write-Step "Restarting WSL to clear stale relay connections"
+                wsl --shutdown
+                if ($LASTEXITCODE -ne 0) {
+                    throw "wsl --shutdown failed with exit code ${LASTEXITCODE}."
+                }
+                Start-Sleep -Seconds 5
+                Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "After WSL shutdown"
+            } else {
+                Write-Warning "Stale Windows wslrelay connections remain on published ports. Existing clients may keep talking to the old connection until they reconnect. WSL shutdown is disabled by default. To force it, rerun with both -ForceWslShutdownOnStaleRelay and -ConfirmWslShutdown; this stops other WSL workloads."
+            }
+        }
+
         Write-Step "Recreating local WSL container"
-        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose -f " + (Quote-BashArg $ComposeFile) + " up -d --force-recreate " + (Quote-BashArg $Service)
+        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString up -d --force-recreate --remove-orphans " + (Quote-BashArg $Service)
         Invoke-Wsl $command
 
         Write-Step "New container state"
         $command = "docker ps --filter " + (Quote-BashArg "name=^/${ContainerName}$") + " --format " + (Quote-BashArg "name={{.Names}} image={{.Image}} status={{.Status}} ports={{.Ports}}")
         Invoke-Wsl $command
+        Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "After start"
     } else {
         Write-Step "Skipping container start"
     }
@@ -833,7 +980,7 @@ try {
     Write-Host "Local WSL CCS Web publish completed."
     Write-Host "Log file: $logPath"
 } catch {
-    Write-FailureDiagnostics -ProjectRootWsl $projectRootWsl -ComposeFile $ComposeFile -ContainerName $ContainerName -Service $Service
+    Write-FailureDiagnostics -ProjectRootWsl $projectRootWsl -ComposeFile $ComposeFile -LocalComposeFile $LocalComposeFile -ContainerName $ContainerName -Service $Service
     throw
 } finally {
     if ($transcriptStarted) {

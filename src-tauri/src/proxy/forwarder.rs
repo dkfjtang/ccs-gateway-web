@@ -1726,6 +1726,17 @@ impl RequestForwarder {
                 Vec::new()
             };
 
+        // Provider-level custom User-Agent. Keep managed official client fingerprints fixed.
+        let protect_official_user_agent = provider.protects_official_user_agent();
+        let custom_user_agent = if protect_official_user_agent {
+            None
+        } else {
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+        };
+
         // --- Copilot 优化器：动态 header 注入 ---
         if let Some((ref classification, ref det_request_id, ref interaction_id)) =
             copilot_optimization
@@ -1822,6 +1833,7 @@ impl RequestForwarder {
         let mut saw_accept_encoding = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
+        let mut saw_user_agent = false;
 
         for (key, value) in headers {
             let key_str = key.as_str();
@@ -1900,6 +1912,19 @@ impl RequestForwarder {
                 continue;
             }
 
+            // --- user-agent: provider-level override for local proxy routing ---
+            if !protect_official_user_agent && key_str.eq_ignore_ascii_case("user-agent") {
+                if !saw_user_agent {
+                    saw_user_agent = true;
+                    if let Some(ref ua) = custom_user_agent {
+                        ordered_headers.append(http::header::USER_AGENT, ua.clone());
+                    } else {
+                        ordered_headers.append(key.clone(), value.clone());
+                    }
+                }
+                continue;
+            }
+
             // --- anthropic-beta — 用重建值替换（确保含 claude-code 标记） ---
             if key_str.eq_ignore_ascii_case("anthropic-beta") {
                 if !saw_anthropic_beta {
@@ -1947,6 +1972,12 @@ impl RequestForwarder {
                 http::header::ACCEPT_ENCODING,
                 http::HeaderValue::from_static("identity"),
             );
+        }
+
+        if !saw_user_agent {
+            if let Some(ref ua) = custom_user_agent {
+                ordered_headers.append(http::header::USER_AGENT, ua.clone());
+            }
         }
 
         // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
@@ -2887,7 +2918,7 @@ mod tests {
     fn upstream_http_status_retry_bucket_matches_upstream_cc_switch() {
         let forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
 
-        // Keep this aligned with .upstream/cc-switch-v3.16.2:
+        // Keep this aligned with .upstream/cc-switch-v3.16.3:
         // src-tauri/src/proxy/forwarder.rs::categorize_proxy_error.
         let forbidden = ProxyError::UpstreamError {
             status: 403,

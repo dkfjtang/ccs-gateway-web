@@ -30,6 +30,8 @@ import {
 interface UsageHeroProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
@@ -53,6 +55,10 @@ const TITLE_THEMES: Record<AppType | "all", TitleTheme> = {
   gemini: {
     accent: "text-sky-600 dark:text-sky-400",
     iconBg: "bg-sky-500/10",
+  },
+  opencode: {
+    accent: "text-indigo-600 dark:text-indigo-400",
+    iconBg: "bg-indigo-500/10",
   },
 };
 
@@ -129,14 +135,20 @@ function deriveCacheWriteState(appTypes: string[]): CacheWriteState {
 export function UsageHero({
   range,
   appType,
+  providerName,
+  model,
   refreshIntervalMs,
 }: UsageHeroProps) {
   const { t, i18n } = useTranslation();
   const lang = getResolvedLang(i18n);
 
-  const { data, isLoading } = useUsageSummaryByApp(range, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data, isLoading } = useUsageSummaryByApp(
+    range,
+    { providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   // No client-side filtering: Hero's totals must match the Trend/Logs/Stats
   // below, which all go through the backend's full set of app_types. The

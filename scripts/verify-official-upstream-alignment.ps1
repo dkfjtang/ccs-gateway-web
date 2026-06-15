@@ -112,9 +112,9 @@ function Get-RepoRelativePath {
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
 Set-Location -LiteralPath $repoRoot
 
-$expectedVersion = "3.16.2-ccs-gateway.1"
-$expectedOfficialArchiveVersion = "3.16.2"
-$expectedOfficialArchiveSha256 = "9589AD28CE3F9D44F1A6C57A45AB6212CE17FB5E6B0A61CEAE9DA00D6A897431"
+$expectedVersion = "3.16.3-ccs-gateway.1"
+$expectedOfficialArchiveVersion = "3.16.3"
+$expectedOfficialArchiveSha256 = "604159D6DA8D98C6CDED340F6FC386543DF7AB52F7F8A98B47D73FA3EF26F803"
 
 Write-Host "==> remote policy"
 $upstreamUrl = (git remote get-url upstream).Trim()
@@ -192,17 +192,17 @@ Assert-Contains "Cargo.toml version" $cargoToml ('version = "{0}"' -f $expectedV
 Write-Host "==> official archive policy"
 $gitignore = Get-Content -LiteralPath (Join-Path $repoRoot ".gitignore") -Raw -Encoding UTF8
 Assert-Contains ".upstream ignored" $gitignore "/.upstream/"
-$officialArchiveZip = Join-Path $repoRoot ".upstream\cc-switch-v3.16.2.zip"
-$officialArchiveDir = Join-Path $repoRoot ".upstream\cc-switch-v3.16.2"
+$officialArchiveZip = Join-Path $repoRoot ".upstream\cc-switch-v3.16.3.zip"
+$officialArchiveDir = Join-Path $repoRoot ".upstream\cc-switch-v3.16.3"
 if (-not (Test-Path -LiteralPath $officialArchiveZip -PathType Leaf)) {
-    throw "Missing official source archive zip: .upstream\cc-switch-v3.16.2.zip"
+    throw "Missing official source archive zip: .upstream\cc-switch-v3.16.3.zip"
 }
 $archiveHash = (Get-FileHash -LiteralPath $officialArchiveZip -Algorithm SHA256).Hash
-Assert-Equal "official v3.16.2 archive sha256" $archiveHash $expectedOfficialArchiveSha256
+Assert-Equal "official v3.16.3 archive sha256" $archiveHash $expectedOfficialArchiveSha256
 if (-not (Test-Path -LiteralPath $officialArchiveDir -PathType Container)) {
-    throw "Missing extracted official source archive: .upstream\cc-switch-v3.16.2"
+    throw "Missing extracted official source archive: .upstream\cc-switch-v3.16.3"
 }
-Write-Host "ok: official v3.16.2 archive extracted"
+Write-Host "ok: official v3.16.3 archive extracted"
 $archivePackageVersion = Get-JsonVersion (Join-Path $officialArchiveDir "package.json")
 Assert-Equal "official archive package.json version" $archivePackageVersion $expectedOfficialArchiveVersion
 $archiveTauriVersion = Get-JsonVersion (Join-Path $officialArchiveDir "src-tauri\tauri.conf.json")
@@ -221,8 +221,14 @@ Write-Host "==> migration docs"
 $migrationDoc = Get-Content -LiteralPath (Join-Path $repoRoot "docs\ccs-official-upstream-migration.md") -Raw -Encoding UTF8
 Assert-Contains "official upstream decision" $migrationDoc 'Use official `farion1231/cc-switch` as the primary upstream from now on.'
 Assert-Contains "ccs-web reference only" $migrationDoc '`ccs-web` is retained only as an auxiliary reference'
-Assert-Contains "v3.16.2 target" $migrationDoc 'Official GitHub Releases currently show `v3.16.2`'
+Assert-Contains "v3.16.3 target" $migrationDoc 'Official GitHub Releases currently show `v3.16.3`'
 Assert-Contains "full rust sweep evidence" $migrationDoc "Full Rust library sweep now reports 1390 passed, 2 ignored."
 Assert-Contains "fork updater channel" $migrationDoc 'Desktop updater endpoints must point at the fork release channel'
+
+Write-Host "==> specified change ledger"
+$specifiedChangeLedger = Get-Content -LiteralPath (Join-Path $repoRoot "docs\ccs-specified-change-ledger.md") -Raw -Encoding UTF8
+Assert-Contains "usage dashboard 30s" $specifiedChangeLedger 'The default Usage Dashboard auto-refresh interval is `30000` ms.'
+Assert-Contains "codex history not implemented" $specifiedChangeLedger 'The official `v3.16.3` Codex unified session history migration is intentionally not implemented in this fork.'
+Assert-Contains "fork updater channel ruling" $specifiedChangeLedger 'Fork desktop builds must use the fork release channel, not official `farion1231/cc-switch` updater artifacts.'
 
 Write-Host "official_upstream_alignment=ready"

@@ -28,5 +28,5 @@ This repository is public on GitHub. Treat every tracked file as publishable to 
 ## Upstream Routing Alignment
 
 - Provider routing, failover, circuit breaker, and retry classification should stay aligned with official CC Switch unless a CCS-specific feature explicitly requires divergence.
-- When changing proxy routing behavior, first compare against the pinned upstream reference under `.upstream/cc-switch-v3.16.2`, then preserve only deliberate local additions such as web/server compatibility, managed-account guards, Responses session stickiness, and local overlay behavior.
+- When changing proxy routing behavior, first compare against the pinned upstream reference under `.upstream/cc-switch-v3.16.3`, then preserve only deliberate local additions such as web/server compatibility, managed-account guards, Responses session stickiness, and local overlay behavior.
 - Do not narrow official failover behavior by default. HTTP retry buckets, provider health updates, circuit breaker state transitions, and runtime circuit-config hot updates should match upstream unless the change has a documented product reason and regression coverage.
