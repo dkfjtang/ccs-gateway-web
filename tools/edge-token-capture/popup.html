@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录态令牌捕获</title>
+    <style>
+      body {
+        margin: 0;
+        width: 420px;
+        font: 13px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #111827;
+        background: #f8fafc;
+      }
+      .panel {
+        padding: 12px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .config {
+        display: grid;
+        gap: 4px;
+        margin-bottom: 10px;
+      }
+      .config label {
+        color: #475569;
+      }
+      .config input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font: inherit;
+      }
+      button {
+        appearance: none;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        color: #111827;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #111827;
+        color: #fff;
+        border-color: #111827;
+      }
+      pre {
+        margin: 0;
+        padding: 10px;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        max-height: 420px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .meta {
+        margin: 8px 0 10px;
+        color: #475569;
+      }
+      .candidates {
+        margin: 0 0 10px;
+        padding: 0;
+        list-style: none;
+      }
+      .candidate {
+        margin-bottom: 8px;
+        padding: 8px 10px;
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+      }
+      .candidate strong {
+        display: block;
+        margin-bottom: 2px;
+      }
+      .candidate code {
+        display: block;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .error {
+        color: #b91c1c;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="config">
+        <label for="server">CCS 服务地址</label>
+        <input id="server" type="text" spellcheck="false" value="http://127.0.0.1:17666" />
+      </div>
+      <div class="row">
+        <button id="capture" class="primary">读取并保存并同步</button>
+        <button id="copy">复制结果</button>
+      </div>
+      <div id="meta" class="meta">准备就绪。</div>
+      <ul id="candidates" class="candidates"></ul>
+      <pre id="output">{}</pre>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
