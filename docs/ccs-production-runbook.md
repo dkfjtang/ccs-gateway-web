@@ -207,7 +207,7 @@ Run before destructive rebuilds, migrations, provider experiments, or auth rewri
 
 ```bash
 stamp=$(date +%Y%m%d-%H%M%S)
-backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/$stamp"
+backup_dir="<backup-root>/ccs-gateway-web-data/$stamp"
 mkdir -p "$backup_dir/openclaw-config"
 tar -czf "$backup_dir/root-cc-switch.tar.gz" -C /root .cc-switch
 cp -a <openclaw-data-dir>/openclaw.json "$backup_dir/openclaw-config/openclaw.json"
@@ -265,7 +265,7 @@ docker compose -f docker-compose.ccs-web.yml down
 ### 2. Restore CCS data if needed
 
 ```bash
-backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/<timestamp>"
+backup_dir="<backup-root>/ccs-gateway-web-data/<timestamp>"
 tar -xzf "$backup_dir/root-cc-switch.tar.gz" -C /root
 ```
 
@@ -276,7 +276,7 @@ Only restore `<openclaw-data-dir>/openclaw.json` if the OpenClaw config was also
 If the deployment changed the host NGINX site, restore the backed-up site before restarting NGINX:
 
 ```bash
-backup_dir="/home/win-files/openclaw-backups/ccs-gateway-web-data/<timestamp>"
+backup_dir="<backup-root>/ccs-gateway-web-data/<timestamp>"
 sudo install -m 0644 "$backup_dir/nginx-ccs-gateway-web-30033" /etc/nginx/sites-available/ccs-gateway-web-30033
 sudo ln -sfn /etc/nginx/sites-available/ccs-gateway-web-30033 /etc/nginx/sites-enabled/ccs-gateway-web-30033
 sudo nginx -t && sudo systemctl reload nginx

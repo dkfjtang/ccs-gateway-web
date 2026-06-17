@@ -1,3 +1,4 @@
+use http::header::{HeaderValue, InvalidHeaderValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -75,6 +76,13 @@ impl Provider {
 
     pub fn is_codex_oauth(&self) -> bool {
         self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+    }
+
+    pub fn protects_official_user_agent(&self) -> bool {
+        matches!(
+            self.meta.as_ref().and_then(|m| m.provider_type.as_deref()),
+            Some("github_copilot") | Some("codex_oauth")
+        )
     }
 
     pub fn codex_fast_mode_enabled(&self) -> bool {
@@ -445,6 +453,9 @@ pub struct ProviderMeta {
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
+    /// Custom User-Agent for local proxy routing.
+    #[serde(rename = "customUserAgent", skip_serializing_if = "Option::is_none")]
+    pub custom_user_agent: Option<String>,
     /// OpenAI Responses compatibility switch: omit `max_output_tokens` before forwarding.
     #[serde(
         rename = "omitMaxOutputTokens",
@@ -480,11 +491,28 @@ pub struct ProviderMeta {
     pub github_account_id: Option<String>,
 }
 
+/// Parse provider-level custom User-Agent with the same semantics across proxy,
+/// stream check, and model fetching. Empty/whitespace means unset; invalid
+/// values are returned as errors so call sites can choose to ignore them.
+pub fn parse_custom_user_agent(
+    raw: Option<&str>,
+) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(ua) => HeaderValue::from_str(ua).map(Some),
+        None => Ok(None),
+    }
+}
+
 impl ProviderMeta {
     /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    /// Validated provider-level custom User-Agent. See [`parse_custom_user_agent`].
+    pub fn custom_user_agent_header(&self) -> Result<Option<HeaderValue>, InvalidHeaderValue> {
+        parse_custom_user_agent(self.custom_user_agent.as_deref())
     }
 
     pub fn omit_max_output_tokens_enabled(&self) -> bool {
@@ -918,7 +946,7 @@ mod tests {
     use super::{
         ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
         ProviderManager, ProviderMeta, UniversalProvider, UsageData, UsageProbeType, UsageResult,
-        UsageScript,
+        UsageScript, parse_custom_user_agent,
     };
     use serde_json::json;
 
@@ -1536,5 +1564,54 @@ mod tests {
 
         assert!(toml.contains("base_url = \"https://example.com/openai\""));
         assert!(!toml.contains("https://example.com/openai/v1"));
+    }
+
+    #[test]
+    fn managed_official_providers_protect_user_agent_fingerprints() {
+        let mut provider = Provider::with_id(
+            "id".to_string(),
+            "Test".to_string(),
+            serde_json::json!({}),
+            None,
+        );
+
+        assert!(!provider.protects_official_user_agent());
+
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            custom_user_agent: Some("CustomUA/1.0".to_string()),
+            ..ProviderMeta::default()
+        });
+        assert!(provider.protects_official_user_agent());
+
+        provider.meta = Some(ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            custom_user_agent: Some("CustomUA/1.0".to_string()),
+            ..ProviderMeta::default()
+        });
+        assert!(provider.protects_official_user_agent());
+    }
+
+    #[test]
+    fn parse_custom_user_agent_trims_ignores_and_rejects_invalid_values() {
+        assert_eq!(parse_custom_user_agent(None).expect("none"), None);
+        assert_eq!(
+            parse_custom_user_agent(Some("   "))
+                .expect("whitespace")
+                .as_ref()
+                .map(|ua| ua.as_bytes().to_vec()),
+            None
+        );
+
+        let parsed = parse_custom_user_agent(Some("CustomUA/1.0")).expect("valid");
+        assert_eq!(
+            parsed
+                .as_ref()
+                .map(|ua| ua.as_bytes().to_vec())
+                .as_deref(),
+            Some(b"CustomUA/1.0".as_slice())
+        );
+
+        assert!(parse_custom_user_agent(Some("bad\nua")).is_err());
     }
 }

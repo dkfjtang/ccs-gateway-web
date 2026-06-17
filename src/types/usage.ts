@@ -14,6 +14,8 @@ export interface RequestLog {
   appType: string;
   model: string;
   requestModel?: string;
+  /** Model name actually used for pricing; can differ from model under route takeover. */
+  pricingModel?: string;
   costMultiplier: string;
   inputTokens: number;
   outputTokens: number;
@@ -120,6 +122,19 @@ export interface LogFilters {
   endDate?: number;
 }
 
+/**
+ * Dashboard-wide scope filters applied to hero, trends, and stats tabs.
+ *
+ * providerName is matched by the display name shown in provider stats, while
+ * model is matched by the effective priced model: pricingModel first, model as
+ * historical fallback.
+ */
+export interface UsageScopeFilters {
+  appType?: string;
+  providerName?: string;
+  model?: string;
+}
+
 export interface ProviderLimitStatus {
   providerId: string;
   dailyUsage: string;
@@ -138,14 +153,45 @@ export interface UsageRangeSelection {
   customEndDate?: number;
 }
 
-export type AppType = "claude" | "codex" | "gemini";
+export type AppType = "claude" | "codex" | "gemini" | "opencode";
 
 export type AppTypeFilter = "all" | AppType;
+
+export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+];
 
 export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
   "codex",
   "gemini",
 ]);
+
+export interface CacheNormalizableLog {
+  appType: string;
+  inputTokens: number;
+  cacheReadTokens: number;
+}
+
+export function getFreshInputTokens(log: CacheNormalizableLog): number {
+  if (
+    CACHE_INCLUSIVE_APP_TYPES.has(log.appType) &&
+    log.inputTokens >= log.cacheReadTokens
+  ) {
+    return log.inputTokens - log.cacheReadTokens;
+  }
+  return log.inputTokens;
+}
+
+export const NON_NEGATIVE_DECIMAL_REGEX = /^\d+(?:\.\d+)?$/;
+
+export function isNonNegativeDecimalString(value: string): boolean {
+  const trimmed = value.trim();
+  if (!NON_NEGATIVE_DECIMAL_REGEX.test(trimmed)) return false;
+  return Number.isFinite(Number(trimmed));
+}
 
 export interface StatsFilters {
   timeRange: UsageRangePreset;

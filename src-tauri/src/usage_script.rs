@@ -96,13 +96,14 @@ pub async fn execute_usage_script(
     }; // Runtime 和 Context 在这里被 drop
 
     // 4. 解析 request 配置
-    let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
+    let mut request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
         AppError::localized(
             "usage_script.request_format_invalid",
             format!("request 配置格式错误: {e}"),
             format!("Invalid request config format: {e}"),
         )
     })?;
+    apply_site_vault_vars_to_request(&mut request);
 
     // 5. 验证请求 URL（HTTPS 强制 + 同源检查）
     validate_request_url(&request.url, base_url, is_custom_template)?;
@@ -217,6 +218,25 @@ struct RequestConfig {
     headers: HashMap<String, String>,
     #[serde(default)]
     body: Option<String>,
+}
+
+fn apply_site_vault_vars_to_request(request: &mut RequestConfig) {
+    let request_url = request.url.clone();
+    request.url = crate::usage_token_vault::replace_site_vault_vars(&request.url, &request_url);
+    request.headers = request
+        .headers
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                crate::usage_token_vault::replace_site_vault_vars(value, &request_url),
+            )
+        })
+        .collect();
+    request.body = request
+        .body
+        .as_ref()
+        .map(|body| crate::usage_token_vault::replace_site_vault_vars(body, &request_url));
 }
 
 /// 发送 HTTP 请求
@@ -405,6 +425,7 @@ fn build_script_with_vars(
     access_token: Option<&str>,
     user_id: Option<&str>,
 ) -> String {
+    let vault_tokens = crate::usage_token_vault::load_tokens();
     let mut replaced = script_code
         .replace("{{apiKey}}", api_key)
         .replace("{{baseUrl}}", base_url);
@@ -416,7 +437,7 @@ fn build_script_with_vars(
         replaced = replaced.replace("{{userId}}", uid);
     }
 
-    replaced
+    crate::usage_token_vault::replace_vault_tokens(&replaced, &vault_tokens)
 }
 
 /// 验证 base_url 的基本安全性

@@ -23,6 +23,8 @@ release-web
 nul
 .run/
 docs/session-summaries/2026-06-12-*.md
+docs/session-summaries/2026-06-13-*.md
+docs/session-summaries/2026-06-14-*.md
 /.upstream/
 
 # Flatpak build artifacts
@@ -38,3 +40,4 @@ copilot-api
 CODEBUDDY.md
 .github
 mainWindow.js
+docker-compose.ccs-web.local.yml

@@ -38,6 +38,7 @@ mod ui_runtime;
 mod usage_events;
 mod usage_probe;
 mod usage_script;
+mod usage_token_vault;
 
 pub use app_config::{
     AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps, UnmanagedSkill,

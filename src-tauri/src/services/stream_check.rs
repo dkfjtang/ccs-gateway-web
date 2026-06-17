@@ -3,6 +3,7 @@
 //! 使用流式 API 进行快速健康检查，只需接收首个 chunk 即判定成功。
 
 use futures::StreamExt;
+use reqwest::header::HeaderValue;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -485,9 +486,18 @@ impl StreamCheckService {
                 .header("sec-fetch-mode", "cors");
         }
 
+        if !provider.protects_official_user_agent() {
+            if let Some(ua) = Self::custom_user_agent(provider) {
+                request_builder = request_builder.header("user-agent", ua);
+            }
+        }
+
         // 供应商自定义 headers 最后追加，允许覆盖内置默认值（例如 user-agent）
         if let Some(headers) = extra_headers {
             for (key, value) in headers {
+                if Self::should_skip_extra_header(provider, key) {
+                    continue;
+                }
                 if let Some(v) = value.as_str() {
                     request_builder = request_builder.header(key.as_str(), v);
                 }
@@ -982,6 +992,19 @@ impl StreamCheckService {
                     "OpenClaw provider is missing `baseUrl`",
                 )
             })
+    }
+
+    /// Provider-level custom User-Agent (`meta.customUserAgent`). Empty or
+    /// invalid values are ignored so checks match proxy forwarding behavior.
+    fn custom_user_agent(provider: &Provider) -> Option<HeaderValue> {
+        provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.custom_user_agent_header().ok().flatten())
+    }
+
+    fn should_skip_extra_header(provider: &Provider, key: &str) -> bool {
+        provider.protects_official_user_agent() && key.eq_ignore_ascii_case("user-agent")
     }
 
     fn extract_openclaw_api_key(provider: &Provider) -> Result<String, AppError> {
@@ -1585,6 +1608,38 @@ mod tests {
         let resolved =
             StreamCheckService::resolve_opencode_base_url(&p, Some("@ai-sdk/openai")).unwrap();
         assert_eq!(resolved, "https://proxy.local/v1");
+    }
+
+    #[test]
+    fn test_should_skip_extra_user_agent_for_official_providers_only() {
+        let mut provider = make_provider(serde_json::json!({}));
+
+        assert!(!StreamCheckService::should_skip_extra_header(
+            &provider,
+            "user-agent",
+        ));
+
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("github_copilot".to_string()),
+            ..crate::provider::ProviderMeta::default()
+        });
+        assert!(StreamCheckService::should_skip_extra_header(
+            &provider,
+            "user-agent",
+        ));
+        assert!(!StreamCheckService::should_skip_extra_header(
+            &provider,
+            "x-test",
+        ));
+
+        provider.meta = Some(crate::provider::ProviderMeta {
+            provider_type: Some("codex_oauth".to_string()),
+            ..crate::provider::ProviderMeta::default()
+        });
+        assert!(StreamCheckService::should_skip_extra_header(
+            &provider,
+            "user-agent",
+        ));
     }
 
     #[test]

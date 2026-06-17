@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { ApiKeySection, EndpointField, ModelInputWithFetch } from "./shared";
+import { CustomUserAgentField } from "./CustomUserAgentField";
 import {
   fetchModelsForConfig,
   showFetchModelsError,
@@ -46,6 +47,10 @@ interface CodexFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  // Local proxy User-Agent override
+  customUserAgent: string;
+  onCustomUserAgentChange: (value: string) => void;
 }
 
 export function CodexFormFields({
@@ -71,6 +76,8 @@ export function CodexFormFields({
   modelName = "",
   onModelNameChange,
   speedTestEndpoints,
+  customUserAgent,
+  onCustomUserAgentChange,
 }: CodexFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -86,7 +93,13 @@ export function CodexFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(codexBaseUrl, codexApiKey, isFullUrl)
+    fetchModelsForConfig(
+      codexBaseUrl,
+      codexApiKey,
+      isFullUrl,
+      undefined,
+      customUserAgent,
+    )
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
@@ -102,7 +115,7 @@ export function CodexFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [codexBaseUrl, codexApiKey, isFullUrl, t]);
+  }, [codexBaseUrl, codexApiKey, isFullUrl, customUserAgent, t]);
 
   return (
     <>
@@ -190,6 +203,12 @@ export function CodexFormFields({
           </p>
         </div>
       )}
+
+      <CustomUserAgentField
+        id="codex-custom-user-agent"
+        value={customUserAgent}
+        onChange={onCustomUserAgentChange}
+      />
 
       {/* 端点测速弹窗 - Codex */}
       {shouldShowSpeedTest && isEndpointModalOpen && (

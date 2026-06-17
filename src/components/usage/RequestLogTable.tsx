@@ -32,6 +32,8 @@ interface RequestLogTableProps {
   range: UsageRangeSelection;
   rangeLabel: string;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
   onRangeChange?: (range: UsageRangeSelection) => void;
 }
@@ -40,6 +42,8 @@ export function RequestLogTable({
   range,
   rangeLabel,
   appType: dashboardAppType,
+  providerName,
+  model,
   refreshIntervalMs,
   onRangeChange,
 }: RequestLogTableProps) {
@@ -52,9 +56,12 @@ export function RequestLogTable({
   const pageSize = 20;
 
   const dashboardAppTypeActive = dashboardAppType && dashboardAppType !== "all";
-  const effectiveFilters: LogFilters = dashboardAppTypeActive
-    ? { ...appliedFilters, appType: dashboardAppType }
-    : appliedFilters;
+  const effectiveFilters: LogFilters = {
+    ...appliedFilters,
+    ...(dashboardAppTypeActive ? { appType: dashboardAppType } : {}),
+    ...(providerName ? { providerName } : {}),
+    ...(model ? { model } : {}),
+  };
 
   const { data: result, isLoading } = useRequestLogs({
     filters: effectiveFilters,
@@ -74,6 +81,8 @@ export function RequestLogTable({
     setPage(0);
   }, [
     dashboardAppType,
+    providerName,
+    model,
     range.customEndDate,
     range.customStartDate,
     range.preset,
@@ -141,6 +150,7 @@ export function RequestLogTable({
               <SelectItem value="claude">Claude</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="gemini">Gemini</SelectItem>
+              <SelectItem value="opencode">OpenCode</SelectItem>
             </SelectContent>
           </Select>
 

@@ -10,19 +10,27 @@ import type { UsageRangeSelection } from "@/types/usage";
 interface UsageSummaryCardsProps {
   range: UsageRangeSelection;
   appType?: string;
+  providerName?: string;
+  model?: string;
   refreshIntervalMs: number;
 }
 
 export function UsageSummaryCards({
   range,
   appType,
+  providerName,
+  model,
   refreshIntervalMs,
 }: UsageSummaryCardsProps) {
   const { t } = useTranslation();
 
-  const { data: summary, isLoading, error } = useUsageSummary(range, appType, {
-    refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
-  });
+  const { data: summary, isLoading, error } = useUsageSummary(
+    range,
+    { appType, providerName, model },
+    {
+      refetchInterval: refreshIntervalMs > 0 ? refreshIntervalMs : false,
+    },
+  );
 
   const stats = useMemo(() => {
     const totalRequests = summary?.totalRequests ?? 0;

@@ -4,6 +4,27 @@ import type { PropsWithChildren } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 
+vi.mock("@/lib/api/usage", () => ({
+  usageApi: {
+    getUsageSummary: vi.fn().mockResolvedValue({
+      totalRequests: 0,
+      totalCost: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: 0,
+      successRate: 0,
+      cacheHitRate: 0,
+    }),
+    getUsageSummaryByApp: vi.fn().mockResolvedValue([]),
+    getUsageTrends: vi.fn().mockResolvedValue([]),
+    getProviderStats: vi.fn().mockResolvedValue([]),
+    getModelStats: vi.fn().mockResolvedValue([]),
+    getRequestLogs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    getDataSourceBreakdown: vi.fn().mockResolvedValue([]),
+  },
+}));
+
 const dataSourceBarProps = vi.fn();
 const usageHeroProps = vi.fn();
 const usageSummaryCardsProps = vi.fn();
@@ -89,13 +110,18 @@ describe("UsageDashboard", () => {
     vi.clearAllMocks();
   });
 
-  it("defaults to a 5s refresh interval", () => {
+  it("defaults to a 30s refresh interval", () => {
     renderDashboard();
 
-    expect(screen.getByRole("button", { name: /5s/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: /usage\.refreshInterval/ }),
+    ).toBeInTheDocument();
+    expect(dataSourceBarProps).toHaveBeenCalledWith(
+      expect.objectContaining({ refreshIntervalMs: 30000 }),
+    );
   });
 
-  it("passes the default 5s refresh interval to all usage panels", () => {
+  it("passes the default 30s refresh interval to all usage panels", () => {
     renderDashboard();
 
     for (const spy of [
@@ -108,7 +134,7 @@ describe("UsageDashboard", () => {
       modelStatsTableProps,
     ]) {
       expect(spy).toHaveBeenCalledWith(
-        expect.objectContaining({ refreshIntervalMs: 5000 }),
+        expect.objectContaining({ refreshIntervalMs: 30000 }),
       );
     }
   });

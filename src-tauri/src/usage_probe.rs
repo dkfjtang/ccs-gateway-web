@@ -176,14 +176,26 @@ fn build_probe_request(
     user_id: Option<&str>,
 ) -> UsageProbeRequest {
     let day_boundaries = local_day_boundary_template_values();
+    let vault_tokens = crate::usage_token_vault::load_tokens();
     let replace = |value: &str| {
-        replace_probe_vars(
+        let replaced = replace_probe_vars(
             value,
             api_key,
             base_url,
             access_token.unwrap_or(""),
             user_id.unwrap_or(""),
             &day_boundaries,
+        );
+        crate::usage_token_vault::replace_site_vault_vars(
+            &crate::usage_token_vault::replace_vault_tokens(&replaced, &vault_tokens),
+            &replace_probe_vars(
+                &request.url,
+                api_key,
+                base_url,
+                access_token.unwrap_or(""),
+                user_id.unwrap_or(""),
+                &day_boundaries,
+            ),
         )
     };
 
@@ -205,7 +217,7 @@ fn replace_probe_vars(
     base_url: &str,
     access_token: &str,
     user_id: &str,
-    day_boundaries: &(String, String),
+    day_boundaries: &(String, String, String, String),
 ) -> String {
     value
         .replace("{{apiKey}}", api_key)
@@ -214,9 +226,11 @@ fn replace_probe_vars(
         .replace("{{userId}}", user_id)
         .replace("{{todayStart}}", &day_boundaries.0)
         .replace("{{tomorrowStart}}", &day_boundaries.1)
+        .replace("{{todayStartTimestamp}}", &day_boundaries.2)
+        .replace("{{tomorrowStartTimestamp}}", &day_boundaries.3)
 }
 
-fn local_day_boundary_template_values() -> (String, String) {
+fn local_day_boundary_template_values() -> (String, String, String, String) {
     let today = Local::now().date_naive();
     let tomorrow = today
         .succ_opt()
@@ -225,11 +239,25 @@ fn local_day_boundary_template_values() -> (String, String) {
     (
         format_url_encoded_midnight(today),
         format_url_encoded_midnight(tomorrow),
+        local_midnight_timestamp(today).to_string(),
+        local_midnight_timestamp(tomorrow).to_string(),
     )
 }
 
 fn format_url_encoded_midnight(date: NaiveDate) -> String {
     format!("{}T00%3A00%3A00", date.format("%Y-%m-%d"))
+}
+
+fn local_midnight_timestamp(date: NaiveDate) -> i64 {
+    date.and_hms_opt(0, 0, 0)
+        .and_then(|midnight| midnight.and_local_timezone(Local).single())
+        .map(|midnight| midnight.timestamp())
+        .unwrap_or_else(|| {
+            date.and_hms_opt(0, 0, 0)
+                .expect("valid midnight")
+                .and_utc()
+                .timestamp()
+        })
 }
 
 fn validate_probe_request_url(request_url: &str, _base_url: &str) -> Result<(), AppError> {
@@ -874,6 +902,31 @@ mod tests {
         assert!(!replaced.contains("{{todayStart}}"));
         assert!(!replaced.contains("{{tomorrowStart}}"));
         assert_daily_boundary_query_values(&replaced);
+    }
+
+    #[test]
+    fn replaces_daily_boundary_timestamp_template_variables() {
+        let replaced = replace_probe_vars(
+            "{{baseUrl}}/api/log/self/stat?start_timestamp={{todayStartTimestamp}}&end_timestamp={{tomorrowStartTimestamp}}",
+            "sk-test",
+            "https://newapi.example.com",
+            "",
+            "",
+            &local_day_boundary_template_values(),
+        );
+
+        let start = query_value(&replaced, "start_timestamp")
+            .expect("start_timestamp")
+            .parse::<i64>()
+            .expect("numeric start timestamp");
+        let end = query_value(&replaced, "end_timestamp")
+            .expect("end_timestamp")
+            .parse::<i64>()
+            .expect("numeric end timestamp");
+
+        assert_eq!(end - start, 86_400);
+        assert!(!replaced.contains("{{todayStartTimestamp}}"));
+        assert!(!replaced.contains("{{tomorrowStartTimestamp}}"));
     }
 
     fn assert_daily_boundary_query_values(value: &str) {
