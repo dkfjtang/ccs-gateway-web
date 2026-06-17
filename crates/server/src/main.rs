@@ -17,7 +17,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use cc_switch_server::{
     api::{
         export_sql_download_handler, import_sql_upload_handler, invoke_handler, upgrade_handler,
-        MAX_SQL_UPLOAD_BYTES,
+        auth_vault_summary_handler, save_auth_vault_handler, MAX_SQL_UPLOAD_BYTES,
     },
     create_event_bus, load_auth_config, ServerState, SessionStore,
 };
@@ -253,6 +253,11 @@ async fn main() {
     // Build API routes
     let api_routes = Router::new()
         .route("/invoke", post(invoke_handler))
+        .route(
+            "/auth-vault/tokens",
+            post(save_auth_vault_handler).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
+        .route("/auth-vault/tokens/summary", get(auth_vault_summary_handler))
         .route("/ws", get(upgrade_handler))
         .route("/import-config", post(import_sql_upload_handler))
         .route("/export-config", get(export_sql_download_handler))

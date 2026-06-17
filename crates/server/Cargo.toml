@@ -28,6 +28,7 @@ bcrypt = "0.15"
 rand = "0.8"
 hex = "0.4"
 dirs = "5"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 cc_switch = { path = "../../src-tauri", package = "cc-switch", default-features = false, features = ["headless"] }

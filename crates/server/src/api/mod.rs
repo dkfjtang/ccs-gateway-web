@@ -1,3 +1,4 @@
+mod auth_vault;
 mod dispatch;
 mod invoke;
 mod session_auth;
@@ -5,6 +6,7 @@ mod sql_export;
 mod sql_import;
 mod ws;
 
+pub use auth_vault::{auth_vault_summary_handler, save_auth_vault_handler};
 pub use dispatch::{dispatch_command, RPC_BUSINESS_METHODS};
 pub use invoke::{invoke_handler, PUBLIC_METHODS};
 pub use sql_export::export_sql_download_handler;

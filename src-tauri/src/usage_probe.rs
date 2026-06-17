@@ -176,14 +176,26 @@ fn build_probe_request(
     user_id: Option<&str>,
 ) -> UsageProbeRequest {
     let day_boundaries = local_day_boundary_template_values();
+    let vault_tokens = crate::usage_token_vault::load_tokens();
     let replace = |value: &str| {
-        replace_probe_vars(
+        let replaced = replace_probe_vars(
             value,
             api_key,
             base_url,
             access_token.unwrap_or(""),
             user_id.unwrap_or(""),
             &day_boundaries,
+        );
+        crate::usage_token_vault::replace_site_vault_vars(
+            &crate::usage_token_vault::replace_vault_tokens(&replaced, &vault_tokens),
+            &replace_probe_vars(
+                &request.url,
+                api_key,
+                base_url,
+                access_token.unwrap_or(""),
+                user_id.unwrap_or(""),
+                &day_boundaries,
+            ),
         )
     };
 
