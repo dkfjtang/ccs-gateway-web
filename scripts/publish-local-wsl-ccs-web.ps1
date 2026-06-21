@@ -1,12 +1,18 @@
 <#
 .SYNOPSIS
-Publishes the local CCS Web build to the WSL Docker container.
+Publishes the local CCS Web build to the WSL Docker container, or inspects/repairs local WSL relay ports.
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -Distro '<wsl-distro>'
 
 .EXAMPLE
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -Distro '<wsl-distro>' -SkipBuild
+
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -RepairRelay -DryRun
+
+.EXAMPLE
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-local-wsl-ccs-web.ps1 -RepairRelay -Force
 #>
 
 param(
@@ -30,13 +36,29 @@ param(
     [switch]$SkipHealthCheck,
     [switch]$ForceWslShutdownOnStaleRelay,
     [switch]$ConfirmWslShutdown,
-    [switch]$NoCache
+    [switch]$NoCache,
+    [switch]$RepairRelay,
+    [switch]$DryRun,
+    [switch]$Force,
+    [int[]]$RelayPorts
 )
 
 $ErrorActionPreference = "Stop"
 $transcriptStarted = $false
 
-if ([string]::IsNullOrWhiteSpace($Distro)) {
+if (($DryRun -or $Force) -and -not $RepairRelay) {
+    throw "-DryRun and -Force are only valid with -RepairRelay. For publishing, use -ForceWslShutdownOnStaleRelay -ConfirmWslShutdown when WSL relay cleanup is required."
+}
+if ((-not $RepairRelay) -and $null -ne $RelayPorts -and $RelayPorts.Count -gt 0) {
+    throw "-RelayPorts is only valid with -RepairRelay. Publishing uses the configured ProxyPort plus 17666."
+}
+if ($RepairRelay -and $DryRun -and $Force) {
+    throw "-DryRun and -Force are mutually exclusive with -RepairRelay."
+}
+if ($RepairRelay -and -not $DryRun -and -not $Force) {
+    throw "-RepairRelay requires either -DryRun or -Force."
+}
+if (-not $RepairRelay -and [string]::IsNullOrWhiteSpace($Distro)) {
     throw "WSL distro is required. Pass -Distro '<wsl-distro>' or set CCS_WSL_DISTRO for this command."
 }
 
@@ -548,7 +570,9 @@ function Test-WslTcpEndpoint {
         [int]$Port
     )
 
-    $probe = "python3 -c 'import socket,sys; host=""$TcpHost""; port=$Port; sock=socket.create_connection((host, port), timeout=3); sock.close()'"
+    $hostArg = Quote-BashArg $TcpHost
+    $python = "import socket; host=$hostArg; port=$Port; sock=socket.create_connection((host, port), timeout=3); sock.close()"
+    $probe = "python3 -c " + (Quote-BashArg $python)
 
     wsl -d $Distro -- bash -lc $probe | Out-Null
     return ($LASTEXITCODE -eq 0)
@@ -637,7 +661,7 @@ function Invoke-DockerComposeBuildWithCache {
         $proxyArgs += " --set " + (Quote-BashArg "$Service.args.DEBIAN_IMAGE=$($env:CCS_WEB_DEBIAN_IMAGE)")
     }
 
-    $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx bake --builder " + (Quote-BashArg $BuilderName) + " --file " + (Quote-BashArg $ComposeFile) + " " + (Quote-BashArg $Service) + " --load --set " + (Quote-BashArg "$Service.cache-from=type=local,src=$DockerCacheWsl") + " --set " + (Quote-BashArg "$Service.cache-to=type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
+    $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx bake --pull=false --builder " + (Quote-BashArg $BuilderName) + " --file " + (Quote-BashArg $ComposeFile) + " " + (Quote-BashArg $Service) + " --load --set " + (Quote-BashArg "$Service.cache-from=type=local,src=$DockerCacheWsl") + " --set " + (Quote-BashArg "$Service.cache-to=type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
     if ($NoCache) {
         $command += " --no-cache"
     }
@@ -685,7 +709,7 @@ function Export-DockerFrontendDistWithCache {
         $proxyArgs += " --build-arg DEBIAN_IMAGE=" + (Quote-BashArg $env:CCS_WEB_DEBIAN_IMAGE)
     }
 
-    $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx build --builder " + (Quote-BashArg $BuilderName) + " --file Dockerfile.web --target frontend-dist --output " + (Quote-BashArg "type=local,dest=$frontendDistWsl") + " --cache-from " + (Quote-BashArg "type=local,src=$DockerCacheWsl") + " --cache-to " + (Quote-BashArg "type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
+    $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx build --pull=false --builder " + (Quote-BashArg $BuilderName) + " --file Dockerfile.web --target frontend-dist --output " + (Quote-BashArg "type=local,dest=$frontendDistWsl") + " --cache-from " + (Quote-BashArg "type=local,src=$DockerCacheWsl") + " --cache-to " + (Quote-BashArg "type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
     if ($NoCache) {
         $command += " --no-cache"
     }
@@ -714,8 +738,9 @@ function Write-FailureDiagnostics {
     try {
         $composeArgs = " -f " + (Quote-BashArg $ComposeFile)
         if (-not [string]::IsNullOrWhiteSpace($LocalComposeFile)) {
-            $localComposeWsl = ConvertTo-WslPath -WindowsPath (Join-Path $ProjectRoot $LocalComposeFile)
-            if (Test-Path -LiteralPath (Join-Path $ProjectRoot $LocalComposeFile) -PathType Leaf) {
+            $localComposePath = Join-Path $ProjectRoot $LocalComposeFile
+            if (Test-Path -LiteralPath $localComposePath -PathType Leaf) {
+                $localComposeWsl = ConvertTo-WslPath -WindowsPath $localComposePath
                 $composeArgs += " -f " + (Quote-BashArg $localComposeWsl)
             }
         }
@@ -838,9 +863,130 @@ function Test-WindowsStaleWslRelayConnectionsForPorts {
     return ($staleRelayConnections.Count -gt 0)
 }
 
+function Normalize-RelayPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports
+    )
+
+    $normalized = @(
+        $Ports |
+            Sort-Object -Unique |
+            ForEach-Object {
+                if ($_ -lt 1 -or $_ -gt 65535) {
+                    throw "Relay port must be in range 1..65535: $_"
+                }
+                $_
+            }
+    )
+    if ($normalized.Count -eq 0) {
+        throw "At least one relay port is required."
+    }
+
+    return $normalized
+}
+
+function Get-WindowsWslRelayConnectionsForPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports
+    )
+
+    return @(
+        Get-WindowsTcpConnectionsForPorts -Ports $Ports |
+            Where-Object {
+                $process = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue
+                $process -and $process.ProcessName -eq "wslrelay"
+            } |
+            Sort-Object LocalPort, State, RemotePort
+    )
+}
+
+function Write-WindowsWslRelayConnectionsForPorts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $connections = Get-WindowsWslRelayConnectionsForPorts -Ports $Ports
+    if ($connections.Count -eq 0) {
+        Write-Host ("{0}: no wslrelay TCP connections for ports {1}" -f $Name, ($Ports -join ","))
+        return
+    }
+
+    Write-Host ("{0}: wslrelay TCP connections for ports {1}" -f $Name, ($Ports -join ","))
+    $connections |
+        Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess |
+        Format-Table -AutoSize
+}
+
+function Repair-LocalWslRelay {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int[]]$Ports,
+        [Parameter(Mandatory = $true)]
+        [bool]$ForceRepair,
+        [Parameter(Mandatory = $true)]
+        [int]$Retries,
+        [Parameter(Mandatory = $true)]
+        [int]$DelaySeconds
+    )
+
+    Write-Step "Local WSL relay status"
+    Write-Host ("Ports:           {0}" -f ($Ports -join ","))
+    Write-WindowsWslRelayConnectionsForPorts -Ports $Ports -Name "Before repair"
+
+    $repairableConnections = @(
+        Get-WindowsWslRelayConnectionsForPorts -Ports $Ports |
+            Where-Object { $_.State -ne "Listen" }
+    )
+    if ($repairableConnections.Count -eq 0) {
+        Write-Host "No non-listening wslrelay connections found for the target ports. No repair action is required."
+        return
+    }
+
+    if (-not $ForceRepair) {
+        Write-Host "Dry run only. Re-run with -RepairRelay -Force to execute: wsl --shutdown"
+        return
+    }
+
+    Write-Step "Restarting WSL to clear relay connections"
+    wsl --shutdown
+    if ($LASTEXITCODE -ne 0) {
+        throw "wsl --shutdown failed with exit code ${LASTEXITCODE}."
+    }
+
+    for ($attempt = 1; $attempt -le $Retries; $attempt++) {
+        Start-Sleep -Seconds $DelaySeconds
+        $connections = Get-WindowsWslRelayConnectionsForPorts -Ports $Ports
+        $released = ($connections.Count -eq 0)
+        Write-Host ("Relay release: attempt {0}/{1}: ports {2} released={3}" -f $attempt, $Retries, ($Ports -join ","), $released)
+        if ($released) {
+            Write-WindowsWslRelayConnectionsForPorts -Ports $Ports -Name "After repair"
+            Write-Host "Local WSL relay repair completed."
+            return
+        }
+    }
+
+    Write-WindowsWslRelayConnectionsForPorts -Ports $Ports -Name "After repair timeout"
+    throw "WSL relay ports were not released after $Retries attempts."
+}
+
+if ($null -eq $RelayPorts -or $RelayPorts.Count -eq 0) {
+    $RelayPorts = @($ProxyPort, 17666) | Sort-Object -Unique
+}
+$RelayPorts = Normalize-RelayPorts -Ports $RelayPorts
+if ($RepairRelay) {
+    Repair-LocalWslRelay -Ports $RelayPorts -ForceRepair:$Force.IsPresent -Retries $HealthRetries -DelaySeconds $HealthDelaySeconds
+    return
+}
+
 if (-not (Test-Path -LiteralPath $composePath)) {
     throw "Compose file not found: $composePath"
 }
+
 $projectRootWsl = ConvertTo-WslPath -WindowsPath $projectRoot
 $resolvedLogDir = Resolve-LocalLogDir -ProjectRoot $projectRoot -RelativeLogDir $LogDir
 $cacheLayout = Get-LocalPublishCacheLayout -ProjectRoot $projectRoot
@@ -935,6 +1081,8 @@ try {
         $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString stop -t $StopTimeoutSeconds " + (Quote-BashArg $Service) + " || true"
         Invoke-Wsl $command
         $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString rm -f " + (Quote-BashArg $Service) + " || true"
+        Invoke-Wsl $command
+        $command = "docker ps -a --filter " + (Quote-BashArg "name=^/${ContainerName}$") + " --filter " + (Quote-BashArg "label=com.docker.compose.service=$Service") + " --format " + (Quote-BashArg "{{.ID}}") + " | xargs -r docker rm -f"
         Invoke-Wsl $command
 
         Write-Step "Waiting for old published ports to release"

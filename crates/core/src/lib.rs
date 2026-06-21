@@ -343,7 +343,7 @@ pub async fn fetch_models_for_config(
     is_full_url: bool,
     models_url: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
-    cc_switch::fetch_models(base_url, api_key, is_full_url, models_url).await
+    cc_switch::fetch_models(base_url, api_key, is_full_url, models_url, None).await
 }
 
 pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
@@ -1126,7 +1126,7 @@ pub fn get_usage_summary(
 ) -> Result<UsageSummary, String> {
     ctx.app_state()
         .db
-        .get_usage_summary(start_date, end_date, app_type)
+        .get_usage_summary(start_date, end_date, app_type, None, None)
         .map_err(|e| e.to_string())
 }
 
@@ -1137,7 +1137,7 @@ pub fn get_usage_summary_by_app(
 ) -> Result<Vec<UsageSummaryByApp>, String> {
     ctx.app_state()
         .db
-        .get_usage_summary_by_app(start_date, end_date)
+        .get_usage_summary_by_app(start_date, end_date, None, None)
         .map_err(|e| e.to_string())
 }
 
@@ -1149,7 +1149,7 @@ pub fn get_usage_trends(
 ) -> Result<Vec<DailyStats>, String> {
     ctx.app_state()
         .db
-        .get_daily_trends(start_date, end_date, app_type)
+        .get_daily_trends(start_date, end_date, app_type, None, None)
         .map_err(|e| e.to_string())
 }
 
@@ -1161,7 +1161,7 @@ pub fn get_provider_stats(
 ) -> Result<Vec<ProviderStats>, String> {
     ctx.app_state()
         .db
-        .get_provider_stats(start_date, end_date, app_type)
+        .get_provider_stats(start_date, end_date, app_type, None, None)
         .map_err(|e| e.to_string())
 }
 
@@ -1173,7 +1173,7 @@ pub fn get_model_stats(
 ) -> Result<Vec<ModelStats>, String> {
     ctx.app_state()
         .db
-        .get_model_stats(start_date, end_date, app_type)
+        .get_model_stats(start_date, end_date, app_type, None, None)
         .map_err(|e| e.to_string())
 }
 

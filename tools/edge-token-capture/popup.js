@@ -42,6 +42,20 @@ async function getServerUrl() {
   return serverUrl;
 }
 
+async function getCcsSessionHeader(serverUrl) {
+  const sessionResponse = await chrome.runtime.sendMessage({
+    type: "GET_CCS_SESSION",
+    url: serverUrl,
+  });
+  if (!sessionResponse?.ok) {
+    throw new Error(sessionResponse?.error || "读取 CCS 登录态失败。");
+  }
+  if (!sessionResponse.value) {
+    throw new Error("CCS 未登录或登录态已过期，请先打开 CCS Web 并完成登录。");
+  }
+  return sessionResponse.value;
+}
+
 function previewSecret(value) {
   const text = String(value ?? "");
   if (!text) {
@@ -51,6 +65,66 @@ function previewSecret(value) {
     return `${text.slice(0, 4)}...len=${text.length}`;
   }
   return `${text.slice(0, 10)}...${text.slice(-6)} len=${text.length}`;
+}
+
+function base64UrlDecode(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return atob(padded);
+}
+
+function parseJwtPayload(value) {
+  const text = String(value || "").replace(/^Bearer\s+/i, "");
+  const parts = text.split(".");
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  try {
+    const decoded = base64UrlDecode(parts[1]);
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
+function formatUnixSeconds(value) {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return new Date(value * 1000).toISOString();
+}
+
+function buildAuthTokenReview(candidate) {
+  if (!candidate?.value) {
+    return null;
+  }
+
+  const value = String(candidate.value);
+  const payload = parseJwtPayload(value);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const expiresInSeconds = Number.isFinite(payload?.exp) ? payload.exp - nowSeconds : null;
+
+  return {
+    source: `${candidate.source}.${candidate.key}`,
+    preview: previewSecret(value),
+    length: value.length,
+    prefix16: value.slice(0, 16),
+    suffix12: value.slice(-12),
+    isJwt: Boolean(payload),
+    jwt: payload
+      ? {
+          issuer: payload.iss || null,
+          subject: payload.sub || null,
+          audience: payload.aud || null,
+          issuedAt: formatUnixSeconds(payload.iat),
+          expiresAt: formatUnixSeconds(payload.exp),
+          expiresInSeconds,
+        }
+      : null,
+    reviewHint:
+      "请用 Network 里真实 Authorization bearer 的长度、前 16 位、后 12 位和 JWT exp 对照；这里不会展示完整 token。",
+  };
 }
 
 function looksLikeAuthValue(source, key, value) {
@@ -135,6 +209,7 @@ function pickAuthToken(candidates) {
 
 function sanitizeCapture(capture) {
   const candidates = findAuthCandidates(capture);
+  const authToken = pickAuthToken(candidates);
   return {
     capturedAt: capture?.capturedAt,
     title: capture?.title,
@@ -145,6 +220,7 @@ function sanitizeCapture(capture) {
     cookieError: capture?.cookieError || null,
     authCandidateCount: candidates.filter((candidate) => candidate.source !== "cookie").length,
     tokenCandidateCount: candidates.length,
+    selectedAuthToken: buildAuthTokenReview(authToken),
     authCandidates: candidates.map(({ value, ...candidate }) => candidate),
     tokenCandidates: candidates.map(({ value, ...candidate }) => candidate),
     storageKeys: {
@@ -348,10 +424,13 @@ async function syncVaultToCcs() {
   }
 
   const serverUrl = await getServerUrl();
+  const ccsSession = await getCcsSessionHeader(serverUrl);
   const response = await fetch(`${serverUrl}${fixedVaultPath}`, {
     method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-CCS-Session": ccsSession,
+    },
     body: JSON.stringify({ sites: siteVault, tokenVault }),
   });
   const result = await response.json();
@@ -396,6 +475,7 @@ captureButton.addEventListener("click", async () => {
         title: siteEntry.title,
         authTokenSource: siteEntry.authTokenSource,
         authTokenPreview: siteEntry.authTokenPreview,
+        selectedAuthToken: summary.selectedAuthToken,
         cookieNames: siteEntry.cookieNames,
         cookieHeaderPreview: siteEntry.cookieHeaderPreview,
         capturedAt: siteEntry.capturedAt,

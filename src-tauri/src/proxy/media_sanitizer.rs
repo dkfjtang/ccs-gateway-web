@@ -1,14 +1,18 @@
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 
 /// Replace image blocks before sending when the routed model is text-only.
 ///
-/// Two paths, both reached only when the caller's media-fallback switch is on:
-/// - explicit capability from the provider config (modelCatalog / modalities) is
-///   always trusted — it is declaration-driven, never a guess;
+/// Three paths:
+/// - explicit provider meta `disableImageGeneration` is trusted and independent
+///   from the global rectifier/media-fallback switch;
+/// - explicit model capability from the provider config (modelCatalog /
+///   modalities) is declaration-driven, never a guess;
+/// - provider-level capability fallback from settings_config is used only when
+///   no model-level declaration exists;
 /// - the curated `known_text_only_model` list is a heuristic *prediction* and only
 ///   runs when `allow_heuristic` is true, so a mislabeled multimodal model cannot
 ///   have its images silently stripped when the user opts out.
@@ -21,6 +25,10 @@ pub fn replace_images_for_text_only_model(
         return 0;
     }
 
+    if provider_meta_disables_image_generation(provider) {
+        return replace_images_in_body(body);
+    }
+
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -31,6 +39,10 @@ pub fn replace_images_for_text_only_model(
         Some(true) => return 0,
         Some(false) => return replace_images_in_body(body),
         None => {}
+    }
+
+    if provider_config_disables_image_generation(provider) {
+        return replace_images_in_body(body);
     }
 
     if !allow_heuristic || !known_text_only_model(model) {
@@ -49,6 +61,7 @@ pub fn contains_image_blocks(body: &Value) -> bool {
                 .filter_map(|message| message.get("content"))
                 .any(content_has_image_blocks)
         })
+        || body.get("input").is_some_and(input_has_image_blocks)
 }
 
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
@@ -60,7 +73,7 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         return false;
     };
 
-    if !matches!(*status, 400 | 415 | 422 | 501) {
+    if !matches!(*status, 400 | 403 | 415 | 422 | 501) {
         return false;
     }
 
@@ -102,9 +115,52 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "can't process",
         "can't handle",
         "unable to process",
+        "not enabled",
+        "not enabled for this group",
     ];
 
     UNSUPPORTED_HINTS.iter().any(|hint| message.contains(hint))
+}
+
+pub fn provider_disables_image_generation(provider: &Provider) -> bool {
+    provider_meta_disables_image_generation(provider)
+        || provider_config_disables_image_generation(provider)
+}
+
+fn provider_meta_disables_image_generation(provider: &Provider) -> bool {
+    provider
+        .meta
+        .as_ref()
+        .is_some_and(|meta| meta.disable_image_generation_enabled())
+}
+
+fn provider_config_disables_image_generation(provider: &Provider) -> bool {
+    [
+        provider
+            .settings_config
+            .pointer("/capabilities/supportsImage"),
+        provider
+            .settings_config
+            .pointer("/capabilities/supports_image"),
+        provider
+            .settings_config
+            .pointer("/capabilities/imageGeneration"),
+        provider
+            .settings_config
+            .pointer("/capabilities/image_generation"),
+        provider.settings_config.pointer("/media/supportsImage"),
+        provider.settings_config.pointer("/media/supports_image"),
+        provider.settings_config.pointer("/media/imageGeneration"),
+        provider.settings_config.pointer("/media/image_generation"),
+        provider.settings_config.get("supportsImage"),
+        provider.settings_config.get("supports_image"),
+        provider.settings_config.get("imageGeneration"),
+        provider.settings_config.get("image_generation"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(Value::as_bool)
+    .is_some_and(|supports| !supports)
 }
 
 fn content_has_image_blocks(content: &Value) -> bool {
@@ -113,49 +169,141 @@ fn content_has_image_blocks(content: &Value) -> bool {
     };
 
     blocks.iter().any(|block| {
-        block.get("type").and_then(Value::as_str) == Some("image")
-            || block.get("content").is_some_and(content_has_image_blocks)
+        block_is_image(block) || block.get("content").is_some_and(content_has_image_blocks)
     })
 }
 
 fn replace_images_in_body(body: &mut Value) -> usize {
-    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
-        return 0;
-    };
+    let messages_replaced = body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .map(|messages| {
+            messages
+                .iter_mut()
+                .filter_map(|message| message.get_mut("content"))
+                .map(replace_images_in_content)
+                .sum()
+        })
+        .unwrap_or(0);
 
-    messages
-        .iter_mut()
-        .filter_map(|message| message.get_mut("content"))
-        .map(replace_images_in_content)
-        .sum()
+    let input_replaced = body
+        .get_mut("input")
+        .map(replace_images_in_input)
+        .unwrap_or(0);
+
+    messages_replaced + input_replaced
 }
 
 fn replace_images_in_content(content: &mut Value) -> usize {
+    replace_images_in_content_with_text_type(content, "text")
+}
+
+fn replace_images_in_content_with_text_type(content: &mut Value, text_type: &str) -> usize {
     let Some(blocks) = content.as_array_mut() else {
         return 0;
     };
 
     let mut replaced = 0usize;
     for block in blocks {
-        if block.get("type").and_then(Value::as_str) == Some("image") {
-            let cache_control = block.get("cache_control").cloned();
-            *block = json!({
-                "type": "text",
-                "text": UNSUPPORTED_IMAGE_MARKER
-            });
-            if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
-                object.insert("cache_control".to_string(), cache_control);
-            }
+        if replace_image_block(block, text_type) {
             replaced += 1;
             continue;
         }
 
         if let Some(nested_content) = block.get_mut("content") {
-            replaced += replace_images_in_content(nested_content);
+            replaced += replace_images_in_content_with_text_type(nested_content, text_type);
         }
     }
 
     replaced
+}
+
+fn input_has_image_blocks(input: &Value) -> bool {
+    match input {
+        Value::Array(items) => items.iter().any(|item| {
+            block_is_image(item)
+                || item.get("content").is_some_and(content_has_image_blocks)
+                || item.get("input").is_some_and(input_has_image_blocks)
+        }),
+        Value::Object(_) => {
+            block_is_image(input)
+                || input.get("content").is_some_and(content_has_image_blocks)
+                || input.get("input").is_some_and(input_has_image_blocks)
+        }
+        _ => false,
+    }
+}
+
+fn replace_images_in_input(input: &mut Value) -> usize {
+    match input {
+        Value::Array(items) => items
+            .iter_mut()
+            .map(|item| {
+                if replace_image_block(item, "input_text") {
+                    return 1;
+                }
+                let content_replaced = item
+                    .get_mut("content")
+                    .map(replace_images_in_responses_content)
+                    .unwrap_or(0);
+                let nested_input_replaced = item
+                    .get_mut("input")
+                    .map(replace_images_in_input)
+                    .unwrap_or(0);
+                content_replaced + nested_input_replaced
+            })
+            .sum(),
+        Value::Object(_) => {
+            if replace_image_block(input, "input_text") {
+                return 1;
+            }
+            let content_replaced = input
+                .get_mut("content")
+                .map(replace_images_in_responses_content)
+                .unwrap_or(0);
+            let nested_input_replaced = input
+                .get_mut("input")
+                .map(replace_images_in_input)
+                .unwrap_or(0);
+            content_replaced + nested_input_replaced
+        }
+        _ => 0,
+    }
+}
+
+fn block_is_image(block: &Value) -> bool {
+    matches!(
+        block.get("type").and_then(Value::as_str),
+        Some("image" | "image_url" | "input_image")
+    )
+}
+
+fn replace_images_in_responses_content(content: &mut Value) -> usize {
+    replace_images_in_content_with_text_type(content, "input_text")
+}
+
+fn replace_image_block(block: &mut Value, chat_image_text_type: &str) -> bool {
+    let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+        return false;
+    };
+    if !matches!(block_type, "image" | "image_url" | "input_image") {
+        return false;
+    }
+
+    let replacement_type = if block_type == "input_image" {
+        "input_text"
+    } else {
+        chat_image_text_type
+    };
+    let cache_control = block.get("cache_control").cloned();
+    *block = json!({
+        "type": replacement_type,
+        "text": UNSUPPORTED_IMAGE_MARKER
+    });
+    if let (Some(cache_control), Some(object)) = (cache_control, block.as_object_mut()) {
+        object.insert("cache_control".to_string(), cache_control);
+    }
+    true
 }
 
 fn explicit_model_image_support(provider: &Provider, model: &str) -> Option<bool> {
@@ -307,7 +455,7 @@ fn normalize_model_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::Provider;
+    use crate::provider::{Provider, ProviderMeta};
     use serde_json::json;
 
     fn provider(settings_config: Value) -> Provider {
@@ -469,6 +617,32 @@ mod tests {
     }
 
     #[test]
+    fn explicit_model_image_support_overrides_provider_level_config_fallback() {
+        let provider = provider(json!({
+            "supportsImage": false,
+            "modelCatalog": {
+                "models": [
+                    { "model": "deepseek-v4-pro", "supportsImage": true }
+                ]
+            }
+        }));
+        let mut body = json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, true);
+
+        assert_eq!(count, 0);
+        assert_eq!(body["messages"][0]["content"][0]["type"], "image");
+    }
+
+    #[test]
     fn known_mimo_pro_replaces_but_mimo_multimodal_preserves() {
         let provider = provider(json!({}));
         let mut pro_body = json!({
@@ -603,10 +777,195 @@ mod tests {
     }
 
     #[test]
+    fn detects_group_image_generation_permission_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 403,
+            body: Some(
+                r#"{"error":{"message":"Image generation is not enabled for this group","type":"permission_error"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn provider_level_disable_image_generation_replaces_images_before_send() {
+        let mut provider = provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "look" },
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } }
+                ]
+            }]
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn provider_level_disable_image_generation_replaces_responses_input_images() {
+        let mut provider = provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn provider_level_disable_image_generation_uses_input_text_for_responses_content_images() {
+        let mut provider = provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn provider_level_disable_image_generation_replaces_chat_image_url_parts() {
+        let mut provider = provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "look" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,abc" } }
+                ]
+            }]
+        });
+
+        assert!(contains_image_blocks(&body));
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 1);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["text"],
+            UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[test]
+    fn provider_level_disable_image_generation_preserves_non_image_responses_items() {
+        let mut provider = provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "read this" },
+                        { "type": "input_file", "file_id": "file_123" }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "lookup",
+                    "arguments": "{}"
+                }
+            ]
+        });
+
+        assert!(!contains_image_blocks(&body));
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 0);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_file");
+        assert_eq!(body["input"][1]["type"], "function_call");
+    }
+
+    #[test]
     fn ignores_non_image_errors() {
         let error = ProxyError::UpstreamError {
             status: 400,
             body: Some(r#"{"error":{"message":"Invalid API key"}}"#.to_string()),
+        };
+
+        assert!(!is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn ignores_non_image_permission_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 403,
+            body: Some(
+                r#"{"error":{"message":"Access forbidden for this account","type":"permission_error"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(!is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn ignores_generic_image_permission_errors_without_unsupported_hint() {
+        let error = ProxyError::UpstreamError {
+            status: 403,
+            body: Some(r#"{"error":{"message":"Image quota permission denied","type":"permission_error"}}"#.to_string()),
         };
 
         assert!(!is_unsupported_image_error(&error));

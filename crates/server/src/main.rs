@@ -8,7 +8,7 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 use serde::Serialize;
-use std::net::{IpAddr, TcpListener as StdTcpListener};
+use std::net::{IpAddr, SocketAddr, TcpListener as StdTcpListener};
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
@@ -170,6 +170,14 @@ fn is_loopback_host(host: &str) -> bool {
             .unwrap_or(false)
 }
 
+fn allow_extension_session_header(host: &str) -> bool {
+    if let Ok(value) = std::env::var("CC_SWITCH_ALLOW_EXTENSION_SESSION_HEADER") {
+        return value == "1" || value.eq_ignore_ascii_case("true");
+    }
+
+    is_loopback_host(host)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +220,11 @@ async fn main() {
     // Create session store
     let session_store = Arc::new(SessionStore::new());
 
+    // Get host from environment or use default
+    let host = std::env::var("CC_SWITCH_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let is_loopback = is_loopback_host(&host);
+    let allow_extension_session_header = allow_extension_session_header(&host);
+
     // Spawn session cleanup task (runs every hour)
     let cleanup_store = Arc::clone(&session_store);
     tokio::spawn(async move {
@@ -225,7 +238,13 @@ async fn main() {
 
     // Create server state
     let auth_token = std::env::var("CC_SWITCH_AUTH_TOKEN").ok();
-    let state = ServerState::new(auth_token, event_bus, session_store, auth_config);
+    let state = ServerState::new(
+        auth_token,
+        event_bus,
+        session_store,
+        auth_config,
+        allow_extension_session_header,
+    );
 
     let auto_start_proxy = std::env::var("CC_SWITCH_START_PROXY")
         .map(|v| v != "0" && v.to_lowercase() != "false")
@@ -248,7 +267,8 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_headers(Any)
+        .allow_private_network(true);
 
     // Build API routes
     let api_routes = Router::new()
@@ -292,15 +312,11 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(17666);
 
-    // Get host from environment or use default
-    let host = std::env::var("CC_SWITCH_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-
     // Check if auto-port selection is enabled (default: true)
     let auto_port = std::env::var("CC_SWITCH_AUTO_PORT")
         .map(|v| v != "0" && v.to_lowercase() != "false")
         .unwrap_or(true);
 
-    let is_loopback = is_loopback_host(&host);
     let allow_auto_port = is_loopback && auto_port;
 
     // Find available port
@@ -408,7 +424,12 @@ async fn main() {
         }
     };
 
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    {
         eprintln!("❌ Server error: {}", e);
         std::process::exit(1);
     }

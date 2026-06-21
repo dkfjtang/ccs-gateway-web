@@ -24,6 +24,7 @@ async fn unauthenticated_sql_download_is_rejected_when_web_auth_is_enabled() {
         auth_config: Some(AuthConfig {
             password_hash: "test-hash".to_string(),
         }),
+        allow_extension_session_header: true,
     });
 
     let app = Router::new()
@@ -53,6 +54,7 @@ async fn sql_download_returns_attachment_headers_and_sql_body() {
         core: CoreContext::from_app_state(AppState::new(db)),
         session_store: Arc::new(SessionStore::new()),
         auth_config: None,
+        allow_extension_session_header: true,
     });
 
     let app = Router::new()

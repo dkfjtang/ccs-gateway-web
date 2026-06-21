@@ -23,6 +23,8 @@ This repository is public on GitHub. Treat every tracked file as publishable to 
 - The local WSL container release target is the `ccs-gateway-web` service from `docker-compose.ccs-web.yml`.
 - Do not touch the desktop CC Switch installation when the request is about the WSL `ccs-web` modified build.
 - Local WSL container publishing must go through `scripts/publish-local-wsl-ccs-web.ps1` so build, recreate, health checks, and ignored local logs stay consistent.
+- Local WSL relay inspection and repair must also go through `scripts/publish-local-wsl-ccs-web.ps1` using `-RepairRelay` with either `-DryRun` or `-Force`; do not add or use separate relay repair scripts.
+- One-click local WSL release wrappers must call `scripts/publish-local-wsl-ccs-web.ps1` and keep temporary files/logs under ignored local directories such as `<repo-root>/tmp/` and `<repo-root>/.run/`.
 - Local container state, mounts, image IDs, and health-check output are operational evidence only. Keep them out of tracked documentation unless sanitized.
 
 ## Upstream Routing Alignment

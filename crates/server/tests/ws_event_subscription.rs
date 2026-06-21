@@ -21,6 +21,7 @@ fn test_state() -> (Arc<ServerState>, cc_switch_server::EventSender) {
         core: CoreContext::from_app_state(AppState::new(db)),
         session_store: Arc::new(SessionStore::new()),
         auth_config: None::<AuthConfig>,
+        allow_extension_session_header: true,
     });
 
     (state, event_bus)

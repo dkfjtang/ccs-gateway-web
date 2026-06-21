@@ -11,6 +11,7 @@ pub struct ServerState {
     pub core: CoreContext,
     pub session_store: Arc<SessionStore>,
     pub auth_config: Option<AuthConfig>,
+    pub allow_extension_session_header: bool,
 }
 
 impl ServerState {
@@ -19,6 +20,7 @@ impl ServerState {
         event_bus: EventSender,
         session_store: Arc<SessionStore>,
         auth_config: Option<AuthConfig>,
+        allow_extension_session_header: bool,
     ) -> Arc<Self> {
         // 初始化核心上下文（数据库、SkillService 等）
         let core = CoreContext::new().unwrap_or_else(|e| {
@@ -30,6 +32,7 @@ impl ServerState {
             core,
             session_store,
             auth_config,
+            allow_extension_session_header,
         })
     }
 }

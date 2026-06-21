@@ -1,14 +1,17 @@
 use axum::{
-    extract::State,
+    extract::{connect_info::ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
-use crate::{api::session_auth::has_valid_session, state::ServerState};
+use crate::{
+    api::session_auth::{has_valid_session, has_valid_session_from_header, is_loopback_peer},
+    state::ServerState,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct AuthVaultRequest {
@@ -125,7 +128,12 @@ fn validate_sites(sites: &HashMap<String, AuthSiteEntry>) -> Result<(), String> 
             return Err(format!("site key/host mismatch: {host}"));
         }
         if entry.auth_token.as_deref().unwrap_or("").trim().is_empty()
-            && entry.cookie_header.as_deref().unwrap_or("").trim().is_empty()
+            && entry
+                .cookie_header
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
         {
             return Err(format!("site has no authToken or cookieHeader: {host}"));
         }
@@ -201,12 +209,21 @@ fn unauthorized() -> (StatusCode, Json<Value>) {
     )
 }
 
+fn is_save_authorized(state: &ServerState, headers: &HeaderMap, peer_addr: &SocketAddr) -> bool {
+    state.auth_config.is_none()
+        || has_valid_session(state, headers)
+        || (state.allow_extension_session_header
+            && is_loopback_peer(peer_addr)
+            && has_valid_session_from_header(state, headers))
+}
+
 pub async fn save_auth_vault_handler(
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
     Json(req): Json<AuthVaultRequest>,
 ) -> impl IntoResponse {
-    if state.auth_config.is_some() && !has_valid_session(&state, &headers) {
+    if !is_save_authorized(&state, &headers, &peer_addr) {
         return unauthorized();
     }
 
@@ -302,6 +319,25 @@ pub async fn auth_vault_summary_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{create_event_bus, AuthConfig, ServerState, SessionStore};
+    use axum::http::HeaderValue;
+    use cc_switch::{AppState, Database};
+    use cc_switch_core::CoreContext;
+    use std::sync::Arc;
+
+    fn test_state(allow_extension_session_header: bool) -> ServerState {
+        let db = Arc::new(Database::memory().expect("in-memory database"));
+        ServerState {
+            auth_token: None,
+            event_bus: create_event_bus(8),
+            core: CoreContext::from_app_state(AppState::new(db)),
+            session_store: Arc::new(SessionStore::new()),
+            auth_config: Some(AuthConfig {
+                password_hash: "test".to_string(),
+            }),
+            allow_extension_session_header,
+        }
+    }
 
     #[test]
     fn summary_does_not_serialize_secret_values() {
@@ -344,5 +380,47 @@ mod tests {
         assert!(!body.contains("\"cookieHeader\":"));
         assert!(body.contains("full-a...value"));
         assert!(body.contains("session; csrf"));
+    }
+
+    #[test]
+    fn save_auth_rejects_extension_header_when_server_is_not_loopback_bound() {
+        let state = test_state(false);
+        let token = state.session_store.create_session();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ccs-session", HeaderValue::from_str(&token).unwrap());
+
+        assert!(!is_save_authorized(
+            &state,
+            &headers,
+            &"127.0.0.1:17666".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn save_auth_rejects_extension_header_from_non_loopback_peer() {
+        let state = test_state(true);
+        let token = state.session_store.create_session();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ccs-session", HeaderValue::from_str(&token).unwrap());
+
+        assert!(!is_save_authorized(
+            &state,
+            &headers,
+            &"192.0.2.10:17666".parse().unwrap()
+        ));
+    }
+
+    #[test]
+    fn save_auth_accepts_extension_header_only_when_bound_and_connected_on_loopback() {
+        let state = test_state(true);
+        let token = state.session_store.create_session();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ccs-session", HeaderValue::from_str(&token).unwrap());
+
+        assert!(is_save_authorized(
+            &state,
+            &headers,
+            &"127.0.0.1:17666".parse().unwrap()
+        ));
     }
 }

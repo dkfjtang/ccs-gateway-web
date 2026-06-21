@@ -236,6 +236,9 @@ function ProviderFormFull({
     useState<boolean>(
       () => initialData?.meta?.requireResponsesInstructions ?? false,
     );
+  const [disableImageGeneration, setDisableImageGeneration] = useState<boolean>(
+    () => initialData?.meta?.disableImageGeneration ?? false,
+  );
 
   const { category } = useProviderCategory({
     appId,
@@ -272,6 +275,9 @@ function ProviderFormFull({
     setOmitMaxOutputTokens(initialData?.meta?.omitMaxOutputTokens ?? false);
     setRequireResponsesInstructions(
       initialData?.meta?.requireResponsesInstructions ?? false,
+    );
+    setDisableImageGeneration(
+      initialData?.meta?.disableImageGeneration ?? false,
     );
   }, [appId, initialData, supportsFullUrl]);
 
@@ -540,6 +546,8 @@ function ProviderFormFull({
     omitMaxOutputTokensControlAvailable
       ? requireResponsesInstructions
       : (initialData?.meta?.requireResponsesInstructions ?? false);
+  const disableImageGenerationControlAvailable =
+    appId === "claude" || appId === "codex";
 
   const {
     useCommonConfig,
@@ -1267,12 +1275,17 @@ function ProviderFormFull({
           ? true
           : undefined
         : baseMeta?.requireResponsesInstructions,
+      disableImageGeneration: disableImageGenerationControlAvailable
+        ? disableImageGeneration
+          ? true
+          : undefined
+        : undefined,
       apiFormat:
         appId === "codex"
           ? (selectedCodexPreset?.apiFormat ?? baseMeta?.apiFormat)
           : appId === "claude" && category !== "official"
-          ? localApiFormat
-          : undefined,
+            ? localApiFormat
+            : undefined,
       codexChatReasoning:
         appId === "codex"
           ? (selectedCodexPreset?.codexChatReasoning ??
@@ -1411,6 +1424,7 @@ function ProviderFormFull({
 
   const handlePresetChange = (value: string) => {
     setSelectedPresetId(value);
+    setDisableImageGeneration(false);
     if (value === "custom") {
       setActivePreset(null);
       form.reset(defaultValues);
@@ -2194,8 +2208,12 @@ function ProviderFormFull({
                 requireResponsesInstructions={
                   effectiveRequireResponsesInstructions
                 }
+                disableImageGeneration={disableImageGeneration}
                 omitMaxOutputTokensAvailable={
                   omitMaxOutputTokensControlAvailable
+                }
+                disableImageGenerationAvailable={
+                  disableImageGenerationControlAvailable
                 }
                 onTestConfigChange={setTestConfig}
                 onPricingConfigChange={setPricingConfig}
@@ -2203,6 +2221,7 @@ function ProviderFormFull({
                 onRequireResponsesInstructionsChange={
                   setRequireResponsesInstructions
                 }
+                onDisableImageGenerationChange={setDisableImageGeneration}
               />
             )}
 

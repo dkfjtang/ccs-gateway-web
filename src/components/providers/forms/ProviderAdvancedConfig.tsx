@@ -33,11 +33,14 @@ interface ProviderAdvancedConfigProps {
   pricingConfig: ProviderPricingConfig;
   omitMaxOutputTokens: boolean;
   requireResponsesInstructions: boolean;
+  disableImageGeneration: boolean;
   omitMaxOutputTokensAvailable: boolean;
+  disableImageGenerationAvailable: boolean;
   onTestConfigChange: (config: ProviderTestConfig) => void;
   onPricingConfigChange: (config: ProviderPricingConfig) => void;
   onOmitMaxOutputTokensChange: (enabled: boolean) => void;
   onRequireResponsesInstructionsChange: (enabled: boolean) => void;
+  onDisableImageGenerationChange: (enabled: boolean) => void;
 }
 
 export function ProviderAdvancedConfig({
@@ -45,15 +48,20 @@ export function ProviderAdvancedConfig({
   pricingConfig,
   omitMaxOutputTokens,
   requireResponsesInstructions,
+  disableImageGeneration,
   omitMaxOutputTokensAvailable,
+  disableImageGenerationAvailable,
   onTestConfigChange,
   onPricingConfigChange,
   onOmitMaxOutputTokensChange,
   onRequireResponsesInstructionsChange,
+  onDisableImageGenerationChange,
 }: ProviderAdvancedConfigProps) {
   const { t } = useTranslation();
   const [isCompatibilityConfigOpen, setIsCompatibilityConfigOpen] = useState(
-    omitMaxOutputTokens || requireResponsesInstructions,
+    omitMaxOutputTokens ||
+      requireResponsesInstructions ||
+      (disableImageGenerationAvailable && disableImageGeneration),
   );
   const [isTestConfigOpen, setIsTestConfigOpen] = useState(testConfig.enabled);
   const [isPricingConfigOpen, setIsPricingConfigOpen] = useState(
@@ -63,13 +71,23 @@ export function ProviderAdvancedConfig({
   const shouldShowCompatibilityConfig =
     omitMaxOutputTokensAvailable ||
     omitMaxOutputTokens ||
-    requireResponsesInstructions;
+    requireResponsesInstructions ||
+    disableImageGenerationAvailable;
 
   useEffect(() => {
-    if (omitMaxOutputTokens || requireResponsesInstructions) {
+    if (
+      omitMaxOutputTokens ||
+      requireResponsesInstructions ||
+      (disableImageGenerationAvailable && disableImageGeneration)
+    ) {
       setIsCompatibilityConfigOpen(true);
     }
-  }, [omitMaxOutputTokens, requireResponsesInstructions]);
+  }, [
+    omitMaxOutputTokens,
+    requireResponsesInstructions,
+    disableImageGeneration,
+    disableImageGenerationAvailable,
+  ]);
 
   useEffect(() => {
     setIsTestConfigOpen(testConfig.enabled);
@@ -101,7 +119,10 @@ export function ProviderAdvancedConfig({
               </span>
             </div>
             <div className="flex items-center gap-3">
-              {(omitMaxOutputTokens || requireResponsesInstructions) && (
+              {(omitMaxOutputTokens ||
+                requireResponsesInstructions ||
+                (disableImageGenerationAvailable &&
+                  disableImageGeneration)) && (
                 <span className="text-xs text-muted-foreground">
                   {t("providerAdvanced.compatibilityConfigEnabled", {
                     defaultValue: "已启用",
@@ -120,7 +141,7 @@ export function ProviderAdvancedConfig({
             className={cn(
               "overflow-hidden transition-all duration-200",
               isCompatibilityConfigOpen
-                ? "max-h-[320px] opacity-100"
+                ? "max-h-[560px] opacity-100"
                 : "max-h-0 opacity-0",
             )}
           >
@@ -157,6 +178,32 @@ export function ProviderAdvancedConfig({
                   disabled={!omitMaxOutputTokensAvailable}
                 />
               </div>
+
+              {disableImageGenerationAvailable && (
+                <div className="flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <Label
+                      htmlFor="disable-image-generation"
+                      className="font-medium"
+                    >
+                      {t("providerAdvanced.disableImageGeneration", {
+                        defaultValue: "当前服务商按文本模式发送图片",
+                      })}
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      {t("providerAdvanced.disableImageGenerationDesc", {
+                        defaultValue:
+                          "仅对当前服务商生效。启用后，本地代理会把请求中的图片块替换为文本标记，避免上游账号组未开通 image generation 时反复 403。",
+                      })}
+                    </p>
+                  </div>
+                  <Switch
+                    id="disable-image-generation"
+                    checked={disableImageGeneration}
+                    onCheckedChange={onDisableImageGenerationChange}
+                  />
+                </div>
+              )}
 
               <div className="flex items-center justify-between gap-4">
                 <div className="space-y-1">

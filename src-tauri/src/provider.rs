@@ -470,6 +470,13 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub require_responses_instructions: Option<bool>,
+    /// Provider-level media capability switch. When true, the proxy must not
+    /// send image blocks to this provider and should degrade them to text.
+    #[serde(
+        rename = "disableImageGeneration",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disable_image_generation: Option<bool>,
     /// OpenAI Responses service_tier 透传覆盖：`None` = 使用全局 OptimizerConfig 默认值（开启），
     /// `Some(false)` = 对该 provider 显式关闭透传。
     #[serde(
@@ -521,6 +528,10 @@ impl ProviderMeta {
 
     pub fn require_responses_instructions_enabled(&self) -> bool {
         self.require_responses_instructions.unwrap_or(false)
+    }
+
+    pub fn disable_image_generation_enabled(&self) -> bool {
+        self.disable_image_generation.unwrap_or(false)
     }
 
     pub fn passthrough_service_tier_enabled(&self) -> bool {

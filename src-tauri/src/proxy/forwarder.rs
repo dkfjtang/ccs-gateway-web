@@ -4,6 +4,7 @@
 
 use super::hyper_client::ProxyResponse;
 use super::{
+    ProxyError,
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
@@ -11,15 +12,14 @@ use super::{
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
-        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
         AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
+        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
-    ProxyError,
 };
 #[cfg(feature = "desktop")]
 use crate::commands::{CodexOAuthState, CopilotAuthState};
@@ -130,17 +130,16 @@ pub struct RequestForwarder {
 impl RequestForwarder {
     /// 预防式 media 降级：发送前对 text-only 模型把图片块替换为标记。
     ///
-    /// 受 `enabled && request_media_fallback` 管辖；其中"启发式模型名单预测"
-    /// 再受 `request_media_heuristic` 单独管辖（显式声明 text-only 始终生效）。
+    /// Provider 级 `disableImageGeneration` 独立生效；旧的启发式模型名单预测
+    /// 仍受 `enabled && request_media_fallback && request_media_heuristic` 管辖。
     /// 返回被替换的图片块数量（0 = 未触发或开关关闭）。
     fn apply_media_prevention(&self, body: &mut Value, provider: &Provider) -> usize {
-        if !(self.rectifier_config.enabled && self.rectifier_config.request_media_fallback) {
-            return 0;
-        }
         let replaced_images = super::media_sanitizer::replace_images_for_text_only_model(
             body,
             provider,
-            self.rectifier_config.request_media_heuristic,
+            self.rectifier_config.enabled
+                && self.rectifier_config.request_media_fallback
+                && self.rectifier_config.request_media_heuristic,
         );
         if replaced_images > 0 {
             let model = body.get("model").and_then(Value::as_str).unwrap_or("");
@@ -156,8 +155,7 @@ impl RequestForwarder {
 
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
     ///
-    /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
-    /// 这里是上游"实测"错误后的纯恢复，不是预测，故启发式开关与它无关。
+    /// 上游"实测"错误后的纯恢复，不受全局 media 预测开关影响。
     fn media_retry_should_trigger(
         &self,
         adapter_name: &str,
@@ -165,9 +163,7 @@ impl RequestForwarder {
         provider_body: &Value,
         error: &ProxyError,
     ) -> bool {
-        adapter_name == "Claude"
-            && self.rectifier_config.enabled
-            && self.rectifier_config.request_media_fallback
+        matches!(adapter_name, "Claude" | "Codex")
             && !already_retried
             && super::media_sanitizer::contains_image_blocks(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
@@ -2831,13 +2827,16 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
+    use axum::http::header::{ACCEPT, HeaderValue};
+    use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
     use bytes::Bytes;
     use http::StatusCode;
     use serde_json::json;
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tokio::net::TcpListener;
 
     fn test_provider_with_type(provider_type: Option<&str>) -> Provider {
         Provider {
@@ -2887,6 +2886,84 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Default)]
+    struct UpstreamRequestLog(Arc<Mutex<Vec<Value>>>);
+
+    impl UpstreamRequestLog {
+        fn snapshot(&self) -> Vec<Value> {
+            self.0.lock().expect("request log").clone()
+        }
+    }
+
+    async fn codex_retry_test_server() -> (String, UpstreamRequestLog) {
+        async fn responses(
+            State(log): State<UpstreamRequestLog>,
+            body: String,
+        ) -> impl IntoResponse {
+            let parsed: Value = serde_json::from_str(&body).expect("json body");
+            let call_count = {
+                let mut calls = log.0.lock().expect("request log");
+                calls.push(parsed);
+                calls.len()
+            };
+
+            if call_count == 1 {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": {
+                            "message": "Image generation is not enabled for this group",
+                            "type": "permission_error"
+                        }
+                    })),
+                )
+            } else {
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": "resp_1",
+                        "object": "response",
+                        "output": []
+                    })),
+                )
+            }
+        }
+
+        let log = UpstreamRequestLog::default();
+        let app = Router::new()
+            .route("/v1/responses", post(responses))
+            .with_state(log.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test server");
+        });
+
+        (format!("http://{addr}"), log)
+    }
+
+    fn codex_test_provider(base_url: &str) -> Provider {
+        Provider {
+            id: "codex-provider-1".to_string(),
+            name: "Codex Provider 1".to_string(),
+            settings_config: json!({
+                "base_url": base_url,
+                "auth": {
+                    "OPENAI_API_KEY": "sk-test-key"
+                }
+            }),
+            website_url: None,
+            category: Some("codex".to_string()),
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
     #[test]
     fn single_provider_retryable_log_uses_single_provider_code() {
         let error = ProxyError::UpstreamError {
@@ -2912,6 +2989,90 @@ mod tests {
         assert_eq!(code, log_fwd::PROVIDER_FAILED_RETRY);
         assert!(message.contains("继续尝试下一个 (1/3)"));
         assert!(message.contains("请求超时"));
+    }
+
+    #[test]
+    fn codex_image_generation_permission_error_triggers_media_retry() {
+        let mut forwarder = test_forwarder(Duration::from_secs(1), Duration::from_secs(1));
+        forwarder.rectifier_config.enabled = false;
+        forwarder.rectifier_config.request_media_fallback = false;
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "describe this" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+        let error = ProxyError::UpstreamError {
+            status: 403,
+            body: Some(
+                r#"{"error":{"message":"Image generation is not enabled for this group","type":"permission_error"}}"#
+                    .to_string(),
+            ),
+        };
+
+        assert!(forwarder.media_retry_should_trigger("Codex", false, &body, &error));
+    }
+
+    #[tokio::test]
+    async fn codex_media_retry_replaces_images_on_forward_path() {
+        let (base_url, request_log) = codex_retry_test_server().await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "describe this" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        let result = match forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider.clone()],
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => panic!("media retry should recover: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+
+        let calls = request_log.snapshot();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["input"][0]["content"][1]["type"], "input_image");
+        assert_eq!(calls[1]["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            calls[1]["input"][0]["content"][1]["text"],
+            super::super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+        );
+
+        let status = forwarder.status.read().await;
+        assert_eq!(status.total_requests, 1);
+        assert_eq!(status.success_requests, 1);
+        assert_eq!(status.failed_requests, 0);
+        assert!(status.last_error.is_none());
+        drop(status);
+
+        let current_providers = forwarder.current_providers.read().await;
+        assert_eq!(
+            current_providers.get(AppType::Codex.as_str()),
+            Some(&(provider.id.clone(), provider.name.clone()))
+        );
     }
 
     #[test]
@@ -3055,12 +3216,16 @@ mod tests {
         let prepared = prepare_upstream_request_body(body);
 
         assert!(prepared.get("_internal").is_none());
-        assert!(prepared["tools"][0]["parameters"]["properties"]
-            .get("_id")
-            .is_some());
-        assert!(prepared["tools"][0]["parameters"]["properties"]["_id"]
-            .get("_private_note")
-            .is_none());
+        assert!(
+            prepared["tools"][0]["parameters"]["properties"]
+                .get("_id")
+                .is_some()
+        );
+        assert!(
+            prepared["tools"][0]["parameters"]["properties"]["_id"]
+                .get("_private_note")
+                .is_none()
+        );
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#

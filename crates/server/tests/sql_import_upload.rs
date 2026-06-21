@@ -24,6 +24,7 @@ async fn unauthenticated_sql_upload_is_rejected_when_web_auth_is_enabled() {
         auth_config: Some(AuthConfig {
             password_hash: "test-hash".to_string(),
         }),
+        allow_extension_session_header: true,
     });
 
     let app = Router::new()
@@ -63,6 +64,7 @@ async fn invalid_sql_upload_does_not_pollute_existing_database() {
         core: CoreContext::from_app_state(AppState::new(db.clone())),
         session_store: Arc::new(SessionStore::new()),
         auth_config: None,
+        allow_extension_session_header: true,
     });
 
     let app = Router::new()

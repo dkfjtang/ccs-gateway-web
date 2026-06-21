@@ -244,6 +244,8 @@ export interface ProviderMeta {
   omitMaxOutputTokens?: boolean;
   // OpenAI Responses compatibility switch: send blank instructions when upstream requires the field
   requireResponsesInstructions?: boolean;
+  // Provider-level media capability switch: do not send image blocks to this provider
+  disableImageGeneration?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
