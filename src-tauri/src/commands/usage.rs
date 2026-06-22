@@ -39,9 +39,12 @@ pub fn get_usage_summary_by_app(
     provider_name: Option<String>,
     model: Option<String>,
 ) -> Result<Vec<UsageSummaryByApp>, AppError> {
-    state
-        .db
-        .get_usage_summary_by_app(start_date, end_date, provider_name.as_deref(), model.as_deref())
+    state.db.get_usage_summary_by_app(
+        start_date,
+        end_date,
+        provider_name.as_deref(),
+        model.as_deref(),
+    )
 }
 
 /// 获取每日趋势

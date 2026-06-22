@@ -1628,8 +1628,7 @@ mod tests {
             "user-agent",
         ));
         assert!(!StreamCheckService::should_skip_extra_header(
-            &provider,
-            "x-test",
+            &provider, "x-test",
         ));
 
         provider.meta = Some(crate::provider::ProviderMeta {

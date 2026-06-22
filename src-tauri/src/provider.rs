@@ -955,9 +955,9 @@ pub struct OpenCodeModelLimit {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeModelConfig, CodexModelConfig, GeminiModelConfig, OpenCodeProviderConfig, Provider,
-        ProviderManager, ProviderMeta, UniversalProvider, UsageData, UsageProbeType, UsageResult,
-        UsageScript, parse_custom_user_agent,
+        parse_custom_user_agent, ClaudeModelConfig, CodexModelConfig, GeminiModelConfig,
+        OpenCodeProviderConfig, Provider, ProviderManager, ProviderMeta, UniversalProvider,
+        UsageData, UsageProbeType, UsageResult, UsageScript,
     };
     use serde_json::json;
 
@@ -1616,10 +1616,7 @@ mod tests {
 
         let parsed = parse_custom_user_agent(Some("CustomUA/1.0")).expect("valid");
         assert_eq!(
-            parsed
-                .as_ref()
-                .map(|ua| ua.as_bytes().to_vec())
-                .as_deref(),
+            parsed.as_ref().map(|ua| ua.as_bytes().to_vec()).as_deref(),
             Some(b"CustomUA/1.0".as_slice())
         );
 

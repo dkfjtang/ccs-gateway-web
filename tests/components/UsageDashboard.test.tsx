@@ -1,8 +1,11 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import i18n from "i18next";
 import type { PropsWithChildren } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
+import zh from "@/i18n/locales/zh.json";
 
 vi.mock("@/lib/api/usage", () => ({
   usageApi: {
@@ -107,21 +110,40 @@ function renderDashboard() {
 
 describe("UsageDashboard", () => {
   beforeEach(() => {
+    i18n.addResourceBundle("zh", "translation", zh, true, true);
+    void i18n.changeLanguage("zh");
     vi.clearAllMocks();
   });
 
-  it("defaults to a 30s refresh interval", () => {
+  it("renders localized toolbar labels and defaults to a 5s refresh interval", () => {
     renderDashboard();
 
     expect(
-      screen.getByRole("combobox", { name: /usage\.refreshInterval/ }),
+      screen.getByRole("combobox", { name: "筛选来源" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "筛选模型" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "刷新间隔" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/usage\./)).not.toBeInTheDocument();
     expect(dataSourceBarProps).toHaveBeenCalledWith(
-      expect.objectContaining({ refreshIntervalMs: 30000 }),
+      expect.objectContaining({ refreshIntervalMs: 5000 }),
     );
   });
 
-  it("passes the default 30s refresh interval to all usage panels", () => {
+  it("offers Off and 5s options in the refresh interval menu", async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await user.click(screen.getByRole("combobox", { name: "刷新间隔" }));
+
+    expect(await screen.findByRole("option", { name: "关闭" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "5s" })).toBeVisible();
+  });
+
+  it("passes the default 5s refresh interval to all usage panels", () => {
     renderDashboard();
 
     for (const spy of [
@@ -134,7 +156,7 @@ describe("UsageDashboard", () => {
       modelStatsTableProps,
     ]) {
       expect(spy).toHaveBeenCalledWith(
-        expect.objectContaining({ refreshIntervalMs: 30000 }),
+        expect.objectContaining({ refreshIntervalMs: 5000 }),
       );
     }
   });

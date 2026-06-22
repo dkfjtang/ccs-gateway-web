@@ -1287,13 +1287,20 @@
     "stream": "Stream",
     "nonStream": "Non-stream",
     "source": "Source",
+    "filterBySource": "Filter by source",
+    "filterByModel": "Filter by model",
+    "allSources": "All sources",
+    "allModels": "All models",
+    "refreshInterval": "Refresh interval",
+    "refreshOff": "Off",
     "requestsLabel": "requests",
     "costLabel": "total cost",
     "appFilter": {
       "all": "All",
       "claude": "Claude Code",
       "codex": "Codex",
-      "gemini": "Gemini"
+      "gemini": "Gemini",
+      "opencode": "OpenCode"
     },
     "dataSources": "Data Sources",
     "dataSource": {

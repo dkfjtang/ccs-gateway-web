@@ -1313,6 +1313,12 @@
     "stream": "串流",
     "nonStream": "非串流",
     "source": "來源",
+    "filterBySource": "篩選來源",
+    "filterByModel": "篩選模型",
+    "allSources": "全部來源",
+    "allModels": "全部模型",
+    "refreshInterval": "重新整理間隔",
+    "refreshOff": "關閉",
     "requestsLabel": "次請求",
     "costLabel": "總成本",
     "appFilter": {

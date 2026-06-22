@@ -14,6 +14,10 @@ services:
       CC_SWITCH_START_PROXY: "true"
       CC_SWITCH_ALLOW_EXTENSION_SESSION_HEADER: "true"
       RUST_LOG: cc_switch_server=info,tower_http=info
+      HTTP_PROXY: ${CCS_WEB_RUNTIME_PROXY:-}
+      HTTPS_PROXY: ${CCS_WEB_RUNTIME_PROXY:-}
+      ALL_PROXY: ${CCS_WEB_RUNTIME_PROXY:-}
+      NO_PROXY: ${CCS_WEB_RUNTIME_NO_PROXY:-localhost,127.0.0.1,0.0.0.0,ccs-gateway-web}
     ports:
       - "127.0.0.1:17666:17666"
       - "127.0.0.1:15721:15721"

@@ -44,6 +44,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ConfirmPreference = "None"
+$ProgressPreference = "SilentlyContinue"
 $transcriptStarted = $false
 
 if (($DryRun -or $Force) -and -not $RepairRelay) {
@@ -98,9 +100,20 @@ function Invoke-Wsl {
         [string]$Command
     )
 
-    wsl -d $Distro -- bash -lc $Command
-    if ($LASTEXITCODE -ne 0) {
-        throw "WSL command failed with exit code ${LASTEXITCODE}: $Command"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = wsl -d $Distro -- bash -lc "export CI=1 DOCKER_CLI_HINTS=false BUILDKIT_PROGRESS=plain; $Command" 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    $output | ForEach-Object {
+        Write-Host $_
+    }
+    if ($exitCode -ne 0) {
+        throw "WSL command failed with exit code ${exitCode}: $Command"
     }
 }
 
@@ -519,6 +532,56 @@ function Get-DockerBuildxBuilderName {
     return "$sanitized-local"
 }
 
+function Get-WslBuildContextPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRoot
+    )
+
+    $rootName = Split-Path -Leaf $ProjectRoot
+    $sanitized = ($rootName -replace '[^A-Za-z0-9_.-]', '-').ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($sanitized)) {
+        $sanitized = "ccs-gateway-web"
+    }
+
+    return "/tmp/${sanitized}-docker-context"
+}
+
+function Sync-WslBuildContext {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectRootWsl,
+        [Parameter(Mandatory = $true)]
+        [string]$BuildContextWsl
+    )
+
+    if (-not ($BuildContextWsl.StartsWith("/tmp/") -and $BuildContextWsl.EndsWith("-docker-context"))) {
+        throw "Refusing unsafe Docker build context path: $BuildContextWsl"
+    }
+
+    $source = (Quote-BashArg ($ProjectRootWsl.TrimEnd("/") + "/"))
+    $dest = Quote-BashArg ($BuildContextWsl.TrimEnd("/") + "/")
+    $context = Quote-BashArg $BuildContextWsl
+    $syncNext = Quote-BashArg ($BuildContextWsl.TrimEnd("/") + "/.sync-next")
+    $excludePatterns = @(
+        ".git",
+        "node_modules",
+        ".pnpm-store",
+        ".run",
+        "tmp",
+        "dist",
+        "target",
+        "src-tauri/target",
+        "crates/*/target"
+    )
+    $excludes = $excludePatterns | ForEach-Object { "--exclude=" + (Quote-BashArg $_) }
+    $excludeArgs = $excludes -join " "
+    $tarExcludes = $excludePatterns | ForEach-Object { "--exclude=" + (Quote-BashArg $_) }
+    $tarExcludeArgs = $tarExcludes -join " "
+    $command = "set -euo pipefail; mkdir -p $context; if command -v rsync >/dev/null 2>&1; then rsync -a --delete $excludeArgs $source $dest; else echo rsync not found in WSL, falling back to tar-based context sync; rm -rf $syncNext; mkdir -p $syncNext; (cd $source && tar $tarExcludeArgs -cf - .) | (cd $syncNext && tar -xf -); find $context -mindepth 1 -maxdepth 1 ! -name .sync-next -exec rm -rf {} +; find $syncNext -mindepth 1 -maxdepth 1 -exec mv -t $context {} +; rmdir $syncNext; fi"
+    Invoke-Wsl $command
+}
+
 function Ensure-DockerBuildxBuilder {
     param(
         [Parameter(Mandatory = $true)]
@@ -632,6 +695,8 @@ function Invoke-DockerComposeBuildWithCache {
         [Parameter(Mandatory = $true)]
         [string]$ProjectRootWsl,
         [Parameter(Mandatory = $true)]
+        [string]$BuildContextWsl,
+        [Parameter(Mandatory = $true)]
         [string]$ComposeFile,
         [Parameter(Mandatory = $true)]
         [string]$Service,
@@ -661,7 +726,7 @@ function Invoke-DockerComposeBuildWithCache {
         $proxyArgs += " --set " + (Quote-BashArg "$Service.args.DEBIAN_IMAGE=$($env:CCS_WEB_DEBIAN_IMAGE)")
     }
 
-    $command = "cd " + (Quote-BashArg $ProjectRootWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx bake --pull=false --builder " + (Quote-BashArg $BuilderName) + " --file " + (Quote-BashArg $ComposeFile) + " " + (Quote-BashArg $Service) + " --load --set " + (Quote-BashArg "$Service.cache-from=type=local,src=$DockerCacheWsl") + " --set " + (Quote-BashArg "$Service.cache-to=type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
+    $command = "cd " + (Quote-BashArg $BuildContextWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx bake --pull=false --builder " + (Quote-BashArg $BuilderName) + " --file " + (Quote-BashArg $ComposeFile) + " " + (Quote-BashArg $Service) + " --load --set " + (Quote-BashArg "$Service.context=$BuildContextWsl") + " --set " + (Quote-BashArg "$Service.cache-from=type=local,src=$DockerCacheWsl") + " --set " + (Quote-BashArg "$Service.cache-to=type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
     if ($NoCache) {
         $command += " --no-cache"
     }
@@ -992,6 +1057,7 @@ $resolvedLogDir = Resolve-LocalLogDir -ProjectRoot $projectRoot -RelativeLogDir 
 $cacheLayout = Get-LocalPublishCacheLayout -ProjectRoot $projectRoot
 $dockerCacheWsl = ConvertTo-WslPath -WindowsPath $cacheLayout.DockerCache
 $builderName = Get-DockerBuildxBuilderName -ProjectRoot $projectRoot
+$buildContextWsl = Get-WslBuildContextPath -ProjectRoot $projectRoot
 $autoBuildProxyUrl = $null
 New-Item -ItemType Directory -Force -Path $resolvedLogDir | Out-Null
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -1018,6 +1084,7 @@ try {
     Write-Host "Log file:        $logPath"
     Write-Host "Build cache:     $($cacheLayout.BuildCacheRoot)"
     Write-Host "Docker cache:    $($cacheLayout.DockerCache)"
+    Write-Host "Build context:   $buildContextWsl"
     Write-Host "No cache:        $NoCache"
     if ($env:CCS_WEB_NODE_IMAGE) { Write-Host "Node image:      <configured>" }
     if ($env:CCS_WEB_RUST_IMAGE) { Write-Host "Rust image:      <configured>" }
@@ -1051,9 +1118,12 @@ try {
     }
 
     if (-not $SkipBuild) {
+        Write-Step "Syncing WSL-local Docker build context"
+        Sync-WslBuildContext -ProjectRootWsl $projectRootWsl -BuildContextWsl $buildContextWsl
+
         Write-Step "Building local image"
         Ensure-DockerBuildxBuilder -BuilderName $builderName -ProxyUrl $autoBuildProxyUrl
-        Invoke-DockerComposeBuildWithCache -ProjectRootWsl $projectRootWsl -ComposeFile $ComposeFile -Service $Service -DockerCacheWsl $dockerCacheWsl -BuilderName $builderName -ProxyUrl $autoBuildProxyUrl -NoCache:$NoCache
+        Invoke-DockerComposeBuildWithCache -ProjectRootWsl $projectRootWsl -BuildContextWsl $buildContextWsl -ComposeFile $ComposeFile -Service $Service -DockerCacheWsl $dockerCacheWsl -BuilderName $builderName -ProxyUrl $autoBuildProxyUrl -NoCache:$NoCache
 
         $command = "docker image inspect " + (Quote-BashArg $Image) + " --format " + (Quote-BashArg "image={{.Id}} created={{.Created}} size={{.Size}}")
         Invoke-Wsl $command

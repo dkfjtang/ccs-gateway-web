@@ -1270,7 +1270,9 @@ impl Database {
             DROP TABLE usage_daily_rollups_v10_backup;
             "#,
         )
-        .map_err(|e| AppError::Database(format!("v10 -> v11 重建 usage_daily_rollups 失败: {e}")))?;
+        .map_err(|e| {
+            AppError::Database(format!("v10 -> v11 重建 usage_daily_rollups 失败: {e}"))
+        })?;
 
         log::info!("v10 -> v11 迁移完成：usage 日聚合保留 request/pricing model 维度");
         Ok(())

@@ -1,6 +1,6 @@
 use crate::provider::Provider;
 use crate::proxy::error::ProxyError;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 
@@ -21,12 +21,8 @@ pub fn replace_images_for_text_only_model(
     provider: &Provider,
     allow_heuristic: bool,
 ) -> usize {
-    if !contains_image_blocks(body) {
-        return 0;
-    }
-
     if provider_meta_disables_image_generation(provider) {
-        return replace_images_in_body(body);
+        return replace_images_in_body(body) + remove_image_generation_tools(body);
     }
 
     let model = body
@@ -37,12 +33,16 @@ pub fn replace_images_for_text_only_model(
 
     match explicit_model_image_support(provider, model) {
         Some(true) => return 0,
-        Some(false) => return replace_images_in_body(body),
+        Some(false) => return replace_images_in_body(body) + remove_image_generation_tools(body),
         None => {}
     }
 
     if provider_config_disables_image_generation(provider) {
-        return replace_images_in_body(body);
+        return replace_images_in_body(body) + remove_image_generation_tools(body);
+    }
+
+    if !contains_image_blocks(body) {
+        return 0;
     }
 
     if !allow_heuristic || !known_text_only_model(model) {
@@ -64,8 +64,25 @@ pub fn contains_image_blocks(body: &Value) -> bool {
         || body.get("input").is_some_and(input_has_image_blocks)
 }
 
+pub fn contains_image_generation_tools(body: &Value) -> bool {
+    body.get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| tools.iter().any(tool_is_image_generation))
+        || body
+            .get("tool_choice")
+            .is_some_and(tool_choice_is_image_generation)
+}
+
+pub fn contains_unsupported_media(body: &Value) -> bool {
+    contains_image_blocks(body) || contains_image_generation_tools(body)
+}
+
 pub fn replace_image_blocks_with_marker(body: &mut Value) -> usize {
     replace_images_in_body(body)
+}
+
+pub fn replace_unsupported_media_with_marker(body: &mut Value) -> usize {
+    replace_images_in_body(body) + remove_image_generation_tools(body)
 }
 
 pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
@@ -84,6 +101,11 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
     let message = extract_error_text(body);
     let message = message.to_ascii_lowercase();
     let mentions_image = message.contains("image")
+        || message.contains("图片")
+        || message.contains("图像")
+        || message.contains("画图")
+        || message.contains("绘图")
+        || message.contains("生图")
         || message.contains("vision")
         || message.contains("multimodal")
         || message.contains("multi-modal")
@@ -117,6 +139,29 @@ pub fn is_unsupported_image_error(error: &ProxyError) -> bool {
         "unable to process",
         "not enabled",
         "not enabled for this group",
+        "billing",
+        "price",
+        "pricing",
+        "not configured",
+        "not provisioned",
+        "未启用",
+        "未开通",
+        "未配置",
+        "未授权",
+        "权限",
+        "禁止",
+        "拒绝",
+        "额度",
+        "配额",
+        "计费",
+        "费用",
+        "价格",
+        "价格未配置",
+        "模型不支持",
+        "暂不支持",
+        "不支持",
+        "不可用",
+        "联系管理员",
     ];
 
     UNSUPPORTED_HINTS.iter().any(|hint| message.contains(hint))
@@ -192,6 +237,46 @@ fn replace_images_in_body(body: &mut Value) -> usize {
         .unwrap_or(0);
 
     messages_replaced + input_replaced
+}
+
+fn remove_image_generation_tools(body: &mut Value) -> usize {
+    let Some(object) = body.as_object_mut() else {
+        return 0;
+    };
+
+    let mut removed = 0usize;
+    if let Some(tools) = object.get_mut("tools").and_then(Value::as_array_mut) {
+        let before = tools.len();
+        tools.retain(|tool| !tool_is_image_generation(tool));
+        removed += before.saturating_sub(tools.len());
+        if tools.is_empty() {
+            object.remove("tools");
+        }
+    }
+
+    if object
+        .get("tool_choice")
+        .is_some_and(tool_choice_is_image_generation)
+    {
+        object.remove("tool_choice");
+        removed += 1;
+    }
+
+    removed
+}
+
+fn tool_is_image_generation(tool: &Value) -> bool {
+    tool.get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|tool_type| tool_type.eq_ignore_ascii_case("image_generation"))
+}
+
+fn tool_choice_is_image_generation(tool_choice: &Value) -> bool {
+    match tool_choice {
+        Value::String(value) => value.eq_ignore_ascii_case("image_generation"),
+        Value::Object(_) => tool_is_image_generation(tool_choice),
+        _ => false,
+    }
 }
 
 fn replace_images_in_content(content: &mut Value) -> usize {
@@ -790,6 +875,76 @@ mod tests {
     }
 
     #[test]
+    fn detects_chinese_group_image_generation_pricing_errors() {
+        let error = ProxyError::UpstreamError {
+            status: 403,
+            body: Some(r#"{"code":403,"msg":"分组图片价格未配置，请联系管理员"}"#.to_string()),
+        };
+
+        assert!(is_unsupported_image_error(&error));
+    }
+
+    #[test]
+    fn detects_common_image_generation_capability_errors() {
+        let cases = [
+            r#"{"error":{"message":"image generation billing is not configured for this account"}}"#,
+            r#"{"error":{"message":"image generation is not enabled for this account"}}"#,
+            r#"{"message":"vision input quota is not provisioned"}"#,
+            r#"{"msg":"该分组未开通图片生成能力"}"#,
+            r#"{"msg":"图像生成无权限"}"#,
+            r#"{"msg":"生图额度不足"}"#,
+            r#"{"msg":"当前模型不支持图片输入"}"#,
+            r#"{"msg":"暂不支持绘图工具"}"#,
+        ];
+
+        for body in cases {
+            let error = ProxyError::UpstreamError {
+                status: 403,
+                body: Some(body.to_string()),
+            };
+            assert!(is_unsupported_image_error(&error), "body={body}");
+        }
+    }
+
+    #[test]
+    fn ignores_non_media_pricing_and_permission_errors() {
+        let cases = [
+            r#"{"msg":"分组价格未配置，请联系管理员"}"#,
+            r#"{"error":{"message":"account permission denied"}}"#,
+            r#"{"error":{"message":"billing is not configured for this account"}}"#,
+        ];
+
+        for body in cases {
+            let error = ProxyError::UpstreamError {
+                status: 403,
+                body: Some(body.to_string()),
+            };
+            assert!(!is_unsupported_image_error(&error), "body={body}");
+        }
+    }
+
+    #[test]
+    fn unsupported_media_retry_sanitizes_image_generation_tools() {
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "input": "write a short status",
+            "tools": [
+                { "type": "image_generation" },
+                { "type": "function", "name": "lookup", "parameters": { "type": "object" } }
+            ],
+            "tool_choice": "image_generation"
+        });
+
+        assert!(contains_unsupported_media(&body));
+        let count = replace_unsupported_media_with_marker(&mut body);
+
+        assert_eq!(count, 2);
+        assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert!(body.get("tool_choice").is_none());
+    }
+
+    #[test]
     fn provider_level_disable_image_generation_replaces_images_before_send() {
         let mut provider = provider(json!({}));
         provider.meta = Some(ProviderMeta {
@@ -936,6 +1091,54 @@ mod tests {
         assert_eq!(count, 0);
         assert_eq!(body["input"][0]["content"][1]["type"], "input_file");
         assert_eq!(body["input"][1]["type"], "function_call");
+    }
+
+    #[test]
+    fn provider_level_disable_image_generation_removes_responses_image_tool() {
+        let mut provider = provider(json!({}));
+        provider.meta = Some(ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "input": "write a short status",
+            "tools": [
+                { "type": "image_generation" },
+                { "type": "web_search_preview" },
+                { "type": "function", "name": "image_generation", "parameters": { "type": "object" } }
+            ],
+            "tool_choice": { "type": "image_generation" }
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 2);
+        assert_eq!(body["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(body["tools"][0]["type"], "web_search_preview");
+        assert_eq!(body["tools"][1]["type"], "function");
+        assert_eq!(body["tools"][1]["name"], "image_generation");
+        assert!(body.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn image_generation_tool_is_preserved_without_provider_disable() {
+        let provider = provider(json!({}));
+        let mut body = json!({
+            "model": "gpt-5.5",
+            "input": "write a short status",
+            "tools": [
+                { "type": "image_generation" },
+                { "type": "web_search_preview" }
+            ],
+            "tool_choice": "image_generation"
+        });
+
+        let count = replace_images_for_text_only_model(&mut body, &provider, false);
+
+        assert_eq!(count, 0);
+        assert_eq!(body["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(body["tool_choice"], "image_generation");
     }
 
     #[test]

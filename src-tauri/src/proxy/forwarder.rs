@@ -4,7 +4,6 @@
 
 use super::hyper_client::ProxyResponse;
 use super::{
-    ProxyError,
     body_filter::filter_private_params_with_whitelist,
     error::*,
     failover_switch::FailoverSwitchManager,
@@ -12,14 +11,15 @@ use super::{
     log_codes::fwd as log_fwd,
     provider_router::ProviderRouter,
     providers::{
-        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
+        AuthInfo, AuthStrategy, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
     types::{CopilotOptimizerConfig, OptimizerConfig, ProxyStatus, RectifierConfig},
+    ProxyError,
 };
 #[cfg(feature = "desktop")]
 use crate::commands::{CodexOAuthState, CopilotAuthState};
@@ -153,7 +153,8 @@ impl RequestForwarder {
         replaced_images
     }
 
-    /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
+    /// 反应式 media 重试判定：上游因图片输入或图像生成工具报错后，
+    /// 是否应降级 media 内容并对同一供应商重试一次。
     ///
     /// 上游"实测"错误后的纯恢复，不受全局 media 预测开关影响。
     fn media_retry_should_trigger(
@@ -165,7 +166,7 @@ impl RequestForwarder {
     ) -> bool {
         matches!(adapter_name, "Claude" | "Codex")
             && !already_retried
-            && super::media_sanitizer::contains_image_blocks(provider_body)
+            && super::media_sanitizer::contains_unsupported_media(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
     }
 
@@ -550,22 +551,21 @@ impl RequestForwarder {
                         &e,
                     ) {
                         let mut media_body = provider_body.clone();
-                        let replaced_images =
-                            super::media_sanitizer::replace_image_blocks_with_marker(
+                        let replaced_media =
+                            super::media_sanitizer::replace_unsupported_media_with_marker(
                                 &mut media_body,
                             );
 
-                        if replaced_images > 0 {
+                        if replaced_media > 0 {
                             let _ = std::mem::replace(&mut media_rectifier_retried, true);
                             let model = media_body
                                 .get("model")
                                 .and_then(Value::as_str)
                                 .unwrap_or("");
                             log::info!(
-                                "[{app_type_str}] [Media] Upstream rejected image input; retrying provider={} model={} with {replaced_images} image block(s) replaced by {}",
+                                "[{app_type_str}] [Media] Upstream rejected media capability; retrying provider={} model={} with {replaced_media} media item(s) downgraded or removed",
                                 provider.id,
-                                model,
-                                super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+                                model
                             );
 
                             match self
@@ -2827,9 +2827,9 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
+    use axum::http::header::{HeaderValue, ACCEPT};
     use axum::http::HeaderMap;
-    use axum::http::header::{ACCEPT, HeaderValue};
-    use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
+    use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
     use bytes::Bytes;
     use http::StatusCode;
     use serde_json::json;
@@ -2942,6 +2942,79 @@ mod tests {
         (format!("http://{addr}"), log)
     }
 
+    async fn codex_retry_test_server_with_error(
+        status: StatusCode,
+        error_body: Value,
+    ) -> (String, UpstreamRequestLog) {
+        async fn responses(
+            State((log, status, error_body)): State<(UpstreamRequestLog, StatusCode, Value)>,
+            body: String,
+        ) -> impl IntoResponse {
+            let parsed: Value = serde_json::from_str(&body).expect("json body");
+            let call_count = {
+                let mut calls = log.0.lock().expect("request log");
+                calls.push(parsed);
+                calls.len()
+            };
+
+            if call_count == 1 {
+                (status, Json(error_body))
+            } else {
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": "resp_1",
+                        "object": "response",
+                        "output": []
+                    })),
+                )
+            }
+        }
+
+        let log = UpstreamRequestLog::default();
+        let app = Router::new()
+            .route("/v1/responses", post(responses))
+            .with_state((log.clone(), status, error_body));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test server");
+        });
+
+        (format!("http://{addr}"), log)
+    }
+
+    async fn codex_ok_test_server() -> (String, UpstreamRequestLog) {
+        async fn responses(
+            State(log): State<UpstreamRequestLog>,
+            body: String,
+        ) -> impl IntoResponse {
+            let parsed: Value = serde_json::from_str(&body).expect("json body");
+            log.0.lock().expect("request log").push(parsed);
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "id": "resp_1",
+                    "object": "response",
+                    "output": []
+                })),
+            )
+        }
+
+        let log = UpstreamRequestLog::default();
+        let app = Router::new()
+            .route("/v1/responses", post(responses))
+            .with_state(log.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test server");
+        });
+
+        (format!("http://{addr}"), log)
+    }
+
     fn codex_test_provider(base_url: &str) -> Provider {
         Provider {
             id: "codex-provider-1".to_string(),
@@ -2962,6 +3035,15 @@ mod tests {
             icon_color: None,
             in_failover_queue: false,
         }
+    }
+
+    fn codex_text_only_test_provider(base_url: &str) -> Provider {
+        let mut provider = codex_test_provider(base_url);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            disable_image_generation: Some(true),
+            ..Default::default()
+        });
+        provider
     }
 
     #[test]
@@ -3073,6 +3155,243 @@ mod tests {
             current_providers.get(AppType::Codex.as_str()),
             Some(&(provider.id.clone(), provider.name.clone()))
         );
+    }
+
+    #[tokio::test]
+    async fn codex_provider_level_disable_image_generation_replaces_images_before_first_send() {
+        let (base_url, request_log) = codex_ok_test_server().await;
+        let provider = codex_text_only_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "describe this" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" },
+                    { "type": "input_file", "file_id": "file_123" }
+                ]
+            }]
+        });
+
+        let result = match forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider.clone()],
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => panic!("text-only provider should not send images: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+
+        let calls = request_log.snapshot();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            calls[0]["input"][0]["content"][1]["text"],
+            super::super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+        );
+        assert_eq!(calls[0]["input"][0]["content"][2]["type"], "input_file");
+    }
+
+    #[tokio::test]
+    async fn codex_provider_level_disable_image_generation_removes_image_tool_before_first_send() {
+        let (base_url, request_log) = codex_ok_test_server().await;
+        let provider = codex_text_only_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": "write a short status",
+            "tools": [
+                { "type": "image_generation" },
+                { "type": "web_search_preview" },
+                { "type": "function", "name": "image_generation", "parameters": { "type": "object" } }
+            ],
+            "tool_choice": { "type": "image_generation" }
+        });
+
+        let result = match forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider.clone()],
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => panic!("image-generation tool should be stripped: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+
+        let calls = request_log.snapshot();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["tools"].as_array().unwrap().len(), 2);
+        assert_eq!(calls[0]["tools"][0]["type"], "web_search_preview");
+        assert_eq!(calls[0]["tools"][1]["type"], "function");
+        assert_eq!(calls[0]["tools"][1]["name"], "image_generation");
+        assert!(calls[0].get("tool_choice").is_none());
+    }
+
+    #[tokio::test]
+    async fn codex_media_retry_removes_image_tool_after_chinese_permission_error() {
+        let (base_url, request_log) = codex_retry_test_server_with_error(
+            StatusCode::FORBIDDEN,
+            json!({"code":403,"msg":"分组图片价格未配置，请联系管理员"}),
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": "write a short status",
+            "tools": [
+                { "type": "image_generation" },
+                { "type": "function", "name": "lookup", "parameters": { "type": "object" } }
+            ],
+            "tool_choice": "image_generation"
+        });
+
+        let result = match forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider.clone()],
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => panic!(
+                "Chinese image permission error should recover: {}",
+                err.error
+            ),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+
+        let calls = request_log.snapshot();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["tools"][0]["type"], "image_generation");
+        assert_eq!(calls[0]["tool_choice"], "image_generation");
+        assert_eq!(calls[1]["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(calls[1]["tools"][0]["type"], "function");
+        assert!(calls[1].get("tool_choice").is_none());
+    }
+
+    #[tokio::test]
+    async fn codex_media_retry_replaces_input_image_after_chinese_permission_error() {
+        let (base_url, request_log) = codex_retry_test_server_with_error(
+            StatusCode::FORBIDDEN,
+            json!({"code":403,"msg":"分组图片价格未配置，请联系管理员"}),
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "describe this image" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        let result = match forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider.clone()],
+            )
+            .await
+        {
+            Ok(result) => result,
+            Err(err) => panic!("Chinese image pricing error should be retried: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+
+        let calls = request_log.snapshot();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["input"][0]["content"][1]["type"], "input_image");
+        assert_eq!(calls[1]["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            calls[1]["input"][0]["content"][1]["text"],
+            super::super::media_sanitizer::UNSUPPORTED_IMAGE_MARKER
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_media_retry_ignores_non_media_permission_error_even_with_image_input() {
+        let (base_url, request_log) = codex_retry_test_server_with_error(
+            StatusCode::FORBIDDEN,
+            json!({"code":403,"msg":"account pricing plan is not configured"}),
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "describe this image" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,abc" }
+                ]
+            }]
+        });
+
+        let err = match forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await
+        {
+            Ok(_) => panic!("plain pricing permission error must not trigger media retry"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err.error,
+            ProxyError::UpstreamError {
+                status: 403,
+                body: _
+            }
+        ));
+        let calls = request_log.snapshot();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["input"][0]["content"][1]["type"], "input_image");
     }
 
     #[test]
@@ -3216,16 +3535,12 @@ mod tests {
         let prepared = prepare_upstream_request_body(body);
 
         assert!(prepared.get("_internal").is_none());
-        assert!(
-            prepared["tools"][0]["parameters"]["properties"]
-                .get("_id")
-                .is_some()
-        );
-        assert!(
-            prepared["tools"][0]["parameters"]["properties"]["_id"]
-                .get("_private_note")
-                .is_none()
-        );
+        assert!(prepared["tools"][0]["parameters"]["properties"]
+            .get("_id")
+            .is_some());
+        assert!(prepared["tools"][0]["parameters"]["properties"]["_id"]
+            .get("_private_note")
+            .is_none());
         assert_eq!(
             serde_json::to_string(&prepared).unwrap(),
             r#"{"a":2,"tools":[{"name":"lookup","parameters":{"properties":{"_id":{"type":"string"},"a":{"type":"string"},"b":{"type":"number"}},"type":"object"}}],"z":1}"#

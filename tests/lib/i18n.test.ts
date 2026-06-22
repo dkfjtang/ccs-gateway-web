@@ -35,4 +35,27 @@ describe("i18n bootstrap", () => {
       }
     }
   });
+
+  it("provides usage dashboard toolbar labels for all bundled locales", async () => {
+    vi.resetModules();
+    const { default: i18n, i18nReady } = await import("@/i18n");
+    await i18nReady;
+
+    const keys = [
+      "usage.filterBySource",
+      "usage.filterByModel",
+      "usage.allSources",
+      "usage.allModels",
+      "usage.refreshInterval",
+      "usage.refreshOff",
+    ];
+
+    for (const locale of ["zh", "zh-TW", "en", "ja"]) {
+      for (const key of keys) {
+        const translated = i18n.getFixedT(locale)(key);
+        expect(translated).not.toBe(key);
+        expect(translated).not.toMatch(/^usage\./);
+      }
+    }
+  });
 });

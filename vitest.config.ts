@@ -23,7 +23,14 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./tests/setupGlobals.ts", "./tests/setupTests.ts"],
     globals: true,
-    exclude: ["**/node_modules/**", "**/dist/**", "**/.upstream/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.upstream/**",
+      "**/.run/**",
+      "**/.pnpm-store/**",
+      "**/tmp/**",
+    ],
     coverage: {
       reporter: ["text", "lcov"],
     },

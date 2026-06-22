@@ -7,7 +7,7 @@ import type {
   UsageScopeFilters,
 } from "@/types/usage";
 
-const DEFAULT_REFETCH_INTERVAL_MS = 30000;
+const DEFAULT_REFETCH_INTERVAL_MS = 5000;
 
 type UsageQueryOptions = {
   refetchInterval?: number | false;

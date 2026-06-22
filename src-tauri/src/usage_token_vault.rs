@@ -103,10 +103,20 @@ pub(crate) fn replace_site_vault_vars(value: &str, request_url: &str) -> String 
         return replaced;
     };
 
-    if let Some(auth_token) = site.auth_token.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(auth_token) = site
+        .auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         replaced = replaced.replace("{{authToken}}", auth_token);
     }
-    if let Some(cookie_header) = site.cookie_header.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(cookie_header) = site
+        .cookie_header
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         replaced = replaced.replace("{{cookieHeader}}", cookie_header);
     }
 
@@ -124,10 +134,7 @@ mod tests {
             "secret-token".to_string(),
         )]);
 
-        let replaced = replace_vault_tokens(
-            "Bearer {{sub2_congmingai_com__auth_token}}",
-            &tokens,
-        );
+        let replaced = replace_vault_tokens("Bearer {{sub2_congmingai_com__auth_token}}", &tokens);
 
         assert_eq!(replaced, "Bearer secret-token");
     }
@@ -169,7 +176,10 @@ mod tests {
         );
 
         std::env::remove_var("CCS_USAGE_TOKEN_VAULT_PATH");
-        assert_eq!(replaced, "Bearer site-token | session=site-cookie; csrf=token");
+        assert_eq!(
+            replaced,
+            "Bearer site-token | session=site-cookie; csrf=token"
+        );
     }
 
     #[test]

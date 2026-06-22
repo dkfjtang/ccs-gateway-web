@@ -46,6 +46,7 @@ import { UsageDateRangePicker } from "./UsageDateRangePicker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const APP_FILTER_OPTIONS: AppTypeFilter[] = ["all", ...KNOWN_APP_TYPES];
+const DEFAULT_REFRESH_INTERVAL_MS = 5000;
 const REFRESH_INTERVAL_OPTIONS_MS = [0, 5000, 10000, 30000, 60000] as const;
 const APP_FILTER_ICON: Record<AppType, string> = {
   claude: "claude",
@@ -67,7 +68,9 @@ export function UsageDashboard() {
     undefined,
   );
   const [model, setModel] = useState<string | undefined>(undefined);
-  const [refreshIntervalMs, setRefreshIntervalMs] = useState(30000);
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(
+    DEFAULT_REFRESH_INTERVAL_MS,
+  );
 
   const changeAppType = (next: AppTypeFilter) => {
     setAppType(next);

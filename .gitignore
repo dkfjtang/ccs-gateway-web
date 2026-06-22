@@ -1,4 +1,5 @@
 node_modules/
+.pnpm-store/
 dist/
 release/
 .DS_Store
@@ -17,6 +18,7 @@ GEMINI.md
 /.idea
 /.vscode
 vitest-report.json
+tmp/
 crates/server/target
 crates/core/target
 release-web

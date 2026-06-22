@@ -1008,8 +1008,10 @@ impl Database {
         let mut detail_all_params: Vec<Box<dyn rusqlite::ToSql>> =
             vec![Box::new(start_ts), Box::new(end_ts)];
         detail_all_params.extend(extra_params);
-        let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
-            detail_all_params.iter().map(|param| param.as_ref()).collect();
+        let detail_param_refs: Vec<&dyn rusqlite::ToSql> = detail_all_params
+            .iter()
+            .map(|param| param.as_ref())
+            .collect();
         let detail_rows = detail_stmt.query_map(detail_param_refs.as_slice(), detail_row_mapper)?;
 
         for row in detail_rows {
@@ -1700,7 +1702,9 @@ impl Database {
         let mut logs = {
             match only_model_id {
                 Some(model) => {
-                    let sql = format!("{BASE_SQL} AND (model = ?1 OR request_model = ?1 OR pricing_model = ?1)");
+                    let sql = format!(
+                        "{BASE_SQL} AND (model = ?1 OR request_model = ?1 OR pricing_model = ?1)"
+                    );
                     let mut stmt = conn.prepare(&sql)?;
                     let rows = stmt.query_map([model], row_to_request_log_detail)?;
                     rows.collect::<Result<Vec<_>, _>>()?
