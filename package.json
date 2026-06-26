@@ -14,6 +14,7 @@
     "build:renderer": "vite build",
     "build:web": "vite build --mode web",
     "typecheck": "tsc --noEmit",
+    "check:locales": "node scripts/check-locale-placeholders.mjs",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
