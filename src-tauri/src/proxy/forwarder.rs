@@ -34,9 +34,13 @@ use http::Extensions;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 #[cfg(feature = "desktop")]
 use tauri::Manager;
 use tokio::sync::RwLock;
+
+const RATE_LIMIT_429_ATTEMPTS_PER_PROVIDER: usize = 3;
+const RATE_LIMIT_429_RETRY_AFTER_CAP: Duration = Duration::from_secs(5);
 
 pub struct ForwardResult {
     pub response: ProxyResponse,
@@ -2057,61 +2061,99 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        // 发送请求
-        let response = if is_socks_proxy || !preserve_exact_header_case {
-            // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
-            // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
-            log::debug!(
-                "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
-            );
-            let client = super::http_client::get();
-            let mut request = client.request(method.clone(), &url);
-            if request_is_streaming {
-                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
-                // 的首包/静默期超时控制，避免长流被总时长误杀。
-                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
-            }
-            for (key, value) in &ordered_headers {
-                request = request.header(key, value);
-            }
-            let send = request.body(body_bytes).send();
-            let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
+        // 发送请求。429 属于 provider 层限流：先在同一 provider/key 上短重试，
+        // 耗尽后再把最后一个 429 交给外层 Retryable/failover 逻辑。
+        let mut rate_limit_attempt = 0usize;
+        let response: Result<ProxyResponse, ProxyError> = loop {
+            rate_limit_attempt += 1;
+            let response = if is_socks_proxy || !preserve_exact_header_case {
+                // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
+                // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
+                log::debug!(
+                    "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
+                );
+                let client = super::http_client::get();
+                let mut request = client.request(method.clone(), &url);
+                if request_is_streaming {
+                    // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
+                    // 的首包/静默期超时控制，避免长流被总时长误杀。
+                    request = request.timeout(Duration::from_secs(24 * 60 * 60));
+                } else if !self.non_streaming_timeout.is_zero() {
+                    request = request.timeout(self.non_streaming_timeout);
+                }
+                for (key, value) in &ordered_headers {
+                    request = request.header(key, value);
+                }
+                let send = request.body(body_bytes.clone()).send();
+                let send_result = if request_is_streaming {
+                    let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
+                        timeout
+                    } else {
+                        self.streaming_first_byte_timeout
+                    };
+                    tokio::time::timeout(header_timeout, send)
+                        .await
+                        .map_err(|_| {
+                            ProxyError::Timeout(format!(
+                                "流式响应首包超时: {}s（上游未返回响应头）",
+                                header_timeout.as_secs()
+                            ))
+                        })?
                 } else {
-                    self.streaming_first_byte_timeout
+                    send.await
                 };
-                tokio::time::timeout(header_timeout, send)
-                    .await
-                    .map_err(|_| {
-                        ProxyError::Timeout(format!(
-                            "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
-                        ))
-                    })?
+                let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
+                ProxyResponse::Reqwest(reqwest_resp)
             } else {
-                send.await
+                // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
+                // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
+                let uri: http::Uri = url
+                    .parse()
+                    .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
+                super::hyper_client::send_request(
+                    uri,
+                    method.clone(),
+                    ordered_headers.clone(),
+                    extensions.clone(),
+                    body_bytes.clone(),
+                    timeout,
+                    upstream_proxy_url.as_deref(),
+                )
+                .await?
             };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
-            ProxyResponse::Reqwest(reqwest_resp)
-        } else {
-            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
-            // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url
-                .parse()
-                .map_err(|e| ProxyError::ForwardFailed(format!("Invalid URL '{url}': {e}")))?;
-            super::hyper_client::send_request(
-                uri,
-                method.clone(),
-                ordered_headers,
-                extensions.clone(),
-                body_bytes,
-                timeout,
-                upstream_proxy_url.as_deref(),
-            )
-            .await?
+
+            let status = response.status();
+            if status != http::StatusCode::TOO_MANY_REQUESTS {
+                break Ok(response);
+            }
+
+            let retry_after = rate_limit_retry_after_delay(response.headers());
+            let status_code = status.as_u16();
+
+            if rate_limit_attempt >= RATE_LIMIT_429_ATTEMPTS_PER_PROVIDER {
+                let body_text = String::from_utf8(response.bytes().await?.to_vec()).ok();
+                let rate_limit_error = ProxyError::UpstreamError {
+                    status: status_code,
+                    body: body_text,
+                };
+                break Err(rate_limit_error);
+            }
+
+            let delay = retry_after
+                .unwrap_or_else(|| rate_limit_default_backoff(rate_limit_attempt))
+                .min(RATE_LIMIT_429_RETRY_AFTER_CAP);
+            log::warn!(
+                "[{tag}] upstream HTTP 429; retrying same provider attempt={}/{} delay_ms={}",
+                rate_limit_attempt + 1,
+                RATE_LIMIT_429_ATTEMPTS_PER_PROVIDER,
+                delay.as_millis()
+            );
+            tokio::time::sleep(delay).await;
+        };
+
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return Err(error),
         };
 
         // 检查响应状态
@@ -2751,6 +2793,30 @@ fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
     }
 }
 
+fn rate_limit_retry_after_delay(headers: &http::HeaderMap) -> Option<Duration> {
+    headers
+        .get(http::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .map(|delay| delay.min(RATE_LIMIT_429_RETRY_AFTER_CAP))
+}
+
+fn rate_limit_default_backoff(completed_attempts: usize) -> Duration {
+    #[cfg(test)]
+    {
+        let _ = completed_attempts;
+        return Duration::from_millis(1);
+    }
+
+    #[cfg(not(test))]
+    match completed_attempts {
+        0 | 1 => Duration::from_millis(250),
+        2 => Duration::from_millis(500),
+        _ => Duration::from_secs(1),
+    }
+}
+
 fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = normalized.trim();
@@ -2827,7 +2893,7 @@ fn value_for_log(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::database::Database;
-    use axum::http::header::{HeaderValue, ACCEPT};
+    use axum::http::header::{HeaderValue, ACCEPT, RETRY_AFTER};
     use axum::http::HeaderMap;
     use axum::{extract::State, response::IntoResponse, routing::post, Json, Router};
     use bytes::Bytes;
@@ -2862,9 +2928,16 @@ mod tests {
         non_streaming_timeout: Duration,
         streaming_first_byte_timeout: Duration,
     ) -> RequestForwarder {
+        test_forwarder_with_db(non_streaming_timeout, streaming_first_byte_timeout).0
+    }
+
+    fn test_forwarder_with_db(
+        non_streaming_timeout: Duration,
+        streaming_first_byte_timeout: Duration,
+    ) -> (RequestForwarder, Arc<Database>) {
         let db = Arc::new(Database::memory().expect("memory db"));
 
-        RequestForwarder {
+        let forwarder = RequestForwarder {
             router: Arc::new(ProviderRouter::new(db.clone())),
             status: Arc::new(RwLock::new(ProxyStatus::default())),
             current_providers: Arc::new(RwLock::new(HashMap::new())),
@@ -2872,7 +2945,7 @@ mod tests {
             responses_response_providers: Arc::new(RwLock::new(HashMap::new())),
             gemini_shadow: Arc::new(GeminiShadowStore::new()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
-            failover_manager: Arc::new(FailoverSwitchManager::new(db)),
+            failover_manager: Arc::new(FailoverSwitchManager::new(db.clone())),
             app_handle: None,
             current_provider_id_at_start: String::new(),
             session_id: String::new(),
@@ -2883,7 +2956,9 @@ mod tests {
             non_streaming_timeout,
             streaming_first_byte_timeout,
             max_attempts: 1,
-        }
+        };
+
+        (forwarder, db)
     }
 
     #[derive(Clone, Default)]
@@ -3015,6 +3090,69 @@ mod tests {
         (format!("http://{addr}"), log)
     }
 
+    async fn codex_status_sequence_test_server(
+        statuses: Vec<StatusCode>,
+        retry_after: Option<&'static str>,
+    ) -> (String, UpstreamRequestLog) {
+        async fn responses(
+            State((log, statuses, retry_after)): State<(
+                UpstreamRequestLog,
+                Arc<Vec<StatusCode>>,
+                Option<&'static str>,
+            )>,
+            body: String,
+        ) -> axum::response::Response {
+            let parsed: Value = serde_json::from_str(&body).expect("json body");
+            let call_count = {
+                let mut calls = log.0.lock().expect("request log");
+                calls.push(parsed);
+                calls.len()
+            };
+
+            let status = statuses
+                .get(call_count.saturating_sub(1))
+                .copied()
+                .unwrap_or(StatusCode::OK);
+            let body = if status == StatusCode::OK {
+                json!({
+                    "id": format!("resp_{call_count}"),
+                    "object": "response",
+                    "output": [],
+                    "provider": "sequence"
+                })
+            } else {
+                json!({
+                    "error": {
+                        "message": "rate limit exceeded",
+                        "type": "rate_limit_error"
+                    }
+                })
+            };
+
+            let mut response = (status, Json(body)).into_response();
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                if let Some(value) = retry_after {
+                    response
+                        .headers_mut()
+                        .insert(RETRY_AFTER, HeaderValue::from_static(value));
+                }
+            }
+            response
+        }
+
+        let log = UpstreamRequestLog::default();
+        let app = Router::new()
+            .route("/v1/responses", post(responses))
+            .with_state((log.clone(), Arc::new(statuses), retry_after));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test server");
+        });
+
+        (format!("http://{addr}"), log)
+    }
+
     fn codex_test_provider(base_url: &str) -> Provider {
         Provider {
             id: "codex-provider-1".to_string(),
@@ -3044,6 +3182,302 @@ mod tests {
             ..Default::default()
         });
         provider
+    }
+
+    #[test]
+    fn rate_limit_retry_after_delay_caps_seconds_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("120"));
+
+        assert_eq!(
+            rate_limit_retry_after_delay(&headers),
+            Some(RATE_LIMIT_429_RETRY_AFTER_CAP)
+        );
+
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("2"));
+        assert_eq!(
+            rate_limit_retry_after_delay(&headers),
+            Some(Duration::from_secs(2))
+        );
+
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("not-a-number"));
+        assert_eq!(rate_limit_retry_after_delay(&headers), None);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_429_retries_same_provider_before_success() {
+        let (base_url, request_log) = codex_status_sequence_test_server(
+            vec![
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::OK,
+            ],
+            None,
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({"model":"gpt-5.5","input":"hello"});
+
+        let run = forwarder.forward_with_retry(
+            &AppType::Codex,
+            http::Method::POST,
+            "/responses",
+            body,
+            HeaderMap::new(),
+            Extensions::new(),
+            vec![provider.clone()],
+        );
+        let result = match run.await {
+            Ok(result) => result,
+            Err(err) => panic!("429 retry should recover: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+        assert_eq!(request_log.snapshot().len(), 3);
+
+        let status = forwarder.status.read().await;
+        assert_eq!(status.total_requests, 1);
+        assert_eq!(status.success_requests, 1);
+        assert_eq!(status.failed_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_retry_after_header_is_used_on_forward_path() {
+        let (base_url, request_log) = codex_status_sequence_test_server(
+            vec![StatusCode::TOO_MANY_REQUESTS, StatusCode::OK],
+            Some("0"),
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({"model":"gpt-5.5","input":"hello"});
+
+        let run = forwarder.forward_with_retry(
+            &AppType::Codex,
+            http::Method::POST,
+            "/responses",
+            body,
+            HeaderMap::new(),
+            Extensions::new(),
+            vec![provider.clone()],
+        );
+        let result = match run.await {
+            Ok(result) => result,
+            Err(err) => panic!(
+                "429 retry should recover using Retry-After header: {}",
+                err.error
+            ),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+        assert_eq!(request_log.snapshot().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_429_recovery_records_single_success_health_result() {
+        let (base_url, request_log) = codex_status_sequence_test_server(
+            vec![
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::OK,
+            ],
+            None,
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let (forwarder, db) =
+            test_forwarder_with_db(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({"model":"gpt-5.5","input":"hello"});
+
+        let run = forwarder.forward_with_retry(
+            &AppType::Codex,
+            http::Method::POST,
+            "/responses",
+            body,
+            HeaderMap::new(),
+            Extensions::new(),
+            vec![provider.clone()],
+        );
+        let result = match run.await {
+            Ok(result) => result,
+            Err(err) => panic!("429 retry should recover: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, provider.id);
+        assert_eq!(request_log.snapshot().len(), 3);
+
+        let circuit_stats = wait_for_circuit_request_count(
+            forwarder.router.as_ref(),
+            &provider.id,
+            AppType::Codex.as_str(),
+            1,
+        )
+        .await;
+        assert_eq!(circuit_stats.consecutive_failures, 0);
+        assert_eq!(circuit_stats.failed_requests, 0);
+        assert_eq!(circuit_stats.total_requests, 1);
+
+        let health = db
+            .get_provider_health(&provider.id, AppType::Codex.as_str())
+            .await
+            .expect("provider health");
+        assert!(health.is_healthy);
+        assert_eq!(health.consecutive_failures, 0);
+        assert!(health.last_failure_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn rate_limit_429_exhausts_same_provider_before_failover() {
+        let (primary_url, primary_log) = codex_status_sequence_test_server(
+            vec![
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+            ],
+            None,
+        )
+        .await;
+        let (backup_url, backup_log) = codex_ok_test_server().await;
+        let primary = codex_test_provider(&primary_url);
+        let mut backup = codex_test_provider(&backup_url);
+        backup.id = "codex-provider-2".to_string();
+        backup.name = "Codex Provider 2".to_string();
+        let mut forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        forwarder.max_attempts = 2;
+        let body = json!({"model":"gpt-5.5","input":"hello"});
+
+        let run = forwarder.forward_with_retry(
+            &AppType::Codex,
+            http::Method::POST,
+            "/responses",
+            body,
+            HeaderMap::new(),
+            Extensions::new(),
+            vec![primary.clone(), backup.clone()],
+        );
+        let result = match run.await {
+            Ok(result) => result,
+            Err(err) => panic!("failover should recover: {}", err.error),
+        };
+
+        assert_eq!(result.provider.id, backup.id);
+        assert_eq!(result.response.status(), StatusCode::OK);
+        assert_eq!(
+            primary_log.snapshot().len(),
+            RATE_LIMIT_429_ATTEMPTS_PER_PROVIDER
+        );
+        assert_eq!(backup_log.snapshot().len(), 1);
+
+        let status = forwarder.status.read().await;
+        assert_eq!(status.total_requests, 1);
+        assert_eq!(status.success_requests, 1);
+        assert_eq!(status.failed_requests, 0);
+        assert_eq!(status.failover_count, 1);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_429_single_provider_stops_after_three_attempts() {
+        let (base_url, request_log) = codex_status_sequence_test_server(
+            vec![
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::OK,
+            ],
+            None,
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({"model":"gpt-5.5","input":"hello"});
+
+        let run = forwarder.forward_with_retry(
+            &AppType::Codex,
+            http::Method::POST,
+            "/responses",
+            body,
+            HeaderMap::new(),
+            Extensions::new(),
+            vec![provider],
+        );
+        let err = match run.await {
+            Ok(_) => panic!("429 should remain terminal"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err.error,
+            ProxyError::UpstreamError {
+                status: 429,
+                body: _
+            }
+        ));
+        assert_eq!(
+            request_log.snapshot().len(),
+            RATE_LIMIT_429_ATTEMPTS_PER_PROVIDER
+        );
+    }
+
+    #[tokio::test]
+    async fn non_429_retryable_does_not_retry_same_provider() {
+        let (base_url, request_log) = codex_status_sequence_test_server(
+            vec![StatusCode::INTERNAL_SERVER_ERROR, StatusCode::OK],
+            None,
+        )
+        .await;
+        let provider = codex_test_provider(&base_url);
+        let forwarder = test_forwarder(Duration::from_secs(2), Duration::from_secs(2));
+        let body = json!({"model":"gpt-5.5","input":"hello"});
+
+        let err = forwarder
+            .forward_with_retry(
+                &AppType::Codex,
+                http::Method::POST,
+                "/responses",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                vec![provider],
+            )
+            .await;
+        let err = match err {
+            Ok(_) => panic!("single-provider 500 should not retry same provider"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(
+            err.error,
+            ProxyError::UpstreamError {
+                status: 500,
+                body: _
+            }
+        ));
+        assert_eq!(request_log.snapshot().len(), 1);
+    }
+
+    async fn wait_for_circuit_request_count(
+        router: &ProviderRouter,
+        provider_id: &str,
+        app_type: &str,
+        expected_total_requests: u32,
+    ) -> crate::proxy::circuit_breaker::CircuitBreakerStats {
+        let mut latest = None;
+        for _ in 0..20 {
+            latest = router
+                .get_circuit_breaker_stats(provider_id, app_type)
+                .await;
+            if let Some(stats) = latest.as_ref() {
+                if stats.total_requests >= expected_total_requests {
+                    return stats.clone();
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        latest.expect("circuit stats")
     }
 
     #[test]
@@ -3330,7 +3764,10 @@ mod tests {
             .await
         {
             Ok(result) => result,
-            Err(err) => panic!("Chinese image pricing error should be retried: {}", err.error),
+            Err(err) => panic!(
+                "Chinese image pricing error should be retried: {}",
+                err.error
+            ),
         };
 
         assert_eq!(result.provider.id, provider.id);
