@@ -77,9 +77,6 @@ slim 档位必须保留：
   - Hermes 本地 dashboard 启动与 memory 配置管理
   - OpenClaw 本地 workspace/config/tools 管理
   - OpenCode/OMO 本地文件读取和禁用入口
-
-待评估项不进入第一轮裁剪，必须先确认用途、依赖和生产暴露风险：
-
 - 本地个人工作流：
   - session manager 终端启动
   - workspace file editor
@@ -87,7 +84,7 @@ slim 档位必须保留：
   - local directory picker
   - local env conflict repair
 
-确认裁剪项必须以 build profile 或 capability manifest 控制，不能从默认完整版本中直接删除。待评估项在没有单独结论前保持完整版本行为，slim 档位只允许通过显式评估后再裁剪。
+确认裁剪项必须以 build profile 或 capability manifest 控制，不能从默认完整版本中直接删除。
 
 ## 明确不做
 
@@ -96,7 +93,6 @@ slim 档位必须保留：
 - 不改变 provider routing、failover、circuit breaker、429 重试分类或 Responses stickiness。
 - 不删除计费、用量、统计、request log 或 pricing 相关代码。
 - 不删除 WebDAV/S3 同步服务。
-- 不裁剪待评估项，除非后续有单独评估结论。
 - 不重写代理转发核心。
 - 不把 `ttflows` 的用户、密钥、计费或审计逻辑放进 `ccs-web`。
 - 不改变现有完整版本的默认构建和发布路径。
@@ -120,10 +116,9 @@ slim 档位必须保留：
 
 1. `proxy-core`：代理转发、provider router、failover、circuit breaker、usage logging。
 2. `web-admin-core`：Web 管理面必需的 provider、proxy、usage、backup、auth、WebDAV/S3 sync API。
-3. `extension-admin`：skills、MCP、desktop helper、third-party local tool management。
-4. `local-workflow`：sessions、workspace、daily memory、local directory/env helper 等待评估能力。
+3. `non-production-admin`：skills、MCP、desktop helper、third-party local tool management、sessions、workspace、daily memory、local directory/env helper。
 
-slim 档位编译或启动时启用前两层，禁用第三层。第四层先保持待评估状态，不作为第一轮默认裁剪项。
+slim 档位编译或启动时启用前两层，禁用第三层。
 
 如果短期无法一次性完成 Cargo feature 分层，可先用能力 manifest 在 `/invoke` dispatch 层拒绝非 slim 能力，并在前端菜单层隐藏对应入口；后续再下沉为编译期裁剪。
 
@@ -148,9 +143,6 @@ slim 前端应隐藏：
 - MCP
 - local desktop helper 入口
 - third-party local tool management 入口
-
-slim 前端待评估入口：
-
 - sessions
 - workspace
 - daily memory
@@ -201,9 +193,7 @@ slim 前端待评估入口：
     "skills",
     "mcp",
     "desktop-helpers",
-    "third-party-local-tools"
-  ],
-  "evaluationGroups": [
+    "third-party-local-tools",
     "sessions",
     "workspace",
     "daily-memory",
@@ -258,8 +248,6 @@ HTTP 状态建议使用 `403`，避免前端和集成方把它误判成服务不
   - 缓解：第一轮明确保留 usage pipeline，并把 provider/proxy/usage 作为验收主路径。
 - 风险：同步服务被误归类为本地非生产能力。
   - 缓解：第一轮明确保留 WebDAV/S3 同步服务，并把 sync API 放入 enabled group。
-- 风险：待评估能力被顺手隐藏或禁用。
-  - 缓解：待评估项必须单独出评估结论，不得作为第一轮默认裁剪项。
 - 风险：TTFlows 和 ccs-web 职责再次重叠。
   - 缓解：`ttflows` 只集成代理接口和健康探测，不接管 ccs-web 内部 provider 路由。
 - 风险：生产运行合同漂移。
@@ -273,7 +261,7 @@ HTTP 状态建议使用 `403`，避免前端和集成方把它误判成服务不
 - 新增 profile/capability manifest。
 - `/invoke` dispatch 增加 capability gate。
 - 前端读取 manifest 并隐藏 disabled group 入口。
-- 前端保留 sync 入口，并标记 local-workflow 入口为待评估。
+- 前端保留 sync 入口，并隐藏 non-production-admin 入口。
 - Docker 支持显式 slim profile 参数。
 
 ### 阶段 2：构建期裁剪
@@ -296,7 +284,7 @@ HTTP 状态建议使用 `403`，避免前端和集成方把它误判成服务不
 - slim 是显式 opt-in，不影响默认完整版本。
 - 保留 A+B 范围和 usage pipeline。
 - 保留 WebDAV/S3 同步服务。
-- 本地个人工作流只进入待评估清单，不在第一轮直接裁剪。
+- 本地个人工作流在 slim 档位中确认裁剪。
 - 禁用能力在前端不可见，在后端不可调用。
 - 代理行为与完整版本一致。
 - TTFlows 集成边界清晰，不把 TTFlows 业务职责放进 ccs-web。
