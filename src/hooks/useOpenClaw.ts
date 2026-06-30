@@ -1,25 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openclawApi } from "@/lib/api/openclaw";
 import { providersApi } from "@/lib/api/providers";
+import { openclawKeys } from "@/lib/query/localToolKeys";
 import type {
   OpenClawEnvConfig,
   OpenClawToolsConfig,
   OpenClawAgentsDefaults,
 } from "@/types";
-
-/**
- * Centralized query keys for all OpenClaw-related queries.
- * Import this from any file that needs to invalidate OpenClaw caches.
- */
-export const openclawKeys = {
-  all: ["openclaw"] as const,
-  liveProviderIds: ["openclaw", "liveProviderIds"] as const,
-  defaultModel: ["openclaw", "defaultModel"] as const,
-  env: ["openclaw", "env"] as const,
-  tools: ["openclaw", "tools"] as const,
-  agentsDefaults: ["openclaw", "agentsDefaults"] as const,
-  health: ["openclaw", "health"] as const,
-};
+export { openclawKeys } from "@/lib/query/localToolKeys";
 
 // ============================================================
 // Query hooks

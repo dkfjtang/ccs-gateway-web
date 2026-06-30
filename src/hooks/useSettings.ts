@@ -61,7 +61,8 @@ const sanitizeDir = (value?: string | null): string | undefined => {
  * - 保存设置逻辑
  * - 重置设置逻辑
  */
-export function useSettings(): UseSettingsResult {
+export function useSettings(options: { localSettingsEnabled?: boolean } = {}): UseSettingsResult {
+  const localSettingsEnabled = options.localSettingsEnabled ?? true;
   const { t } = useTranslation();
   const { data } = useSettingsQuery();
   const saveMutation = useSaveSettingsMutation();
@@ -93,6 +94,7 @@ export function useSettings(): UseSettingsResult {
   } = useDirectorySettings({
     settings,
     onUpdateSettings: updateSettings,
+    enabled: localSettingsEnabled,
   });
 
   // 3️⃣ 元数据管理
@@ -102,24 +104,27 @@ export function useSettings(): UseSettingsResult {
     isLoading: isMetadataLoading,
     acknowledgeRestart,
     setRequiresRestart,
-  } = useSettingsMetadata();
+  } = useSettingsMetadata(localSettingsEnabled);
 
   // 重置设置
   const resetSettings = useCallback(() => {
     resetForm(data ?? null);
     syncLanguage(initialLanguage);
-    resetAllDirectories({
-      claude: sanitizeDir(data?.claudeConfigDir),
-      codex: sanitizeDir(data?.codexConfigDir),
-      gemini: sanitizeDir(data?.geminiConfigDir),
-      opencode: sanitizeDir(data?.opencodeConfigDir),
-      openclaw: sanitizeDir(data?.openclawConfigDir),
-      hermes: sanitizeDir(data?.hermesConfigDir),
-    });
+    if (localSettingsEnabled) {
+      resetAllDirectories({
+        claude: sanitizeDir(data?.claudeConfigDir),
+        codex: sanitizeDir(data?.codexConfigDir),
+        gemini: sanitizeDir(data?.geminiConfigDir),
+        opencode: sanitizeDir(data?.opencodeConfigDir),
+        openclaw: sanitizeDir(data?.openclawConfigDir),
+        hermes: sanitizeDir(data?.hermesConfigDir),
+      });
+    }
     setRequiresRestart(false);
   }, [
     data,
     initialLanguage,
+    localSettingsEnabled,
     resetForm,
     syncLanguage,
     resetAllDirectories,
@@ -222,6 +227,7 @@ export function useSettings(): UseSettingsResult {
 
         // 如果开机自启状态改变，调用系统 API
         if (
+          localSettingsEnabled &&
           payload.launchOnStartup !== undefined &&
           payload.launchOnStartup !== data?.launchOnStartup
         ) {
@@ -241,6 +247,7 @@ export function useSettings(): UseSettingsResult {
         // 仅在本次更新包含 skipClaudeOnboarding 时触发，避免其它自动保存误触发
         const nextSkipClaudeOnboarding = updates.skipClaudeOnboarding;
         if (
+          localSettingsEnabled &&
           nextSkipClaudeOnboarding !== undefined &&
           nextSkipClaudeOnboarding !== (data?.skipClaudeOnboarding ?? false)
         ) {
@@ -267,10 +274,12 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
-          prevPluginEnabled,
-        );
+        if (localSettingsEnabled) {
+          await syncClaudePluginIfChanged(
+            payload.enableClaudePluginIntegration,
+            prevPluginEnabled,
+          );
+        }
 
         // 持久化语言偏好
         try {
@@ -285,10 +294,12 @@ export function useSettings(): UseSettingsResult {
         }
 
         // 更新托盘菜单
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (error) {
-          console.warn("[useSettings] Failed to refresh tray menu", error);
+        if (localSettingsEnabled) {
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.warn("[useSettings] Failed to refresh tray menu", error);
+          }
         }
 
         return { requiresRestart: false };
@@ -303,7 +314,15 @@ export function useSettings(): UseSettingsResult {
         throw error;
       }
     },
-    [data, queryClient, saveMutation, settings, syncClaudePluginIfChanged, t],
+    [
+      data,
+      localSettingsEnabled,
+      queryClient,
+      saveMutation,
+      settings,
+      syncClaudePluginIfChanged,
+      t,
+    ],
   );
 
   // 完整保存设置（用于 Advanced 标签页的手动保存）
@@ -356,10 +375,13 @@ export function useSettings(): UseSettingsResult {
 
         await saveMutation.mutateAsync(payload);
 
-        await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        if (localSettingsEnabled) {
+          await settingsApi.setAppConfigDirOverride(sanitizedAppDir ?? null);
+        }
 
         // 只在开机自启状态真正改变时调用系统 API
         if (
+          localSettingsEnabled &&
           payload.launchOnStartup !== undefined &&
           payload.launchOnStartup !== data?.launchOnStartup
         ) {
@@ -378,7 +400,10 @@ export function useSettings(): UseSettingsResult {
         // Claude Code 初次安装确认：开=写入 hasCompletedOnboarding=true；关=删除该字段
         const prevSkipClaudeOnboarding = data?.skipClaudeOnboarding ?? false;
         const nextSkipClaudeOnboarding = payload.skipClaudeOnboarding ?? false;
-        if (nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding) {
+        if (
+          localSettingsEnabled &&
+          nextSkipClaudeOnboarding !== prevSkipClaudeOnboarding
+        ) {
           try {
             if (nextSkipClaudeOnboarding) {
               await settingsApi.applyClaudeOnboardingSkip();
@@ -402,10 +427,12 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        const pluginSynced = await syncClaudePluginIfChanged(
-          payload.enableClaudePluginIntegration,
-          prevPluginEnabled,
-        );
+        const pluginSynced = localSettingsEnabled
+          ? await syncClaudePluginIfChanged(
+              payload.enableClaudePluginIntegration,
+              prevPluginEnabled,
+            )
+          : false;
 
         try {
           if (typeof window !== "undefined") {
@@ -421,10 +448,12 @@ export function useSettings(): UseSettingsResult {
           );
         }
 
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (error) {
-          console.warn("[useSettings] Failed to refresh tray menu", error);
+        if (localSettingsEnabled) {
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (error) {
+            console.warn("[useSettings] Failed to refresh tray menu", error);
+          }
         }
 
         // 如果 Claude/Codex/Gemini/OpenCode/OpenClaw 的目录覆盖发生变化，则立即将"当前使用的供应商"写回对应应用的 live 配置
@@ -436,6 +465,7 @@ export function useSettings(): UseSettingsResult {
         const openclawDirChanged = sanitizedOpenclawDir !== previousOpenclawDir;
         if (
           !pluginSynced &&
+          localSettingsEnabled &&
           (claudeDirChanged ||
             codexDirChanged ||
             geminiDirChanged ||
@@ -451,7 +481,9 @@ export function useSettings(): UseSettingsResult {
           }
         }
 
-        const appDirChanged = sanitizedAppDir !== (previousAppDir ?? undefined);
+        const appDirChanged =
+          localSettingsEnabled &&
+          sanitizedAppDir !== (previousAppDir ?? undefined);
         setRequiresRestart(appDirChanged);
 
         if (!options?.silent) {
@@ -479,6 +511,7 @@ export function useSettings(): UseSettingsResult {
       appConfigDir,
       data,
       initialAppConfigDir,
+      localSettingsEnabled,
       queryClient,
       saveMutation,
       settings,

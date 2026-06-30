@@ -62,6 +62,7 @@ const sanitizeDir = (value?: string | null): string | undefined => {
 export interface UseDirectorySettingsProps {
   settings: SettingsFormState | null;
   onUpdateSettings: (updates: Partial<SettingsFormState>) => void;
+  enabled?: boolean;
 }
 
 export interface UseDirectorySettingsResult {
@@ -94,6 +95,7 @@ export type ResolvedAppDirectoryOverrides = Partial<
 export function useDirectorySettings({
   settings,
   onUpdateSettings,
+  enabled = true,
 }: UseDirectorySettingsProps): UseDirectorySettingsResult {
   const { t } = useTranslation();
 
@@ -124,6 +126,11 @@ export function useDirectorySettings({
 
   // 加载目录信息
   useEffect(() => {
+    if (!enabled) {
+      setIsLoading(false);
+      return;
+    }
+
     let active = true;
     setIsLoading(true);
 
@@ -203,7 +210,7 @@ export function useDirectorySettings({
     return () => {
       active = false;
     };
-  }, []);
+  }, [enabled]);
 
   const updateDirectoryState = useCallback(
     (key: DirectoryKey, value?: string) => {
@@ -243,6 +250,7 @@ export function useDirectorySettings({
 
   const browseDirectory = useCallback(
     async (app: DirectoryAppId) => {
+      if (!enabled) return;
       const key = APP_DIRECTORY_META[app].key;
       const settingsField = DIRECTORY_KEY_TO_SETTINGS_FIELD[key];
       const currentValue =
@@ -262,10 +270,11 @@ export function useDirectorySettings({
         );
       }
     },
-    [settings, resolvedDirs, t, updateDirectoryState],
+    [enabled, settings, resolvedDirs, t, updateDirectoryState],
   );
 
   const browseAppConfigDir = useCallback(async () => {
+    if (!enabled) return;
     const currentValue = appConfigDir ?? resolvedDirs.appConfig;
     try {
       const picked = await settingsApi.selectConfigDirectory(currentValue);
@@ -283,7 +292,7 @@ export function useDirectorySettings({
         }),
       );
     }
-  }, [appConfigDir, resolvedDirs.appConfig, t, updateDirectoryState]);
+  }, [appConfigDir, enabled, resolvedDirs.appConfig, t, updateDirectoryState]);
 
   const resetDirectory = useCallback(
     async (app: DirectoryAppId) => {

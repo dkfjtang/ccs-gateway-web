@@ -1,18 +1,31 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { providersApi, sessionsApi, settingsApi, type AppId } from "@/lib/api";
+import { providersApi } from "@/lib/api/providers";
 import type { DeleteSessionOptions } from "@/lib/api/sessions";
+import { sessionsApi } from "@/lib/api/sessions";
+import { settingsApi } from "@/lib/api/settings";
+import type { AppId } from "@/lib/api/types";
 import type { SwitchResult } from "@/lib/api/providers";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
-import { openclawKeys } from "@/hooks/useOpenClaw";
-import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
+import {
+  openclawKeys,
+  invalidateHermesProviderCaches,
+} from "@/lib/query/localToolKeys";
 
-export const useAddProviderMutation = (appId: AppId) => {
+export interface ProviderMutationOptions {
+  desktopHelpersEnabled?: boolean;
+}
+
+export const useAddProviderMutation = (
+  appId: AppId,
+  options: ProviderMutationOptions = {},
+) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const { desktopHelpersEnabled = true } = options;
 
   return useMutation({
     mutationFn: async (
@@ -80,13 +93,15 @@ export const useAddProviderMutation = (appId: AppId) => {
         await invalidateHermesProviderCaches(queryClient);
       }
 
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after adding provider",
-          trayError,
-        );
+      if (desktopHelpersEnabled) {
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error(
+            "Failed to update tray menu after adding provider",
+            trayError,
+          );
+        }
       }
 
       toast.success(
@@ -156,9 +171,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useDeleteProviderMutation = (appId: AppId) => {
+export const useDeleteProviderMutation = (
+  appId: AppId,
+  options: ProviderMutationOptions = {},
+) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const { desktopHelpersEnabled = true } = options;
 
   return useMutation({
     mutationFn: async (providerId: string) => {
@@ -192,13 +211,15 @@ export const useDeleteProviderMutation = (appId: AppId) => {
         await invalidateHermesProviderCaches(queryClient);
       }
 
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after deleting provider",
-          trayError,
-        );
+      if (desktopHelpersEnabled) {
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error(
+            "Failed to update tray menu after deleting provider",
+            trayError,
+          );
+        }
       }
 
       toast.success(
@@ -222,9 +243,13 @@ export const useDeleteProviderMutation = (appId: AppId) => {
   });
 };
 
-export const useSwitchProviderMutation = (appId: AppId) => {
+export const useSwitchProviderMutation = (
+  appId: AppId,
+  options: ProviderMutationOptions = {},
+) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const { desktopHelpersEnabled = true } = options;
 
   return useMutation({
     mutationFn: async (providerId: string): Promise<SwitchResult> => {
@@ -266,13 +291,15 @@ export const useSwitchProviderMutation = (appId: AppId) => {
         await invalidateHermesProviderCaches(queryClient);
       }
 
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after switching provider",
-          trayError,
-        );
+      if (desktopHelpersEnabled) {
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error(
+            "Failed to update tray menu after switching provider",
+            trayError,
+          );
+        }
       }
     },
     onError: (error: Error) => {

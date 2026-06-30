@@ -6,6 +6,7 @@ import type { Settings } from "@/types";
 const mutateAsyncMock = vi.fn();
 const useSettingsQueryMock = vi.fn();
 const setAppConfigDirOverrideMock = vi.fn();
+const setAutoLaunchMock = vi.fn();
 const applyClaudePluginConfigMock = vi.fn();
 const applyClaudeOnboardingSkipMock = vi.fn();
 const clearClaudeOnboardingSkipMock = vi.fn();
@@ -65,6 +66,7 @@ vi.mock("@/lib/api", () => ({
   settingsApi: {
     setAppConfigDirOverride: (...args: unknown[]) =>
       setAppConfigDirOverrideMock(...args),
+    setAutoLaunch: (...args: unknown[]) => setAutoLaunchMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
       applyClaudePluginConfigMock(...args),
     applyClaudeOnboardingSkip: (...args: unknown[]) =>
@@ -140,6 +142,7 @@ describe("useSettings hook", () => {
     mutateAsyncMock.mockReset();
     useSettingsQueryMock.mockReset();
     setAppConfigDirOverrideMock.mockReset();
+    setAutoLaunchMock.mockReset();
     applyClaudePluginConfigMock.mockReset();
     applyClaudeOnboardingSkipMock.mockReset();
     clearClaudeOnboardingSkipMock.mockReset();
@@ -180,6 +183,7 @@ describe("useSettings hook", () => {
 
     mutateAsyncMock.mockResolvedValue(true);
     setAppConfigDirOverrideMock.mockResolvedValue(true);
+    setAutoLaunchMock.mockResolvedValue(true);
     applyClaudePluginConfigMock.mockResolvedValue(true);
     applyClaudeOnboardingSkipMock.mockResolvedValue(true);
     clearClaudeOnboardingSkipMock.mockResolvedValue(true);
@@ -346,6 +350,62 @@ describe("useSettings hook", () => {
     expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
     // 目录未变化，不应触发同步
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
+  });
+
+  it("skips local-only side effects when local settings are disabled", async () => {
+    serverSettings = {
+      ...serverSettings,
+      enableClaudePluginIntegration: false,
+      launchOnStartup: false,
+      skipClaudeOnboarding: false,
+      claudeConfigDir: "/server/claude",
+      codexConfigDir: "/server/codex",
+      geminiConfigDir: "/server/gemini",
+      opencodeConfigDir: "/server/opencode",
+      openclawConfigDir: "/server/openclaw",
+    };
+    useSettingsQueryMock.mockReturnValue({
+      data: serverSettings,
+      isLoading: false,
+    });
+
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        enableClaudePluginIntegration: true,
+        launchOnStartup: true,
+        skipClaudeOnboarding: true,
+        claudeConfigDir: "/custom/claude",
+        codexConfigDir: "/custom/codex",
+        geminiConfigDir: "/custom/gemini",
+        opencodeConfigDir: "/custom/opencode",
+        openclawConfigDir: "/custom/openclaw",
+      },
+    });
+    directorySettingsMock = createDirectorySettingsMock({
+      appConfigDir: "/custom/app",
+      initialAppConfigDir: "/server/app",
+    });
+
+    const { result } = renderHook(() =>
+      useSettings({ localSettingsEnabled: false }),
+    );
+
+    let saveResult: { requiresRestart: boolean } | null = null;
+    await act(async () => {
+      saveResult = await result.current.saveSettings();
+    });
+
+    expect(saveResult).toEqual({ requiresRestart: false });
+    expect(mutateAsyncMock).toHaveBeenCalledTimes(1);
+    expect(setAppConfigDirOverrideMock).not.toHaveBeenCalled();
+    expect(setAutoLaunchMock).not.toHaveBeenCalled();
+    expect(applyClaudeOnboardingSkipMock).not.toHaveBeenCalled();
+    expect(clearClaudeOnboardingSkipMock).not.toHaveBeenCalled();
+    expect(applyClaudePluginConfigMock).not.toHaveBeenCalled();
+    expect(updateTrayMenuMock).not.toHaveBeenCalled();
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
+    expect(metadataMock.setRequiresRestart).toHaveBeenCalledWith(false);
   });
 
   it("shows toast when Claude plugin sync fails but continues flow", async () => {

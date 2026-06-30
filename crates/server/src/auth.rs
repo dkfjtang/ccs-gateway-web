@@ -1,8 +1,11 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
+
+use crate::profile::{CcsWebProfile, ProfileConfig};
 
 /// Session expiry duration: 7 days (604800 seconds)
 const SESSION_EXPIRY_SECS: u64 = 604800;
@@ -11,6 +14,21 @@ const SESSION_EXPIRY_SECS: u64 = 604800;
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthConfig {
     pub password_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthConfigLoadError {
+    HomeDirUnavailable,
+    MissingConfig,
+    UnreadableConfig,
+    InvalidJson,
+    EmptyPasswordHash,
+    InvalidPasswordHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthPolicyError {
+    pub reason: AuthConfigLoadError,
 }
 
 /// Represents an active user session
@@ -78,21 +96,68 @@ impl Default for SessionStore {
     }
 }
 
-/// Loads authentication configuration from ~/.cc-switch/web-auth.json
-/// Returns None if file is missing or invalid (auth disabled)
-pub fn load_auth_config() -> Option<AuthConfig> {
-    let home = dirs::home_dir()?;
+/// Loads authentication configuration from ~/.cc-switch/web-auth.json.
+/// Returns a structured error so slim production startup can fail closed.
+pub fn load_auth_config_result() -> Result<AuthConfig, AuthConfigLoadError> {
+    let home = dirs::home_dir().ok_or(AuthConfigLoadError::HomeDirUnavailable)?;
     let config_path = home.join(".cc-switch").join("web-auth.json");
 
-    let content = fs::read_to_string(&config_path).ok()?;
-    let config: AuthConfig = serde_json::from_str(&content).ok()?;
+    let content = fs::read_to_string(&config_path).map_err(|err| {
+        if err.kind() == io::ErrorKind::NotFound {
+            AuthConfigLoadError::MissingConfig
+        } else {
+            AuthConfigLoadError::UnreadableConfig
+        }
+    })?;
+    parse_auth_config(&content)
+}
 
-    // Validate that password_hash is not empty
+/// Loads authentication configuration from ~/.cc-switch/web-auth.json.
+/// Returns None if file is missing or invalid (legacy full-profile behavior).
+pub fn load_auth_config() -> Option<AuthConfig> {
+    load_auth_config_result().ok()
+}
+
+pub fn parse_auth_config(content: &str) -> Result<AuthConfig, AuthConfigLoadError> {
+    let mut config: AuthConfig =
+        serde_json::from_str(content).map_err(|_| AuthConfigLoadError::InvalidJson)?;
+    config.password_hash = config.password_hash.trim().to_string();
+
     if config.password_hash.is_empty() {
-        return None;
+        return Err(AuthConfigLoadError::EmptyPasswordHash);
+    }
+    if bcrypt::verify("__ccs_web_auth_probe__", &config.password_hash).is_err() {
+        return Err(AuthConfigLoadError::InvalidPasswordHash);
     }
 
-    Some(config)
+    Ok(config)
+}
+
+pub fn slim_no_auth_override_enabled() -> bool {
+    slim_no_auth_override_value_enabled(std::env::var("CCS_WEB_SLIM_ALLOW_NO_AUTH").ok().as_deref())
+}
+
+pub fn slim_no_auth_override_value_enabled(value: Option<&str>) -> bool {
+    value
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+pub fn auth_config_for_profile(
+    profile: &ProfileConfig,
+    result: Result<AuthConfig, AuthConfigLoadError>,
+    allow_slim_no_auth: bool,
+) -> Result<Option<AuthConfig>, AuthPolicyError> {
+    match (profile.profile, result) {
+        (_, Ok(config)) => Ok(Some(config)),
+        (
+            CcsWebProfile::Full,
+            Err(AuthConfigLoadError::HomeDirUnavailable | AuthConfigLoadError::MissingConfig),
+        ) => Ok(None),
+        (CcsWebProfile::Full, Err(reason)) => Err(AuthPolicyError { reason }),
+        (CcsWebProfile::Slim, Err(_)) if allow_slim_no_auth => Ok(None),
+        (CcsWebProfile::Slim, Err(reason)) => Err(AuthPolicyError { reason }),
+    }
 }
 
 /// Verifies a password against a bcrypt hash
@@ -135,6 +200,29 @@ mod tests {
     fn test_verify_password_with_invalid_hash() {
         assert!(!verify_password("test", "invalid_hash"));
         assert!(!verify_password("test", ""));
+    }
+
+    #[test]
+    fn test_parse_auth_config_rejects_invalid_config() {
+        assert!(matches!(
+            parse_auth_config("{not-json"),
+            Err(AuthConfigLoadError::InvalidJson)
+        ));
+        assert!(matches!(
+            parse_auth_config(r#"{"password_hash":""}"#),
+            Err(AuthConfigLoadError::EmptyPasswordHash)
+        ));
+        assert!(matches!(
+            parse_auth_config(r#"{"password_hash":"not-a-bcrypt-hash"}"#),
+            Err(AuthConfigLoadError::InvalidPasswordHash)
+        ));
+    }
+
+    #[test]
+    fn test_parse_auth_config_accepts_valid_hash() {
+        let hash = "$2b$04$MJuc/Azj7j9Js28.20f31uIhhVpf8f1GqCdPbh3D5StxPf8/FxYSi";
+        let config = parse_auth_config(&format!(r#"{{"password_hash":"{hash}"}}"#)).unwrap();
+        assert_eq!(config.password_hash, hash);
     }
 
     #[test]

@@ -10,12 +10,31 @@ const VENDOR_CHUNK_GROUPS = {
   query: ["@tanstack/react-query"],
   charts: ["recharts", "d3"],
   motion: ["framer-motion"],
-  ui: ["@radix-ui", "lucide-react", "sonner", "cmdk", "@dnd-kit"],
+  ui: [
+    "@radix-ui",
+    "@floating-ui",
+    "aria-hidden",
+    "class-variance-authority",
+    "clsx",
+    "cmdk",
+    "get-nonce",
+    "lucide-react",
+    "react-remove-scroll",
+    "react-remove-scroll-bar",
+    "react-style-singleton",
+    "sonner",
+    "tailwind-merge",
+    "tslib",
+    "use-callback-ref",
+    "use-sidecar",
+  ],
   forms: ["react-hook-form", "@hookform/resolvers", "zod"],
+  dnd: ["@dnd-kit"],
   i18n: ["i18next", "react-i18next"],
 } as const;
 const SKIP_MANUAL_CHUNK_PACKAGES = new Set([
   "detect-node-es",
+  "flexsearch",
   "html-parse-stringify",
   "tiny-invariant",
   "void-elements",
@@ -81,6 +100,25 @@ function getAppChunkName(id: string): string | undefined {
     return undefined;
   }
 
+  if (id.includes("/src/hooks/useSessionSearch.")) {
+    return "app-sessions";
+  }
+
+  if (
+    id.includes("/src/components/ui/form.") ||
+    id.includes("/src/lib/schemas/provider.")
+  ) {
+    return "app-forms";
+  }
+
+  if (id.includes("/src/hooks/useDragSort.")) {
+    return "app-dnd";
+  }
+
+  if (id.includes("/src/lib/utils.")) {
+    return "app-ui";
+  }
+
   if (id.includes("/src/lib/api/") || id.includes("/src/lib/query/")) {
     return "app-data";
   }
@@ -95,6 +133,11 @@ function getAppChunkName(id: string): string | undefined {
 
   if (id.includes("/src/lib/transport/") || id.includes("/src/platform/")) {
     return "app-platform";
+  }
+
+  if (id.includes("/src/i18n/locales/")) {
+    const localeName = id.match(/\/src\/i18n\/locales\/([^/?]+)\.json/)?.[1];
+    return localeName ? `locale-${localeName.toLowerCase()}` : undefined;
   }
 
   if (id.includes("/src/i18n/")) {

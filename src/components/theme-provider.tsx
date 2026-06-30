@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { invoke } from "@/lib/transport";
+import { getBakedProfile, isCommandEnabled } from "@/lib/capabilities";
 
 type Theme = "light" | "dark" | "system";
 
@@ -98,6 +99,9 @@ export function ThemeProvider({
   // Sync native window theme (Windows/macOS title bar)
   useEffect(() => {
     if (typeof window === "undefined") {
+      return;
+    }
+    if (!isCommandEnabled("set_window_theme", getBakedProfile())) {
       return;
     }
 

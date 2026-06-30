@@ -1,8 +1,9 @@
 use axum::{
-    extract::{connect_info::ConnectInfo, State},
+    extract::{connect_info::ConnectInfo, DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,6 +11,7 @@ use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use crate::{
     api::session_auth::{has_valid_session, has_valid_session_from_header, is_loopback_peer},
+    profile::{CapabilityGroup, ProfileConfig},
     state::ServerState,
 };
 
@@ -209,6 +211,27 @@ fn unauthorized() -> (StatusCode, Json<Value>) {
     )
 }
 
+pub fn auth_vault_disabled() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": "capability_disabled",
+            "capability": "auth-vault",
+            "message": "This capability is disabled in the current ccs-web profile."
+        })),
+    )
+}
+
+fn auth_vault_not_found() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "api_route_not_found",
+            "message": "Unknown API route."
+        })),
+    )
+}
+
 fn is_save_authorized(state: &ServerState, headers: &HeaderMap, peer_addr: &SocketAddr) -> bool {
     state.auth_config.is_none()
         || has_valid_session(state, headers)
@@ -217,12 +240,34 @@ fn is_save_authorized(state: &ServerState, headers: &HeaderMap, peer_addr: &Sock
             && has_valid_session_from_header(state, headers))
 }
 
+pub fn auth_vault_routes(profile: &ProfileConfig) -> Router<Arc<ServerState>> {
+    if !profile.is_group_enabled(CapabilityGroup::AuthVault) {
+        return Router::new().fallback(|| async { auth_vault_disabled() });
+    }
+
+    Router::new()
+        .route(
+            "/tokens",
+            post(save_auth_vault_handler).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
+        .route("/tokens/summary", get(auth_vault_summary_handler))
+        .fallback(|| async { auth_vault_not_found() })
+}
+
 pub async fn save_auth_vault_handler(
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
     Json(req): Json<AuthVaultRequest>,
 ) -> impl IntoResponse {
+    if state
+        .profile
+        .ensure_group_allowed(CapabilityGroup::AuthVault)
+        .is_err()
+    {
+        return auth_vault_disabled();
+    }
+
     if !is_save_authorized(&state, &headers, &peer_addr) {
         return unauthorized();
     }
@@ -288,6 +333,14 @@ pub async fn auth_vault_summary_handler(
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
+    if state
+        .profile
+        .ensure_group_allowed(CapabilityGroup::AuthVault)
+        .is_err()
+    {
+        return auth_vault_disabled();
+    }
+
     if state.auth_config.is_some() && !has_valid_session(&state, &headers) {
         return unauthorized();
     }
@@ -319,7 +372,10 @@ pub async fn auth_vault_summary_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_event_bus, AuthConfig, ServerState, SessionStore};
+    use crate::{
+        build_info::build_info_from_assets, create_event_bus, profile::ProfileConfig, AuthConfig,
+        ServerState, SessionStore,
+    };
     use axum::http::HeaderValue;
     use cc_switch::{AppState, Database};
     use cc_switch_core::CoreContext;
@@ -327,6 +383,8 @@ mod tests {
 
     fn test_state(allow_extension_session_header: bool) -> ServerState {
         let db = Arc::new(Database::memory().expect("in-memory database"));
+        let profile = ProfileConfig::default();
+        let build_info = build_info_from_assets(&profile, Vec::new(), "test");
         ServerState {
             auth_token: None,
             event_bus: create_event_bus(8),
@@ -336,6 +394,8 @@ mod tests {
                 password_hash: "test".to_string(),
             }),
             allow_extension_session_header,
+            profile,
+            build_info,
         }
     }
 

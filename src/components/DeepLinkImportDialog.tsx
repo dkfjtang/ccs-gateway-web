@@ -17,6 +17,7 @@ import { PromptConfirmation } from "./deeplink/PromptConfirmation";
 import { McpConfirmation } from "./deeplink/McpConfirmation";
 import { SkillConfirmation } from "./deeplink/SkillConfirmation";
 import { ProviderIcon } from "./ProviderIcon";
+import { getBakedProfile, isDeepLinkResourceEnabled } from "@/lib/capabilities";
 
 interface DeeplinkError {
   url: string;
@@ -26,6 +27,7 @@ interface DeeplinkError {
 export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const profile = getBakedProfile();
   const [request, setRequest] = useState<DeepLinkImportRequest | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -53,6 +55,10 @@ export function DeepLinkImportDialog() {
     const unlistenImport = listen<DeepLinkImportRequest>(
       "deeplink-import",
       async (payload) => {
+        if (!isDeepLinkResourceEnabled(payload.resource, profile)) {
+          return;
+        }
+
         // If config is present, merge it to get the complete configuration
         if (payload.config || payload.configUrl) {
           try {
@@ -88,10 +94,14 @@ export function DeepLinkImportDialog() {
       unlistenImport.then((fn) => fn());
       unlistenError.then((fn) => fn());
     };
-  }, [t]);
+  }, [profile, t]);
 
   const handleImport = async () => {
     if (!request) return;
+    if (!isDeepLinkResourceEnabled(request.resource, profile)) {
+      setIsOpen(false);
+      return;
+    }
 
     setIsImporting(true);
 

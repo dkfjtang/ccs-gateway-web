@@ -61,17 +61,23 @@ const openclawApiGetModelCatalogMock = vi.fn();
 const openclawApiGetDefaultModelMock = vi.fn();
 const openclawApiSetDefaultModelMock = vi.fn();
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     update: (...args: unknown[]) => providersApiUpdateMock(...args),
     updateTrayMenu: (...args: unknown[]) =>
       providersApiUpdateTrayMenuMock(...args),
   },
+}));
+
+vi.mock("@/lib/api/settings", () => ({
   settingsApi: {
     get: (...args: unknown[]) => settingsApiGetMock(...args),
     applyClaudePluginConfig: (...args: unknown[]) =>
       settingsApiApplyMock(...args),
   },
+}));
+
+vi.mock("@/lib/api/openclaw", () => ({
   openclawApi: {
     getModelCatalog: (...args: unknown[]) =>
       openclawApiGetModelCatalogMock(...args),

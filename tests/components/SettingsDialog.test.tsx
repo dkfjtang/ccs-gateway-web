@@ -234,12 +234,26 @@ vi.mock("@/components/settings/DirectorySettings", () => ({
 }));
 
 vi.mock("@/components/settings/AboutSection", () => ({
-  AboutSection: ({ isPortable }: any) => <div>about:{String(isPortable)}</div>,
+  AboutSection: ({ isPortable, localEnvCheckEnabled }: any) => (
+    <div>
+      about:{String(isPortable)}:{String(localEnvCheckEnabled)}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/settings/WebdavSyncSection", () => ({
   WebdavSyncSection: ({ config }: any) => (
     <div>webdav-sync-section:{config?.baseUrl ?? "none"}</div>
+  ),
+}));
+
+vi.mock("@/components/settings/AuthCenterPanel", () => ({
+  AuthCenterPanel: () => <div data-testid="auth-center-panel">auth-center</div>,
+}));
+
+vi.mock("@/components/usage/UsageDashboard", () => ({
+  UsageDashboard: () => (
+    <div data-testid="usage-dashboard">usage-dashboard</div>
   ),
 }));
 
@@ -281,6 +295,7 @@ describe("SettingsPage Component", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("should not render form content when loading", () => {
@@ -293,7 +308,7 @@ describe("SettingsPage Component", () => {
     expect(document.querySelector(".animate-spin")).toBeInTheDocument();
   });
 
-  it("should reset import/export status when dialog transitions to open", () => {
+  it("should reset import/export status when dialog transitions to open", async () => {
     const client = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -313,10 +328,13 @@ describe("SettingsPage Component", () => {
       </QueryClientProvider>,
     );
 
-    expect(importExportMock.resetStatus).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("language:zh")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(importExportMock.resetStatus).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("should render general and advanced tabs and trigger child callbacks", () => {
+  it("should render general and advanced tabs and trigger child callbacks", async () => {
     const onOpenChange = vi.fn();
     // 设置 selectedFile 后，按钮显示 settings.import（可执行导入）
     importExportMock = createImportExportMock({
@@ -333,14 +351,16 @@ describe("SettingsPage Component", () => {
       language: "en",
     });
 
-    fireEvent.click(screen.getByText("window-settings"));
+    fireEvent.click(await screen.findByText("window-settings"));
     expect(settingsMock.updateSettings).toHaveBeenCalledWith({
       minimizeToTrayOnClose: false,
     });
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.cloudSync.title"));
-    expect(screen.getByText("webdav-sync-section:none")).toBeInTheDocument();
+    expect(
+      await screen.findByText("webdav-sync-section:none"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
@@ -357,6 +377,31 @@ describe("SettingsPage Component", () => {
     // 清除选择按钮
     fireEvent.click(screen.getByRole("button", { name: "common.clear" }));
     expect(importExportMock.clearSelection).toHaveBeenCalled();
+  });
+
+  it("hides managed auth center when slim profile disables local tool auth", () => {
+    vi.stubEnv("VITE_CCS_WEB_PROFILE", "slim");
+
+    renderSettingsPage({ defaultTab: "auth" });
+
+    expect(screen.queryByText("settings.tabAuth")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("auth-center-panel")).not.toBeInTheDocument();
+    expect(screen.getByText("language:zh")).toBeInTheDocument();
+  });
+
+  it("keeps sync and usage settings available in slim profile", async () => {
+    vi.stubEnv("VITE_CCS_WEB_PROFILE", "slim");
+
+    renderSettingsPage();
+
+    fireEvent.click(screen.getByText("settings.tabAdvanced"));
+    fireEvent.click(screen.getByText("settings.advanced.cloudSync.title"));
+    expect(
+      await screen.findByText("webdav-sync-section:none"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("usage.title"));
+    expect(await screen.findByTestId("usage-dashboard")).toBeInTheDocument();
   });
 
   it("should pass onImportSuccess callback to useImportExport hook", async () => {
@@ -438,13 +483,13 @@ describe("SettingsPage Component", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
-  it("should trigger directory management callbacks inside advanced tab", () => {
+  it("should trigger directory management callbacks inside advanced tab", async () => {
     renderSettingsPage();
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
 
-    fireEvent.click(screen.getByText("browse-directory"));
+    fireEvent.click(await screen.findByText("browse-directory"));
     expect(settingsMock.browseDirectory).toHaveBeenCalledWith("claude");
 
     fireEvent.click(screen.getByText("reset-directory"));

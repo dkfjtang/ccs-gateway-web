@@ -1,8 +1,15 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
-import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke, listen } from "@/lib/transport";
 import {
   Plus,
@@ -23,21 +30,18 @@ import {
   Cpu,
   LayoutDashboard,
 } from "lucide-react";
-import type { Provider, VisibleApps } from "@/types";
+import type { OpenClawHealthWarning, Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
+import type { AppId } from "@/lib/api/types";
 import {
   providersApi,
-  settingsApi,
-  type AppId,
   type ProviderSwitchEvent,
-} from "@/lib/api";
+} from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
 import { usageApi } from "@/lib/api/usage";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
-import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
-import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
-import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
@@ -46,7 +50,16 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
 import { usageKeys } from "@/lib/query/usage";
+import { hermesKeys, openclawKeys } from "@/lib/query/localToolKeys";
 import { startBuildUpdateMonitor } from "@/lib/buildInfo";
+import {
+  coerceAppForProfile,
+  coerceViewForProfile,
+  getBakedProfile,
+  isCapabilityGroupEnabled,
+  isAppEnabled,
+  isCommandEnabled,
+} from "@/lib/capabilities";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UpdateBadge } from "@/components/UpdateBadge";
@@ -64,8 +77,6 @@ import {
   useDisableCurrentOmo,
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
-import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
-import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 
 type View =
   | "providers"
@@ -131,6 +142,12 @@ const AgentsDefaultsPanel = lazy(
   () => import("@/components/openclaw/AgentsDefaultsPanel"),
 );
 const UsageScriptModal = lazy(() => import("@/components/UsageScriptModal"));
+const HermesMemoryPanel = lazy(
+  () => import("@/components/hermes/HermesMemoryPanel"),
+);
+const OpenClawHealthBanner = lazy(
+  () => import("@/components/openclaw/OpenClawHealthBanner"),
+);
 
 const DEFAULT_DRAG_BAR_HEIGHT = 0;
 const HEADER_HEIGHT = 64; // px
@@ -149,7 +166,7 @@ const VALID_APPS: AppId[] = [
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
   if (saved && VALID_APPS.includes(saved)) {
-    return saved;
+    return coerceAppForProfile(saved) as AppId;
   }
   return "claude";
 };
@@ -175,7 +192,7 @@ const VALID_VIEWS: View[] = [
 const getInitialView = (): View => {
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
   if (saved && VALID_VIEWS.includes(saved)) {
-    return saved;
+    return coerceViewForProfile(saved);
   }
   return "providers";
 };
@@ -190,20 +207,48 @@ function App() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { isLoading: authLoading, isAuthenticated, authEnabled } = useAuth();
+  const profile = getBakedProfile();
+  const desktopHelpersEnabled = isCapabilityGroupEnabled(
+    "desktop-helpers",
+    profile,
+  );
+  const skillsEnabled = isCapabilityGroupEnabled("skills", profile);
+  const mcpEnabled = isCapabilityGroupEnabled("mcp", profile);
+  const sessionsEnabled = isCapabilityGroupEnabled("sessions", profile);
+  const localEnvHelpersEnabled = isCapabilityGroupEnabled(
+    "local-env-helpers",
+    profile,
+  );
+  const thirdPartyLocalToolsEnabled = isCapabilityGroupEnabled(
+    "third-party-local-tools",
+    profile,
+  );
+  const usageCapabilitiesEnabled = isCapabilityGroupEnabled("usage", profile);
 
   const [activeApp, setActiveApp] = useState<AppId>(getInitialApp);
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const setProfiledActiveApp = useCallback(
+    (app: AppId) => {
+      setActiveApp(coerceAppForProfile(app, profile) as AppId);
+    },
+    [profile],
+  );
 
   useEffect(() => {
-    localStorage.setItem(VIEW_STORAGE_KEY, currentView);
-  }, [currentView]);
+    const coercedView = coerceViewForProfile(currentView, profile);
+    if (coercedView !== currentView) {
+      setCurrentView(coercedView);
+      return;
+    }
+    localStorage.setItem(VIEW_STORAGE_KEY, coercedView);
+  }, [currentView, profile]);
 
   const { data: settingsData } = useSettingsQuery();
   const dragBarHeight = DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+  const configuredVisibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
     "claude-desktop": true,
     codex: true,
@@ -212,8 +257,24 @@ function App() {
     openclaw: true,
     hermes: true,
   };
+  const visibleApps: VisibleApps = useMemo(
+    () => ({
+      claude: configuredVisibleApps.claude && isAppEnabled("claude", profile),
+      "claude-desktop":
+        configuredVisibleApps["claude-desktop"] &&
+        isAppEnabled("claude-desktop", profile),
+      codex: configuredVisibleApps.codex && isAppEnabled("codex", profile),
+      gemini: configuredVisibleApps.gemini && isAppEnabled("gemini", profile),
+      opencode:
+        configuredVisibleApps.opencode && isAppEnabled("opencode", profile),
+      openclaw:
+        configuredVisibleApps.openclaw && isAppEnabled("openclaw", profile),
+      hermes: configuredVisibleApps.hermes && isAppEnabled("hermes", profile),
+    }),
+    [configuredVisibleApps, profile],
+  );
 
-  const getFirstVisibleApp = (): AppId => {
+  const getFirstVisibleApp = useCallback((): AppId => {
     if (visibleApps.claude) return "claude";
     if (visibleApps["claude-desktop"]) return "claude-desktop";
     if (visibleApps.codex) return "codex";
@@ -222,13 +283,13 @@ function App() {
     if (visibleApps.openclaw) return "openclaw";
     if (visibleApps.hermes) return "hermes";
     return "claude"; // fallback
-  };
+  }, [visibleApps]);
 
   useEffect(() => {
     if (!visibleApps[activeApp]) {
-      setActiveApp(getFirstVisibleApp());
+      setProfiledActiveApp(getFirstVisibleApp());
     }
-  }, [visibleApps, activeApp]);
+  }, [visibleApps, activeApp, setProfiledActiveApp, getFirstVisibleApp]);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -253,6 +314,9 @@ function App() {
   } | null>(null);
   const [envConflicts, setEnvConflicts] = useState<EnvConflict[]>([]);
   const [showEnvBanner, setShowEnvBanner] = useState(false);
+  const [profileMismatchMessage, setProfileMismatchMessage] = useState<
+    string | null
+  >(null);
 
   const effectiveEditingProvider = useLastValidValue(editingProvider);
   const effectiveUsageProvider = useLastValidValue(usageProvider);
@@ -279,6 +343,7 @@ function App() {
           },
         );
       },
+      onProfileMismatch: setProfileMismatchMessage,
     });
   }, [t]);
 
@@ -308,6 +373,7 @@ function App() {
   const providers = useMemo(() => data?.providers ?? {}, [data]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView =
+    thirdPartyLocalToolsEnabled &&
     activeApp === "openclaw" &&
     (currentView === "providers" ||
       currentView === "workspace" ||
@@ -315,16 +381,28 @@ function App() {
       currentView === "openclawEnv" ||
       currentView === "openclawTools" ||
       currentView === "openclawAgents");
-  const { data: openclawHealthWarnings = [] } =
-    useOpenClawHealth(isOpenClawView);
-  const hasSkillsSupport = activeApp !== "claude-desktop";
+  const { data: openclawHealthWarnings = [] } = useQuery<
+    OpenClawHealthWarning[]
+  >({
+    queryKey: openclawKeys.health,
+    queryFn: async () => {
+      const { openclawApi } = await import("@/lib/api/openclaw");
+      return openclawApi.scanHealth();
+    },
+    staleTime: 30_000,
+    enabled: isOpenClawView,
+  });
+  const hasSkillsSupport = skillsEnabled && activeApp !== "claude-desktop";
   const hasSessionSupport =
-    activeApp === "claude" ||
-    activeApp === "codex" ||
-    activeApp === "opencode" ||
-    activeApp === "openclaw" ||
-    activeApp === "gemini" ||
-    activeApp === "hermes";
+    sessionsEnabled &&
+    (activeApp === "claude" ||
+      activeApp === "codex" ||
+      activeApp === "opencode" ||
+      activeApp === "openclaw" ||
+      activeApp === "gemini" ||
+      activeApp === "hermes");
+  const promptsEnabled = thirdPartyLocalToolsEnabled;
+  const workspaceEnabled = isCapabilityGroupEnabled("workspace", profile);
 
   const {
     addProvider,
@@ -337,10 +415,14 @@ function App() {
     activeApp,
     isProxyRunning,
     isProxyRunning && isCurrentAppTakeoverActive,
+    { desktopHelpersEnabled, thirdPartyLocalToolsEnabled },
   );
 
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
+    if (!thirdPartyLocalToolsEnabled) {
+      return;
+    }
     disableOmoMutation.mutate(undefined, {
       onSuccess: () => {
         toast.success(t("omo.disabled", { defaultValue: "OMO 已停用" }));
@@ -358,6 +440,9 @@ function App() {
 
   const disableOmoSlimMutation = useDisableCurrentOmoSlim();
   const handleDisableOmoSlim = () => {
+    if (!thirdPartyLocalToolsEnabled) {
+      return;
+    }
     disableOmoSlimMutation.mutate(undefined, {
       onSuccess: () => {
         toast.success(t("omo.disabled", { defaultValue: "OMO 已停用" }));
@@ -403,6 +488,9 @@ function App() {
       try {
         unsubscribe = await listen("universal-provider-synced", async () => {
           await queryClient.invalidateQueries({ queryKey: ["providers"] });
+          if (!desktopHelpersEnabled) {
+            return;
+          }
           try {
             await providersApi.updateTrayMenu();
           } catch (error) {
@@ -421,7 +509,7 @@ function App() {
     return () => {
       unsubscribe?.();
     };
-  }, [queryClient]);
+  }, [desktopHelpersEnabled, queryClient]);
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
@@ -534,6 +622,10 @@ function App() {
   }, [t]);
 
   useEffect(() => {
+    if (!localEnvHelpersEnabled) {
+      return;
+    }
+
     const checkEnvOnStartup = async () => {
       try {
         const allConflicts = await checkAllEnvConflicts();
@@ -555,7 +647,7 @@ function App() {
     };
 
     checkEnvOnStartup();
-  }, []);
+  }, [localEnvHelpersEnabled]);
 
   useEffect(() => {
     const checkMigration = async () => {
@@ -576,6 +668,10 @@ function App() {
   }, [t]);
 
   useEffect(() => {
+    if (!skillsEnabled) {
+      return;
+    }
+
     const checkSkillsMigration = async () => {
       try {
         const result = await invoke<{ count: number; error?: string } | null>(
@@ -601,9 +697,13 @@ function App() {
     };
 
     checkSkillsMigration();
-  }, [t, queryClient]);
+  }, [skillsEnabled, t, queryClient]);
 
   useEffect(() => {
+    if (!localEnvHelpersEnabled) {
+      return;
+    }
+
     const checkEnvOnSwitch = async () => {
       try {
         const conflicts = await checkEnvConflicts(activeApp);
@@ -632,7 +732,7 @@ function App() {
     };
 
     checkEnvOnSwitch();
-  }, [activeApp]);
+  }, [activeApp, localEnvHelpersEnabled]);
 
   const currentViewRef = useRef(currentView);
 
@@ -669,8 +769,26 @@ function App() {
 
   const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
   const [isRefreshingAllUsage, setIsRefreshingAllUsage] = useState(false);
-  const openHermesWebUI = useOpenHermesWebUI(() =>
-    setLaunchDashboardOpen(true),
+  const openHermesWebUI = useCallback(
+    async (path?: string) => {
+      if (!thirdPartyLocalToolsEnabled) {
+        return;
+      }
+      try {
+        const { hermesApi } = await import("@/lib/api/hermes");
+        await hermesApi.openWebUI(path);
+      } catch (error) {
+        const detail = extractErrorMessage(error);
+        if (detail === "hermes_web_offline") {
+          setLaunchDashboardOpen(true);
+          return;
+        }
+        toast.error(t("hermes.webui.openFailed"), {
+          description: detail || undefined,
+        });
+      }
+    },
+    [t, thirdPartyLocalToolsEnabled],
   );
 
   const usageRefreshTargets = useMemo(
@@ -775,6 +893,10 @@ function App() {
     const { provider, action } = confirmAction;
 
     if (action === "remove") {
+      if (!thirdPartyLocalToolsEnabled) {
+        setConfirmAction(null);
+        return;
+      }
       // Remove from live config only (for additive mode apps like OpenCode/OpenClaw)
       // Does NOT delete from database - provider remains in the list
       await providersApi.removeFromLiveConfig(provider.id, activeApp);
@@ -845,9 +967,10 @@ function App() {
     };
 
     if (
-      activeApp === "opencode" ||
-      activeApp === "openclaw" ||
-      activeApp === "hermes"
+      thirdPartyLocalToolsEnabled &&
+      (activeApp === "opencode" ||
+        activeApp === "openclaw" ||
+        activeApp === "hermes")
     ) {
       let liveProviderIds: string[] = [];
       try {
@@ -921,6 +1044,13 @@ function App() {
   };
 
   const handleOpenTerminal = async (provider: Provider) => {
+    if (
+      !desktopHelpersEnabled ||
+      !isCommandEnabled("open_provider_terminal", profile)
+    ) {
+      return;
+    }
+
     try {
       const selectedDir = await settingsApi.pickDirectory();
       if (!selectedDir) {
@@ -961,15 +1091,18 @@ function App() {
       await refetch();
     }
     try {
-      await providersApi.updateTrayMenu();
+      if (desktopHelpersEnabled) {
+        await providersApi.updateTrayMenu();
+      }
     } catch (error) {
       console.error("[App] Failed to refresh tray menu", error);
     }
   };
 
   const renderContent = () => {
+    const effectiveView = coerceViewForProfile(currentView, profile) as View;
     const content = (() => {
-      switch (currentView) {
+      switch (effectiveView) {
         case "settings":
           return (
             <SettingsPage
@@ -1037,65 +1170,64 @@ function App() {
           return (
             <div className="px-6 flex flex-col flex-1 min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto overflow-x-hidden pb-12 px-1">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={activeApp}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                    className="space-y-4"
-                  >
-                    <ProviderList
-                      providers={providers}
-                      currentProviderId={currentProviderId}
-                      appId={activeApp}
-                      isLoading={isLoading}
-                      isProxyRunning={isProxyRunning}
-                      isProxyTakeover={
-                        isProxyRunning && isCurrentAppTakeoverActive
-                      }
-                      activeProviderId={activeProviderId}
-                      onSwitch={switchProvider}
-                      onEdit={(provider) => {
-                        setEditingProvider(provider);
-                      }}
-                      onDelete={(provider) =>
-                        setConfirmAction({ provider, action: "delete" })
-                      }
-                      onRemoveFromConfig={
-                        activeApp === "opencode" ||
+                <div key={activeApp} className="space-y-4 animate-fade-in">
+                  <ProviderList
+                    providers={providers}
+                    currentProviderId={currentProviderId}
+                    appId={activeApp}
+                    isLoading={isLoading}
+                    isProxyRunning={isProxyRunning}
+                    isProxyTakeover={
+                      isProxyRunning && isCurrentAppTakeoverActive
+                    }
+                    activeProviderId={activeProviderId}
+                    onSwitch={switchProvider}
+                    onEdit={(provider) => {
+                      setEditingProvider(provider);
+                    }}
+                    onDelete={(provider) =>
+                      setConfirmAction({ provider, action: "delete" })
+                    }
+                    onRemoveFromConfig={
+                      thirdPartyLocalToolsEnabled &&
+                      (activeApp === "opencode" ||
                         activeApp === "openclaw" ||
-                        activeApp === "hermes"
-                          ? (provider) =>
-                              setConfirmAction({ provider, action: "remove" })
+                        activeApp === "hermes")
+                        ? (provider) =>
+                            setConfirmAction({ provider, action: "remove" })
+                        : undefined
+                    }
+                    onDisableOmo={
+                      thirdPartyLocalToolsEnabled && activeApp === "opencode"
+                        ? handleDisableOmo
+                        : undefined
+                    }
+                    onDisableOmoSlim={
+                      thirdPartyLocalToolsEnabled && activeApp === "opencode"
+                        ? handleDisableOmoSlim
+                        : undefined
+                    }
+                    onDuplicate={handleDuplicateProvider}
+                    onConfigureUsage={setUsageProvider}
+                    onOpenWebsite={handleOpenWebsite}
+                    onOpenTerminal={
+                      desktopHelpersEnabled && activeApp === "claude"
+                        ? handleOpenTerminal
+                        : undefined
+                    }
+                    onCreate={() => setIsAddOpen(true)}
+                    onSetAsDefault={
+                      thirdPartyLocalToolsEnabled && activeApp === "openclaw"
+                        ? setAsDefaultModel
+                        : thirdPartyLocalToolsEnabled && activeApp === "hermes"
+                          ? switchProvider
                           : undefined
-                      }
-                      onDisableOmo={
-                        activeApp === "opencode" ? handleDisableOmo : undefined
-                      }
-                      onDisableOmoSlim={
-                        activeApp === "opencode"
-                          ? handleDisableOmoSlim
-                          : undefined
-                      }
-                      onDuplicate={handleDuplicateProvider}
-                      onConfigureUsage={setUsageProvider}
-                      onOpenWebsite={handleOpenWebsite}
-                      onOpenTerminal={
-                        activeApp === "claude" ? handleOpenTerminal : undefined
-                      }
-                      onCreate={() => setIsAddOpen(true)}
-                      onSetAsDefault={
-                        activeApp === "openclaw"
-                          ? setAsDefaultModel
-                          : activeApp === "hermes"
-                            ? switchProvider
-                            : undefined
-                      }
-                    />
-                  </motion.div>
-                </AnimatePresence>
+                    }
+                    desktopHelpersEnabled={desktopHelpersEnabled}
+                    thirdPartyLocalToolsEnabled={thirdPartyLocalToolsEnabled}
+                    usageCapabilitiesEnabled={usageCapabilitiesEnabled}
+                  />
+                </div>
               </div>
             </div>
           );
@@ -1103,20 +1235,31 @@ function App() {
     })();
 
     return (
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={currentView}
-          className="flex-1 min-h-0"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          <Suspense fallback={lazyContentFallback}>{content}</Suspense>
-        </motion.div>
-      </AnimatePresence>
+      <div key={effectiveView} className="flex-1 min-h-0 animate-fade-in">
+        <Suspense fallback={lazyContentFallback}>{content}</Suspense>
+      </div>
     );
   };
+
+  if (profileMismatchMessage) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+        <section className="max-w-xl rounded-lg border border-destructive/40 bg-card p-6 shadow-sm">
+          <h1 className="text-lg font-semibold text-destructive">
+            ccs-web profile mismatch
+          </h1>
+          <p className="mt-3 text-sm text-muted-foreground">
+            The frontend build profile does not match the backend runtime
+            profile. Rebuild or restart the service with a consistent
+            CCS_WEB_PROFILE / VITE_CCS_WEB_PROFILE.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-md bg-muted p-3 text-xs">
+            {profileMismatchMessage}
+          </pre>
+        </section>
+      </main>
+    );
+  }
 
   // Auth loading state
   if (authLoading) {
@@ -1142,7 +1285,7 @@ function App() {
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
       style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
     >
-      {showEnvBanner && envConflicts.length > 0 && (
+      {localEnvHelpersEnabled && showEnvBanner && envConflicts.length > 0 && (
         <EnvWarningBanner
           conflicts={envConflicts}
           onDismiss={() => {
@@ -1282,7 +1425,8 @@ function App() {
                     activeApp !== "openclaw" &&
                     activeApp !== "hermes" && (
                       <>
-                        {activeApp === "claude-desktop" ? (
+                        {activeApp === "claude-desktop" &&
+                        thirdPartyLocalToolsEnabled ? (
                           <ClaudeDesktopRouteToggle />
                         ) : (
                           settingsData?.enableLocalProxy && (
@@ -1332,7 +1476,7 @@ function App() {
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}
               >
-                {currentView === "prompts" && (
+                {currentView === "prompts" && promptsEnabled && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1343,7 +1487,7 @@ function App() {
                     {t("prompts.add")}
                   </Button>
                 )}
-                {currentView === "mcp" && (
+                {currentView === "mcp" && mcpEnabled && (
                   <>
                     <Button
                       variant="ghost"
@@ -1365,7 +1509,7 @@ function App() {
                     </Button>
                   </>
                 )}
-                {currentView === "skills" && (
+                {currentView === "skills" && skillsEnabled && (
                   <>
                     <Button
                       variant="ghost"
@@ -1411,7 +1555,7 @@ function App() {
                     </Button>
                   </>
                 )}
-                {currentView === "skillsDiscovery" && (
+                {currentView === "skillsDiscovery" && skillsEnabled && (
                   <>
                     <Button
                       variant="ghost"
@@ -1437,29 +1581,26 @@ function App() {
                   <>
                     <AppSwitcher
                       activeApp={activeApp}
-                      onSwitch={setActiveApp}
+                      onSwitch={setProfiledActiveApp}
                       visibleApps={visibleApps}
                       compact={isToolbarCompact}
                     />
 
                     <div className="flex items-center gap-1 p-1 bg-muted rounded-xl">
-                      <AnimatePresence mode="wait">
-                        <motion.div
-                          key={
-                            activeApp === "openclaw"
-                              ? "openclaw"
-                              : activeApp === "hermes"
-                                ? "hermes"
-                                : "default"
-                          }
-                          className="flex items-center gap-1"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          transition={{ duration: 0.15 }}
-                        >
-                          {activeApp === "hermes" ? (
-                            <>
+                      <div
+                        key={
+                          activeApp === "openclaw"
+                            ? "openclaw"
+                            : activeApp === "hermes"
+                              ? "hermes"
+                              : "default"
+                        }
+                        className="flex items-center gap-1 animate-fade-in"
+                      >
+                        {activeApp === "hermes" &&
+                        thirdPartyLocalToolsEnabled ? (
+                          <>
+                            {skillsEnabled && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1469,24 +1610,26 @@ function App() {
                               >
                                 <Wrench className="w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("hermesMemory")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("hermes.memory.title")}
-                              >
-                                <Brain className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => void openHermesWebUI()}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("hermes.webui.open")}
-                              >
-                                <LayoutDashboard className="w-4 h-4" />
-                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setCurrentView("hermesMemory")}
+                              className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                              title={t("hermes.memory.title")}
+                            >
+                              <Brain className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void openHermesWebUI()}
+                              className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                              title={t("hermes.webui.open")}
+                            >
+                              <LayoutDashboard className="w-4 h-4" />
+                            </Button>
+                            {mcpEnabled && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1496,9 +1639,12 @@ function App() {
                               >
                                 <McpIcon size={16} />
                               </Button>
-                            </>
-                          ) : activeApp === "openclaw" ? (
-                            <>
+                            )}
+                          </>
+                        ) : activeApp === "openclaw" &&
+                          thirdPartyLocalToolsEnabled ? (
+                          <>
+                            {workspaceEnabled && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1508,6 +1654,8 @@ function App() {
                               >
                                 <FolderOpen className="w-4 h-4" />
                               </Button>
+                            )}
+                            {promptsEnabled && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1518,33 +1666,35 @@ function App() {
                               >
                                 <Book className="w-4 h-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("openclawEnv")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("openclaw.env.title")}
-                              >
-                                <KeyRound className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("openclawTools")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("openclaw.tools.title")}
-                              >
-                                <Shield className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCurrentView("openclawAgents")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                title={t("openclaw.agents.title")}
-                              >
-                                <Cpu className="w-4 h-4" />
-                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setCurrentView("openclawEnv")}
+                              className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                              title={t("openclaw.env.title")}
+                            >
+                              <KeyRound className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setCurrentView("openclawTools")}
+                              className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                              title={t("openclaw.tools.title")}
+                            >
+                              <Shield className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setCurrentView("openclawAgents")}
+                              className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                              title={t("openclaw.agents.title")}
+                            >
+                              <Cpu className="w-4 h-4" />
+                            </Button>
+                            {sessionsEnabled && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1554,66 +1704,59 @@ function App() {
                               >
                                 <History className="w-4 h-4" />
                               </Button>
-                            </>
-                          ) : (
-                            <>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            {hasSkillsSupport && (
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("skills")}
-                                className={cn(
-                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                                  "transition-all duration-200 ease-in-out overflow-hidden",
-                                  hasSkillsSupport
-                                    ? "opacity-100 w-8 scale-100 px-2"
-                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
-                                )}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("skills.manage")}
                               >
                                 <Wrench className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              {activeApp !== "claude-desktop" && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => setCurrentView("prompts")}
-                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                  title={t("prompts.manage")}
-                                  aria-label={t("prompts.manage")}
-                                >
-                                  <Book className="w-4 h-4" />
-                                </Button>
-                              )}
+                            )}
+                            {promptsEnabled &&
+                              activeApp !== "claude-desktop" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("prompts")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("prompts.manage")}
+                                aria-label={t("prompts.manage")}
+                              >
+                                <Book className="w-4 h-4" />
+                              </Button>
+                            )}
+                            {hasSessionSupport && (
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("sessions")}
-                                className={cn(
-                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
-                                  "transition-all duration-200 ease-in-out overflow-hidden",
-                                  hasSessionSupport
-                                    ? "opacity-100 w-8 scale-100 px-2"
-                                    : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
-                                )}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("sessionManager.title")}
                               >
                                 <History className="flex-shrink-0 w-4 h-4" />
                               </Button>
-                              {activeApp !== "claude-desktop" && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => setCurrentView("mcp")}
-                                  className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
-                                  title={t("mcp.title")}
-                                >
-                                  <McpIcon size={16} />
-                                </Button>
-                              )}
-                            </>
-                          )}
-                        </motion.div>
-                      </AnimatePresence>
+                            )}
+                            {mcpEnabled && activeApp !== "claude-desktop" && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("mcp")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("mcp.title")}
+                              >
+                                <McpIcon size={16} />
+                              </Button>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
 
                     <Button
@@ -1633,7 +1776,9 @@ function App() {
 
       <main className="flex-1 min-h-0 flex flex-col overflow-y-auto animate-fade-in">
         {isOpenClawView && openclawHealthWarnings.length > 0 && (
-          <OpenClawHealthBanner warnings={openclawHealthWarnings} />
+          <Suspense fallback={null}>
+            <OpenClawHealthBanner warnings={openclawHealthWarnings} />
+          </Suspense>
         )}
         {renderContent()}
       </main>
@@ -1715,6 +1860,7 @@ function App() {
           setLaunchDashboardOpen(false);
           void (async () => {
             try {
+              const { hermesApi } = await import("@/lib/api/hermes");
               await hermesApi.launchDashboard();
               toast.success(t("hermes.webui.launching"));
             } catch (error) {

@@ -3,7 +3,9 @@ use std::sync::Arc;
 use cc_switch_core::CoreContext;
 
 use crate::auth::{AuthConfig, SessionStore};
+use crate::build_info::BuildInfo;
 use crate::events::EventSender;
+use crate::profile::ProfileConfig;
 
 pub struct ServerState {
     pub auth_token: Option<String>,
@@ -12,6 +14,8 @@ pub struct ServerState {
     pub session_store: Arc<SessionStore>,
     pub auth_config: Option<AuthConfig>,
     pub allow_extension_session_header: bool,
+    pub profile: ProfileConfig,
+    pub build_info: BuildInfo,
 }
 
 impl ServerState {
@@ -21,6 +25,8 @@ impl ServerState {
         session_store: Arc<SessionStore>,
         auth_config: Option<AuthConfig>,
         allow_extension_session_header: bool,
+        profile: ProfileConfig,
+        build_info: BuildInfo,
     ) -> Arc<Self> {
         // 初始化核心上下文（数据库、SkillService 等）
         let core = CoreContext::new().unwrap_or_else(|e| {
@@ -33,6 +39,8 @@ impl ServerState {
             session_store,
             auth_config,
             allow_extension_session_header,
+            profile,
+            build_info,
         })
     }
 }

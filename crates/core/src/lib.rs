@@ -34,11 +34,12 @@ pub use cc_switch::{
     MemoryKind, ModelPricingInfo as CoreModelPricingInfo, ModelStats, OmoLocalFileData,
     OpenClawAgentsDefaults, OpenClawDefaultModel, OpenClawEnvConfig, OpenClawModelCatalogEntry,
     OpenClawToolsConfig, OptimizerConfig, PaginatedLogs, Provider as CoreProvider,
-    ProviderLimitStatus, ProviderStats, RectifierConfig, RequestLogDetail, SessionSyncResult,
-    SkillBackupEntry, SkillMigrationResult, SkillRepo, SkillStorageLocation, SkillUpdateInfo,
-    S3SyncSettings, SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig, StreamCheckResult,
-    StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult, UsageScript, UsageSummary,
-    UsageSummaryByApp, WebDavSyncSettings, WslShellPreferenceInput, WEB_COMPAT_TAURI_COMMANDS,
+    ProviderLimitStatus, ProviderStats, RectifierConfig, RequestLogDetail, S3SyncSettings,
+    SessionSyncResult, SkillBackupEntry, SkillMigrationResult, SkillRepo, SkillStorageLocation,
+    SkillUpdateInfo, SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig,
+    StreamCheckResult, StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult,
+    UsageScript, UsageSummary, UsageSummaryByApp, WebDavSyncSettings, WslShellPreferenceInput,
+    WEB_COMPAT_TAURI_COMMANDS,
 };
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
@@ -176,6 +177,7 @@ fn map_device_code_response(
 
 fn import_database_with_post_sync<F>(
     db: Arc<Database>,
+    run_live_config_post_sync: bool,
     import: F,
 ) -> Result<serde_json::Value, AppError>
 where
@@ -184,9 +186,19 @@ where
     let db_for_sync = db.clone();
     let backup_id = import(&db)?;
 
-    let warning = match ProviderService::sync_current_to_live(&AppState::new(db_for_sync.clone())) {
-        Ok(()) => match cc_switch::reload_settings() {
-            Ok(()) => None,
+    let warning = if run_live_config_post_sync {
+        match ProviderService::sync_current_to_live(&AppState::new(db_for_sync.clone())) {
+            Ok(()) => match cc_switch::reload_settings() {
+                Ok(()) => None,
+                Err(err) => Some(
+                    AppError::localized(
+                        "sync.post_operation_sync_failed",
+                        format!("后置同步状态失败: {err}"),
+                        format!("Post-operation synchronization failed: {err}"),
+                    )
+                    .to_string(),
+                ),
+            },
             Err(err) => Some(
                 AppError::localized(
                     "sync.post_operation_sync_failed",
@@ -195,15 +207,9 @@ where
                 )
                 .to_string(),
             ),
-        },
-        Err(err) => Some(
-            AppError::localized(
-                "sync.post_operation_sync_failed",
-                format!("后置同步状态失败: {err}"),
-                format!("Post-operation synchronization failed: {err}"),
-            )
-            .to_string(),
-        ),
+        }
+    } else {
+        None
     };
 
     let mut payload = serde_json::json!({
@@ -1709,19 +1715,31 @@ pub fn import_config_from_file(
     file_path: &str,
 ) -> Result<serde_json::Value, String> {
     let path_buf = std::path::PathBuf::from(file_path);
-    import_database_with_post_sync(ctx.app_state().db.clone(), |db| db.import_sql(&path_buf))
-        .map_err(|e| e.to_string())
+    import_database_with_post_sync(ctx.app_state().db.clone(), true, |db| {
+        db.import_sql(&path_buf)
+    })
+    .map_err(|e| e.to_string())
 }
 
 pub fn import_config_from_sql_bytes(
     ctx: &CoreContext,
     sql_bytes: &[u8],
 ) -> Result<serde_json::Value, String> {
+    import_config_from_sql_bytes_with_post_sync(ctx, sql_bytes, true)
+}
+
+pub fn import_config_from_sql_bytes_with_post_sync(
+    ctx: &CoreContext,
+    sql_bytes: &[u8],
+    run_live_config_post_sync: bool,
+) -> Result<serde_json::Value, String> {
     let sql_content =
         std::str::from_utf8(sql_bytes).map_err(|e| format!("SQL 文件编码无效: {e}"))?;
-    import_database_with_post_sync(ctx.app_state().db.clone(), |db| {
-        db.import_sql_string(sql_content)
-    })
+    import_database_with_post_sync(
+        ctx.app_state().db.clone(),
+        run_live_config_post_sync,
+        |db| db.import_sql_string(sql_content),
+    )
     .map_err(|e| e.to_string())
 }
 
@@ -2047,7 +2065,8 @@ pub fn s3_sync_save_settings(
 ) -> Result<serde_json::Value, String> {
     let password_touched = password_touched.unwrap_or(false);
     let existing = cc_switch::get_s3_sync_settings();
-    let mut sync_settings = resolve_secret_for_request(settings, existing.clone(), !password_touched);
+    let mut sync_settings =
+        resolve_secret_for_request(settings, existing.clone(), !password_touched);
 
     if let Some(existing_settings) = existing {
         sync_settings.status = existing_settings.status;

@@ -8,6 +8,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
+use crate::profile::CapabilityGroup;
 use crate::state::ServerState;
 
 use super::session_auth::has_valid_session;
@@ -68,7 +69,15 @@ pub async fn import_sql_upload_handler(
         }
     };
 
-    match cc_switch_core::import_config_from_sql_bytes(&state.core, bytes.as_ref()) {
+    let run_live_config_post_sync = state
+        .profile
+        .is_group_enabled(CapabilityGroup::ThirdPartyLocalTools);
+
+    match cc_switch_core::import_config_from_sql_bytes_with_post_sync(
+        &state.core,
+        bytes.as_ref(),
+        run_live_config_post_sync,
+    ) {
         Ok(result) => respond(StatusCode::OK, result),
         Err(err) => respond(
             StatusCode::BAD_REQUEST,

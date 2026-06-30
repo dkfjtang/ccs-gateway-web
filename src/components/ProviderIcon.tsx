@@ -1,10 +1,10 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   getIcon,
   hasIcon,
   getIconMetadata,
-  getIconUrl,
   isUrlIcon,
+  loadIconUrl,
 } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +25,8 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   className,
   showFallback = true,
 }) => {
+  const [loadedIconUrl, setLoadedIconUrl] = useState("");
+
   // 获取内联 SVG 字符串
   const iconSvg = useMemo(() => {
     if (icon && !isUrlIcon(icon) && hasIcon(icon)) {
@@ -33,12 +35,32 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     return "";
   }, [icon]);
 
-  // 获取图标 URL（URL_ICONS 列表中的 SVG / 光栅图片）
-  const iconUrl = useMemo(() => {
-    if (icon && isUrlIcon(icon)) {
-      return getIconUrl(icon);
+  useEffect(() => {
+    let active = true;
+
+    if (!icon || !isUrlIcon(icon)) {
+      setLoadedIconUrl("");
+      return () => {
+        active = false;
+      };
     }
-    return "";
+
+    setLoadedIconUrl("");
+    void loadIconUrl(icon)
+      .then((url) => {
+        if (active) {
+          setLoadedIconUrl(url);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setLoadedIconUrl("");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
   }, [icon]);
 
   // 计算尺寸样式
@@ -82,10 +104,10 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   }
 
   // URL-based 图标（大型 SVG / 光栅图片）：以 <img> 渲染
-  if (iconUrl) {
+  if (loadedIconUrl) {
     return (
       <img
-        src={iconUrl}
+        src={loadedIconUrl}
         alt={name}
         title={name}
         className={cn(

@@ -117,7 +117,11 @@ vi.mock("@/components/settings/ImportExportSection", () => ({
 }));
 
 vi.mock("@/components/settings/AboutSection", () => ({
-  AboutSection: ({ isPortable }: any) => <div>about:{String(isPortable)}</div>,
+  AboutSection: ({ isPortable, localEnvCheckEnabled }: any) => (
+    <div>
+      about:{String(isPortable)}:{String(localEnvCheckEnabled)}
+    </div>
+  ),
 }));
 
 const renderDialog = (
@@ -220,12 +224,12 @@ describe("SettingsPage integration", () => {
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.configDir.title"));
 
-    const browseButtons = screen.getAllByTitle("settings.browseDirectory");
-    const resetButtons = screen.getAllByTitle("settings.resetDefault");
-
     const appInput = (await screen.findByPlaceholderText(
       "settings.browsePlaceholderApp",
     )) as HTMLInputElement;
+    const browseButtons = screen.getAllByTitle("settings.browseDirectory");
+    const resetButtons = screen.getAllByTitle("settings.resetDefault");
+
     expect(appInput.value).toBe("/home/mock/.cc-switch");
 
     fireEvent.click(browseButtons[0]);

@@ -3,7 +3,7 @@ import { RefreshCw, AlertCircle, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
-import { TierBadge } from "@/components/SubscriptionQuotaFooter";
+import { TierBadge } from "@/components/subscriptionQuotaDisplay";
 import type { UsageData, Provider, UsageResult } from "@/types";
 import type { QuotaTier } from "@/types/subscription";
 

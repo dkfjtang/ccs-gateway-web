@@ -9,11 +9,16 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 /**
  * 获取供应商健康状态
  */
-export function useProviderHealth(providerId: string, appType: string) {
+export function useProviderHealth(
+  providerId: string,
+  appType: string,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = options.enabled ?? true;
   return useQuery({
     queryKey: ["providerHealth", providerId, appType],
     queryFn: () => failoverApi.getProviderHealth(providerId, appType),
-    enabled: !!providerId && !!appType,
+    enabled: enabled && !!providerId && !!appType,
     refetchInterval: 5000, // 每 5 秒刷新一次
     retry: false,
   });
@@ -94,11 +99,15 @@ export function useCircuitBreakerStats(providerId: string, appType: string) {
 /**
  * 获取故障转移队列
  */
-export function useFailoverQueue(appType: string) {
+export function useFailoverQueue(
+  appType: string,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = options.enabled ?? true;
   return useQuery({
     queryKey: ["failoverQueue", appType],
     queryFn: () => failoverApi.getFailoverQueue(appType),
-    enabled: !!appType,
+    enabled: enabled && !!appType,
   });
 }
 

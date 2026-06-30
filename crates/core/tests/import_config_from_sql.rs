@@ -15,5 +15,8 @@ fn failed_sql_upload_does_not_pollute_existing_database() {
 
     assert!(!err.is_empty());
     let after = db.export_sql_string().expect("export after");
-    assert_eq!(before, after, "failed import should not mutate existing data");
+    assert_eq!(
+        before, after,
+        "failed import should not mutate existing data"
+    );
 }

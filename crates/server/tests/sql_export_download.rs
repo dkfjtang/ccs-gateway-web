@@ -9,13 +9,19 @@ use axum::{
 use cc_switch::{AppState, Database};
 use cc_switch_core::CoreContext;
 use cc_switch_server::{
-    api::export_sql_download_handler, create_event_bus, AuthConfig, ServerState, SessionStore,
+    api::export_sql_download_handler, build_info::build_info_from_assets, create_event_bus,
+    profile::ProfileConfig, AuthConfig, ServerState, SessionStore,
 };
 use tower::util::ServiceExt;
+
+fn test_build_info(profile: &ProfileConfig) -> cc_switch_server::build_info::BuildInfo {
+    build_info_from_assets(profile, Vec::new(), "test")
+}
 
 #[tokio::test]
 async fn unauthenticated_sql_download_is_rejected_when_web_auth_is_enabled() {
     let db = Arc::new(Database::memory().expect("in-memory database"));
+    let profile = ProfileConfig::default();
     let state = Arc::new(ServerState {
         auth_token: None,
         event_bus: create_event_bus(8),
@@ -25,6 +31,8 @@ async fn unauthenticated_sql_download_is_rejected_when_web_auth_is_enabled() {
             password_hash: "test-hash".to_string(),
         }),
         allow_extension_session_header: true,
+        build_info: test_build_info(&profile),
+        profile,
     });
 
     let app = Router::new()
@@ -48,6 +56,7 @@ async fn unauthenticated_sql_download_is_rejected_when_web_auth_is_enabled() {
 #[tokio::test]
 async fn sql_download_returns_attachment_headers_and_sql_body() {
     let db = Arc::new(Database::memory().expect("in-memory database"));
+    let profile = ProfileConfig::default();
     let state = Arc::new(ServerState {
         auth_token: None,
         event_bus: create_event_bus(8),
@@ -55,6 +64,8 @@ async fn sql_download_returns_attachment_headers_and_sql_body() {
         session_store: Arc::new(SessionStore::new()),
         auth_config: None,
         allow_extension_session_header: true,
+        build_info: test_build_info(&profile),
+        profile,
     });
 
     let app = Router::new()

@@ -8,6 +8,7 @@ type ProviderCardTestProps = Partial<
 >;
 
 const useUsageQueryMock = vi.fn();
+const useProviderHealthMock = vi.fn();
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -17,7 +18,7 @@ vi.mock("react-i18next", () => ({
 }));
 
 vi.mock("@/lib/query/failover", () => ({
-  useProviderHealth: () => ({ data: null }),
+  useProviderHealth: (...args: unknown[]) => useProviderHealthMock(...args),
 }));
 
 vi.mock("@/lib/query/queries", () => ({
@@ -80,6 +81,8 @@ function getActionGroup() {
 
 describe("ProviderCard", () => {
   beforeEach(() => {
+    useProviderHealthMock.mockReset();
+    useProviderHealthMock.mockReturnValue({ data: null });
     useUsageQueryMock.mockReset();
     useUsageQueryMock.mockReturnValue({ data: null });
   });
@@ -106,6 +109,46 @@ describe("ProviderCard", () => {
     fireEvent.mouseLeave(card!);
     expect(actionGroup).toHaveClass("opacity-0");
     expect(actionGroup).toHaveClass("pointer-events-none");
+  });
+
+  it("only renders the drag handle when drag props are provided", () => {
+    const { rerender } = renderProviderCard();
+
+    expect(
+      screen.queryByRole("button", { name: "provider.dragHandle" }),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <ProviderCard
+        provider={provider}
+        isCurrent={false}
+        appId="claude"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onConfigureUsage={vi.fn()}
+        onOpenWebsite={vi.fn()}
+        onDuplicate={vi.fn()}
+        onTest={vi.fn()}
+        isProxyRunning={false}
+        dragHandleProps={{
+          attributes: {
+            role: "button",
+            tabIndex: 0,
+            "aria-disabled": false,
+            "aria-describedby": "sortable-help",
+            "aria-pressed": false,
+            "aria-roledescription": "sortable",
+          },
+          listeners: {},
+          isDragging: false,
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "provider.dragHandle" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps provider actions visible for the active provider row", () => {
@@ -146,5 +189,126 @@ describe("ProviderCard", () => {
       enabled: true,
       fetchOnMount: false,
     });
+  });
+
+  it("renders managed-account quota footers when usage capabilities are enabled", async () => {
+    renderProviderCard({
+      provider: {
+        ...provider,
+        meta: {
+          providerType: "github_copilot",
+        },
+      },
+    });
+
+    expect(await screen.findByTestId("copilot-quota-footer")).toBeInTheDocument();
+  });
+
+  it("does not render managed-account quota footers when usage capabilities are disabled", () => {
+    renderProviderCard({
+      usageCapabilitiesEnabled: false,
+      provider: {
+        ...provider,
+        meta: {
+          providerType: "github_copilot",
+        },
+      },
+    });
+
+    expect(screen.queryByTestId("copilot-quota-footer")).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-footer")).toBeInTheDocument();
+  });
+
+  it("renders official subscription quota footer when usage capabilities are enabled", async () => {
+    renderProviderCard({
+      isCurrent: true,
+      provider: {
+        ...provider,
+        category: "official",
+        settingsConfig: {},
+      },
+    });
+
+    expect(
+      await screen.findByTestId("subscription-quota-footer"),
+    ).toBeInTheDocument();
+  });
+
+  it("only enables provider health polling when failover health is visible", () => {
+    renderProviderCard({
+      isProxyRunning: false,
+      isAutoFailoverEnabled: true,
+      isInFailoverQueue: true,
+    });
+
+    expect(useProviderHealthMock).toHaveBeenCalledWith(
+      "provider-1",
+      "claude",
+      { enabled: false },
+    );
+
+    useProviderHealthMock.mockClear();
+
+    renderProviderCard({
+      isProxyRunning: true,
+      isAutoFailoverEnabled: true,
+      isInFailoverQueue: true,
+    });
+
+    expect(useProviderHealthMock).toHaveBeenCalledWith(
+      "provider-1",
+      "claude",
+      { enabled: true },
+    );
+  });
+
+  it("does not render official subscription quota footer when usage capabilities are disabled", () => {
+    renderProviderCard({
+      isCurrent: true,
+      usageCapabilitiesEnabled: false,
+      provider: {
+        ...provider,
+        category: "official",
+        settingsConfig: {},
+      },
+    });
+
+    expect(
+      screen.queryByTestId("subscription-quota-footer"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-footer")).toBeInTheDocument();
+  });
+
+  it("does not render Codex OAuth quota footer when usage capabilities are disabled", () => {
+    renderProviderCard({
+      usageCapabilitiesEnabled: false,
+      provider: {
+        ...provider,
+        meta: {
+          providerType: "codex_oauth",
+        },
+      },
+    });
+
+    expect(
+      screen.queryByTestId("codex-oauth-quota-footer"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("usage-footer")).toBeInTheDocument();
+  });
+
+  it("renders managed-account quota footers when usage capabilities are enabled", async () => {
+    renderProviderCard({
+      usageCapabilitiesEnabled: true,
+      provider: {
+        ...provider,
+        meta: {
+          providerType: "codex_oauth",
+        },
+      },
+    });
+
+    expect(
+      await screen.findByTestId("codex-oauth-quota-footer"),
+    ).toBeInTheDocument();
   });
 });

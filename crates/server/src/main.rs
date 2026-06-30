@@ -1,13 +1,13 @@
 use axum::{
     body::Body,
     extract::DefaultBodyLimit,
+    extract::State,
     http::{header, Response, StatusCode, Uri},
     response::{Html, IntoResponse},
     routing::{get, post},
     Json, Router,
 };
 use rust_embed::RustEmbed;
-use serde::Serialize;
 use std::net::{IpAddr, SocketAddr, TcpListener as StdTcpListener};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,22 +16,20 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use cc_switch_server::{
     api::{
-        export_sql_download_handler, import_sql_upload_handler, invoke_handler, upgrade_handler,
-        auth_vault_summary_handler, save_auth_vault_handler, MAX_SQL_UPLOAD_BYTES,
+        auth_vault_routes, export_sql_download_handler, import_sql_upload_handler, invoke_handler,
+        upgrade_handler, MAX_SQL_UPLOAD_BYTES,
     },
-    create_event_bus, load_auth_config, ServerState, SessionStore,
+    auth_config_for_profile,
+    build_info::{build_info_from_assets, index_assets_from_html},
+    create_event_bus, load_auth_config_result,
+    profile::ProfileConfig,
+    slim_no_auth_override_enabled, ServerState, SessionStore,
 };
 
 // 嵌入前端静态文件（构建时从 dist 目录读取）
 #[derive(RustEmbed)]
 #[folder = "../../dist/"]
 struct Assets;
-
-#[derive(Serialize)]
-struct BuildInfo {
-    build_id: String,
-    assets: Vec<String>,
-}
 
 // 静态文件处理器
 async fn static_handler(uri: Uri) -> impl IntoResponse {
@@ -72,49 +70,29 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     }
 }
 
-async fn build_info_handler() -> impl IntoResponse {
+async fn build_info_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
     (
         [(header::CACHE_CONTROL, "no-store")],
-        Json(current_build_info()),
+        Json(state.build_info.clone()),
     )
 }
 
-fn current_build_info() -> BuildInfo {
+async fn api_not_found_handler() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "api_route_not_found",
+            "message": "Unknown API route."
+        })),
+    )
+}
+
+fn current_build_info(profile: &ProfileConfig) -> cc_switch_server::build_info::BuildInfo {
     let assets = Assets::get("index.html")
         .and_then(|content| String::from_utf8(content.data.into_owned()).ok())
         .map(|html| index_assets_from_html(&html))
         .unwrap_or_default();
-    let build_id = if assets.is_empty() {
-        env!("CARGO_PKG_VERSION").to_string()
-    } else {
-        assets.join(",")
-    };
-
-    BuildInfo { build_id, assets }
-}
-
-fn build_id_from_index_html(html: &str) -> String {
-    index_assets_from_html(html).join(",")
-}
-
-fn index_assets_from_html(html: &str) -> Vec<String> {
-    let mut assets = Vec::new();
-    let mut remaining = html;
-
-    while let Some(start) = remaining.find("assets/index-") {
-        let candidate = &remaining[start..];
-        let end = candidate
-            .find(|ch| matches!(ch, '"' | '\'' | '<' | '>' | ' ' | '\n' | '\r' | '\t'))
-            .unwrap_or(candidate.len());
-        let asset = candidate[..end].trim_start_matches('/').to_string();
-        if !assets.contains(&asset) {
-            assets.push(asset);
-        }
-        remaining = &candidate[end..];
-    }
-
-    assets.sort();
-    assets
+    build_info_from_assets(profile, assets, env!("CARGO_PKG_VERSION"))
 }
 
 // 健康检查和欢迎页面
@@ -189,9 +167,12 @@ mod tests {
 <link rel="stylesheet" crossorigin href="./assets/index-CY8IdWrI.css">
 <script type="module" crossorigin src="./assets/vendor-react.js"></script>"#;
 
-        let build_id = build_id_from_index_html(html);
+        let build_id = cc_switch_server::build_info::build_id_from_index_html(html);
 
-        assert_eq!(build_id, "assets/index-BTaiIF1Z.js,assets/index-CY8IdWrI.css");
+        assert_eq!(
+            build_id,
+            "assets/index-BTaiIF1Z.js,assets/index-CY8IdWrI.css"
+        );
     }
 }
 
@@ -209,8 +190,26 @@ async fn main() {
     // Create event bus
     let event_bus = create_event_bus(100);
 
-    // Load auth configuration (None means auth is disabled)
-    let auth_config = load_auth_config();
+    let profile = ProfileConfig::from_env().unwrap_or_else(|err| {
+        tracing::error!(error = %err, "Invalid ccs-web profile");
+        std::process::exit(1);
+    });
+
+    // Load auth configuration. Full keeps the legacy "missing auth means disabled"
+    // behavior; slim production fails closed unless explicitly overridden for local tests.
+    let auth_config = auth_config_for_profile(
+        &profile,
+        load_auth_config_result(),
+        slim_no_auth_override_enabled(),
+    )
+    .unwrap_or_else(|err| {
+        tracing::error!(
+            profile = ?profile.profile,
+            reason = ?err.reason,
+            "Web authentication configuration rejected for the active ccs-web profile"
+        );
+        std::process::exit(1);
+    });
     if auth_config.is_some() {
         tracing::info!("Web authentication enabled");
     } else {
@@ -238,12 +237,15 @@ async fn main() {
 
     // Create server state
     let auth_token = std::env::var("CC_SWITCH_AUTH_TOKEN").ok();
+    let build_info = current_build_info(&profile);
     let state = ServerState::new(
         auth_token,
         event_bus,
         session_store,
         auth_config,
         allow_extension_session_header,
+        profile.clone(),
+        build_info,
     );
 
     let auto_start_proxy = std::env::var("CC_SWITCH_START_PROXY")
@@ -273,14 +275,11 @@ async fn main() {
     // Build API routes
     let api_routes = Router::new()
         .route("/invoke", post(invoke_handler))
-        .route(
-            "/auth-vault/tokens",
-            post(save_auth_vault_handler).layer(DefaultBodyLimit::max(1024 * 1024)),
-        )
-        .route("/auth-vault/tokens/summary", get(auth_vault_summary_handler))
+        .nest("/auth-vault", auth_vault_routes(&profile))
         .route("/ws", get(upgrade_handler))
         .route("/import-config", post(import_sql_upload_handler))
         .route("/export-config", get(export_sql_download_handler))
+        .fallback(api_not_found_handler)
         .layer(DefaultBodyLimit::max(MAX_SQL_UPLOAD_BYTES))
         .with_state(state.clone());
 
@@ -294,6 +293,7 @@ async fn main() {
             .route("/build-info.json", get(build_info_handler))
             .route("/health", get(welcome_handler))
             .fallback(static_handler)
+            .with_state(state.clone())
             .layer(cors)
     } else {
         tracing::warn!("No frontend assets found, running in API-only mode");
@@ -303,6 +303,7 @@ async fn main() {
             .route("/health", get(welcome_handler))
             .route("/build-info.json", get(build_info_handler))
             .nest("/api", api_routes)
+            .with_state(state.clone())
             .layer(cors)
     };
 

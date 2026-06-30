@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   Loader2,
   Save,
@@ -29,32 +35,96 @@ import { Button } from "@/components/ui/button";
 import { settingsApi } from "@/lib/api";
 import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
-import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
-import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
-import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
-import { TerminalSettings } from "@/components/settings/TerminalSettings";
-import { DirectorySettings } from "@/components/settings/DirectorySettings";
 import { ImportExportSection } from "@/components/settings/ImportExportSection";
-import { BackupListSection } from "@/components/settings/BackupListSection";
-import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import { AboutSection } from "@/components/settings/AboutSection";
-import { ProxyTabContent } from "@/components/settings/ProxyTabContent";
-import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
-import { UsageDashboard } from "@/components/usage/UsageDashboard";
-import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
-import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
 import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { getBakedProfile, isCapabilityGroupEnabled } from "@/lib/capabilities";
+
+const BackupListSection = lazy(() =>
+  import("@/components/settings/BackupListSection").then((module) => ({
+    default: module.BackupListSection,
+  })),
+);
+const DirectorySettings = lazy(() =>
+  import("@/components/settings/DirectorySettings").then((module) => ({
+    default: module.DirectorySettings,
+  })),
+);
+const ProxyTabContent = lazy(() =>
+  import("@/components/settings/ProxyTabContent").then((module) => ({
+    default: module.ProxyTabContent,
+  })),
+);
+const SkillStorageLocationSettings = lazy(() =>
+  import("@/components/settings/SkillStorageLocationSettings").then(
+    (module) => ({
+      default: module.SkillStorageLocationSettings,
+    }),
+  ),
+);
+const SkillSyncMethodSettings = lazy(() =>
+  import("@/components/settings/SkillSyncMethodSettings").then((module) => ({
+    default: module.SkillSyncMethodSettings,
+  })),
+);
+const TerminalSettings = lazy(() =>
+  import("@/components/settings/TerminalSettings").then((module) => ({
+    default: module.TerminalSettings,
+  })),
+);
+const WebdavSyncSection = lazy(() =>
+  import("@/components/settings/WebdavSyncSection").then((module) => ({
+    default: module.WebdavSyncSection,
+  })),
+);
+const WindowSettings = lazy(() =>
+  import("@/components/settings/WindowSettings").then((module) => ({
+    default: module.WindowSettings,
+  })),
+);
+const AboutSection = lazy(() =>
+  import("@/components/settings/AboutSection").then((module) => ({
+    default: module.AboutSection,
+  })),
+);
+const ModelTestConfigPanel = lazy(() =>
+  import("@/components/usage/ModelTestConfigPanel").then((module) => ({
+    default: module.ModelTestConfigPanel,
+  })),
+);
+const UsageDashboard = lazy(() =>
+  import("@/components/usage/UsageDashboard").then((module) => ({
+    default: module.UsageDashboard,
+  })),
+);
+const LogConfigPanel = lazy(() =>
+  import("@/components/settings/LogConfigPanel").then((module) => ({
+    default: module.LogConfigPanel,
+  })),
+);
+const AuthCenterPanel = lazy(() =>
+  import("@/components/settings/AuthCenterPanel").then((module) => ({
+    default: module.AuthCenterPanel,
+  })),
+);
 
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void | Promise<void>;
   defaultTab?: string;
+}
+
+function SettingsPanelFallback() {
+  return (
+    <div className="flex min-h-28 items-center justify-center rounded-lg border border-border/50 bg-muted/20">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  );
 }
 
 export function SettingsPage({
@@ -64,6 +134,20 @@ export function SettingsPage({
   defaultTab = "general",
 }: SettingsDialogProps) {
   const { t } = useTranslation();
+  const profile = getBakedProfile();
+  const localSettingsEnabled = isCapabilityGroupEnabled(
+    "local-env-helpers",
+    profile,
+  );
+  const desktopHelpersEnabled = isCapabilityGroupEnabled(
+    "desktop-helpers",
+    profile,
+  );
+  const skillsEnabled = isCapabilityGroupEnabled("skills", profile);
+  const authCenterEnabled = isCapabilityGroupEnabled(
+    "third-party-local-tools",
+    profile,
+  );
   const {
     settings,
     isLoading,
@@ -82,7 +166,7 @@ export function SettingsPage({
     autoSaveSettings,
     requiresRestart,
     acknowledgeRestart,
-  } = useSettings();
+  } = useSettings({ localSettingsEnabled });
 
   const {
     importMode,
@@ -100,17 +184,27 @@ export function SettingsPage({
     resetStatus,
   } = useImportExport({ onImportSuccess });
 
-  const { data: installedSkills } = useInstalledSkills();
+  const { data: installedSkills } = useInstalledSkills({
+    enabled: skillsEnabled,
+  });
 
   const [activeTab, setActiveTab] = useState<string>("general");
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setActiveTab(defaultTab);
+      setActiveTab(
+        defaultTab === "auth" && !authCenterEnabled ? "general" : defaultTab,
+      );
       resetStatus();
     }
-  }, [open, resetStatus, defaultTab]);
+  }, [open, resetStatus, defaultTab, authCenterEnabled]);
+
+  useEffect(() => {
+    if (activeTab === "auth" && !authCenterEnabled) {
+      setActiveTab("general");
+    }
+  }, [activeTab, authCenterEnabled]);
 
   useEffect(() => {
     if (requiresRestart) {
@@ -197,14 +291,20 @@ export function SettingsPage({
           onValueChange={setActiveTab}
           className="flex flex-col h-full"
         >
-          <TabsList className="grid w-full grid-cols-6 mb-6 glass rounded-lg">
+          <TabsList
+            className={`grid w-full ${
+              authCenterEnabled ? "grid-cols-6" : "grid-cols-5"
+            } mb-6 glass rounded-lg`}
+          >
             <TabsTrigger value="general">
               {t("settings.tabGeneral")}
             </TabsTrigger>
             <TabsTrigger value="proxy">{t("settings.tabProxy")}</TabsTrigger>
-            <TabsTrigger value="auth">
-              {t("settings.tabAuth", { defaultValue: "认证" })}
-            </TabsTrigger>
+            {authCenterEnabled && (
+              <TabsTrigger value="auth">
+                {t("settings.tabAuth", { defaultValue: "认证" })}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="advanced">
               {t("settings.tabAdvanced")}
             </TabsTrigger>
@@ -216,12 +316,7 @@ export function SettingsPage({
             <div className="flex-1 overflow-y-auto overflow-x-hidden pr-2">
               <TabsContent value="general" className="space-y-6 mt-0">
                 {settings ? (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="space-y-6"
-                  >
+                  <div className="space-y-6 animate-fade-in">
                     <LanguageSettings
                       value={settings.language}
                       onChange={(lang) => handleAutoSave({ language: lang })}
@@ -231,102 +326,118 @@ export function SettingsPage({
                       settings={settings}
                       onChange={handleAutoSave}
                     />
-                    <SkillStorageLocationSettings
-                      value={settings.skillStorageLocation ?? "cc_switch"}
-                      installedCount={installedSkills?.length ?? 0}
-                      onMigrated={(location) =>
-                        updateSettings({ skillStorageLocation: location })
-                      }
-                    />
-                    <SkillSyncMethodSettings
-                      value={settings.skillSyncMethod ?? "auto"}
-                      onChange={(method) =>
-                        handleAutoSave({ skillSyncMethod: method })
-                      }
-                    />
-                    <WindowSettings
-                      settings={settings}
-                      onChange={handleAutoSave}
-                    />
-                    <TerminalSettings
-                      value={settings.preferredTerminal}
-                      onChange={(terminal) =>
-                        handleAutoSave({ preferredTerminal: terminal })
-                      }
-                    />
-                  </motion.div>
+                    {skillsEnabled && (
+                      <>
+                        <Suspense fallback={<SettingsPanelFallback />}>
+                          <SkillStorageLocationSettings
+                            value={
+                              settings.skillStorageLocation ?? "cc_switch"
+                            }
+                            installedCount={installedSkills?.length ?? 0}
+                            onMigrated={(location) =>
+                              updateSettings({ skillStorageLocation: location })
+                            }
+                          />
+                          <SkillSyncMethodSettings
+                            value={settings.skillSyncMethod ?? "auto"}
+                            onChange={(method) =>
+                              handleAutoSave({ skillSyncMethod: method })
+                            }
+                          />
+                        </Suspense>
+                      </>
+                    )}
+                    {desktopHelpersEnabled && (
+                      <Suspense fallback={<SettingsPanelFallback />}>
+                        <WindowSettings
+                          settings={settings}
+                          onChange={handleAutoSave}
+                        />
+                      </Suspense>
+                    )}
+                    {localSettingsEnabled && (
+                      <Suspense fallback={<SettingsPanelFallback />}>
+                        <TerminalSettings
+                          value={settings.preferredTerminal}
+                          onChange={(terminal) =>
+                            handleAutoSave({ preferredTerminal: terminal })
+                          }
+                        />
+                      </Suspense>
+                    )}
+                  </div>
                 ) : null}
               </TabsContent>
 
               <TabsContent value="proxy" className="space-y-6 mt-0 pb-4">
                 {settings ? (
-                  <ProxyTabContent
-                    settings={settings}
-                    onAutoSave={handleAutoSave}
-                  />
+                  <Suspense fallback={<SettingsPanelFallback />}>
+                    <ProxyTabContent
+                      settings={settings}
+                      onAutoSave={handleAutoSave}
+                    />
+                  </Suspense>
                 ) : null}
               </TabsContent>
 
-              <TabsContent value="auth" className="space-y-6 mt-0 pb-4">
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="space-y-6"
-                >
-                  <AuthCenterPanel />
-                </motion.div>
-              </TabsContent>
+              {authCenterEnabled && (
+                <TabsContent value="auth" className="space-y-6 mt-0 pb-4">
+                  <div className="space-y-6 animate-fade-in">
+                    <Suspense fallback={<SettingsPanelFallback />}>
+                      <AuthCenterPanel />
+                    </Suspense>
+                  </div>
+                </TabsContent>
+              )}
 
               <TabsContent value="advanced" className="space-y-6 mt-0 pb-4">
                 {settings ? (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="space-y-4"
-                  >
+                  <div className="space-y-4 animate-fade-in">
                     <Accordion
                       type="multiple"
                       defaultValue={[]}
                       className="w-full space-y-4"
                     >
-                      <AccordionItem
-                        value="directory"
-                        className="rounded-xl glass-card overflow-hidden"
-                      >
-                        <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
-                          <div className="flex items-center gap-3">
-                            <FolderSearch className="h-5 w-5 text-primary" />
-                            <div className="text-left">
-                              <h3 className="text-base font-semibold">
-                                {t("settings.advanced.configDir.title")}
-                              </h3>
-                              <p className="text-sm text-muted-foreground font-normal">
-                                {t("settings.advanced.configDir.description")}
-                              </p>
+                      {localSettingsEnabled && (
+                        <AccordionItem
+                          value="directory"
+                          className="rounded-xl glass-card overflow-hidden"
+                        >
+                          <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50 data-[state=open]:bg-muted/50">
+                            <div className="flex items-center gap-3">
+                              <FolderSearch className="h-5 w-5 text-primary" />
+                              <div className="text-left">
+                                <h3 className="text-base font-semibold">
+                                  {t("settings.advanced.configDir.title")}
+                                </h3>
+                                <p className="text-sm text-muted-foreground font-normal">
+                                  {t("settings.advanced.configDir.description")}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <DirectorySettings
-                            appConfigDir={appConfigDir}
-                            resolvedDirs={resolvedDirs}
-                            onAppConfigChange={updateAppConfigDir}
-                            onBrowseAppConfig={browseAppConfigDir}
-                            onResetAppConfig={resetAppConfigDir}
-                            claudeDir={settings.claudeConfigDir}
-                            codexDir={settings.codexConfigDir}
-                            geminiDir={settings.geminiConfigDir}
-                            opencodeDir={settings.opencodeConfigDir}
-                            openclawDir={settings.openclawConfigDir}
-                            hermesDir={settings.hermesConfigDir}
-                            onDirectoryChange={updateDirectory}
-                            onBrowseDirectory={browseDirectory}
-                            onResetDirectory={resetDirectory}
-                          />
-                        </AccordionContent>
-                      </AccordionItem>
+                          </AccordionTrigger>
+                          <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
+                            <Suspense fallback={<SettingsPanelFallback />}>
+                              <DirectorySettings
+                                appConfigDir={appConfigDir}
+                                resolvedDirs={resolvedDirs}
+                                onAppConfigChange={updateAppConfigDir}
+                                onBrowseAppConfig={browseAppConfigDir}
+                                onResetAppConfig={resetAppConfigDir}
+                                claudeDir={settings.claudeConfigDir}
+                                codexDir={settings.codexConfigDir}
+                                geminiDir={settings.geminiConfigDir}
+                                opencodeDir={settings.opencodeConfigDir}
+                                openclawDir={settings.openclawConfigDir}
+                                hermesDir={settings.hermesConfigDir}
+                                onDirectoryChange={updateDirectory}
+                                onBrowseDirectory={browseDirectory}
+                                onResetDirectory={resetDirectory}
+                              />
+                            </Suspense>
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
 
                       <AccordionItem
                         value="data"
@@ -386,13 +497,17 @@ export function SettingsPage({
                           </div>
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <BackupListSection
-                            backupIntervalHours={settings.backupIntervalHours}
-                            backupRetainCount={settings.backupRetainCount}
-                            onSettingsChange={(updates) =>
-                              handleAutoSave(updates)
-                            }
-                          />
+                          <Suspense fallback={<SettingsPanelFallback />}>
+                            <BackupListSection
+                              backupIntervalHours={
+                                settings.backupIntervalHours
+                              }
+                              backupRetainCount={settings.backupRetainCount}
+                              onSettingsChange={(updates) =>
+                                handleAutoSave(updates)
+                              }
+                            />
+                          </Suspense>
                         </AccordionContent>
                       </AccordionItem>
 
@@ -414,12 +529,14 @@ export function SettingsPage({
                           </div>
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <WebdavSyncSection
-                            config={settings?.webdavSync}
-                            s3Config={settings?.s3Sync}
-                            settings={settings}
-                            onAutoSave={handleAutoSave}
-                          />
+                          <Suspense fallback={<SettingsPanelFallback />}>
+                            <WebdavSyncSection
+                              config={settings?.webdavSync}
+                              s3Config={settings?.s3Sync}
+                              settings={settings}
+                              onAutoSave={handleAutoSave}
+                            />
+                          </Suspense>
                         </AccordionContent>
                       </AccordionItem>
 
@@ -441,7 +558,9 @@ export function SettingsPage({
                           </div>
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <ModelTestConfigPanel />
+                          <Suspense fallback={<SettingsPanelFallback />}>
+                            <ModelTestConfigPanel />
+                          </Suspense>
                         </AccordionContent>
                       </AccordionItem>
 
@@ -463,20 +582,29 @@ export function SettingsPage({
                           </div>
                         </AccordionTrigger>
                         <AccordionContent className="px-6 pb-6 pt-4 border-t border-border/50">
-                          <LogConfigPanel />
+                          <Suspense fallback={<SettingsPanelFallback />}>
+                            <LogConfigPanel />
+                          </Suspense>
                         </AccordionContent>
                       </AccordionItem>
                     </Accordion>
-                  </motion.div>
+                  </div>
                 ) : null}
               </TabsContent>
 
               <TabsContent value="about" className="mt-0">
-                <AboutSection isPortable={isPortable} />
+                <Suspense fallback={<SettingsPanelFallback />}>
+                  <AboutSection
+                    isPortable={isPortable}
+                    localEnvCheckEnabled={localSettingsEnabled}
+                  />
+                </Suspense>
               </TabsContent>
 
               <TabsContent value="usage" className="mt-0">
-                <UsageDashboard />
+                <Suspense fallback={<SettingsPanelFallback />}>
+                  <UsageDashboard />
+                </Suspense>
               </TabsContent>
             </div>
 

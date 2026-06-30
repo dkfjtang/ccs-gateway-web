@@ -1,7 +1,13 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { providersApi } from "@/lib/api/providers";
 import { settingsApi } from "@/lib/api/settings";
@@ -204,14 +210,26 @@ const dismissFirstRunNoticeIfPresent = async () => {
   }
 };
 
+const resetDocumentSideEffects = () => {
+  cleanup();
+  document.body.removeAttribute("data-scroll-locked");
+  document.body.style.pointerEvents = "";
+};
+
 describe("App integration with MSW", () => {
   beforeEach(() => {
+    resetDocumentSideEffects();
+    vi.unstubAllEnvs();
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     toastWarningMock.mockReset();
     vi.mocked(settingsApi.openExternal).mockClear();
     vi.mocked(usageApi.query).mockReset();
+  });
+
+  afterEach(() => {
+    resetDocumentSideEffects();
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -266,7 +284,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 10_000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");

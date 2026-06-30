@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { lazy, Suspense, useMemo, useState, useEffect } from "react";
 import { GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -11,16 +11,21 @@ import { cn } from "@/lib/utils";
 import { ProviderActions } from "@/components/providers/ProviderActions";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import UsageFooter from "@/components/UsageFooter";
-import SubscriptionQuotaFooter from "@/components/SubscriptionQuotaFooter";
-import CopilotQuotaFooter from "@/components/CopilotQuotaFooter";
-import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import { PROVIDER_TYPES } from "@/config/constants";
-import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderSource";
 import { ProviderHealthBadge } from "@/components/providers/ProviderHealthBadge";
 import { FailoverPriorityBadge } from "@/components/providers/FailoverPriorityBadge";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
+
+const SubscriptionQuotaFooter = lazy(
+  () => import("@/components/SubscriptionQuotaFooter"),
+);
+const CopilotQuotaFooter = lazy(() => import("@/components/CopilotQuotaFooter"));
+const CodexOauthQuotaFooter = lazy(
+  () => import("@/components/CodexOauthQuotaFooter"),
+);
 
 interface DragHandleProps {
   attributes: DraggableAttributes;
@@ -58,6 +63,7 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  usageCapabilitiesEnabled?: boolean;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -150,6 +156,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  usageCapabilitiesEnabled = true,
 }: ProviderCardProps) {
   const { t } = useTranslation();
   const [areActionsVisible, setAreActionsVisible] = useState(false);
@@ -159,7 +166,11 @@ export function ProviderCard({
   const handleDisableAnyOmo = isOmoSlim ? onDisableOmoSlim : onDisableOmo;
   const isAdditiveMode = appId === "opencode" && !isAnyOmo;
 
-  const { data: health } = useProviderHealth(provider.id, appId);
+  const shouldPollProviderHealth =
+    isProxyRunning && isAutoFailoverEnabled && isInFailoverQueue;
+  const { data: health } = useProviderHealth(provider.id, appId, {
+    enabled: shouldPollProviderHealth,
+  });
 
   const fallbackUrlText = t("provider.notConfigured", {
     defaultValue: "未配置接口地址",
@@ -184,13 +195,15 @@ export function ProviderCard({
   const isOfficialBlockedByProxy =
     isProxyTakeover && (provider.category === "official" || isOfficial);
   const isCopilot =
-    provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
-    provider.meta?.usage_script?.templateType === "github_copilot";
+    usageCapabilitiesEnabled &&
+    (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
+      provider.meta?.usage_script?.templateType === "github_copilot");
   // Hermes v12+ overlay entries live under the `providers:` dict and are
   // read-only here — writes have to go through Hermes Web UI.
   const isHermesReadOnly =
     appId === "hermes" && isHermesReadOnlyProvider(provider.settingsConfig);
   const isCodexOauth =
+    usageCapabilitiesEnabled &&
     provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
 
   // 读取缓存用量数据以判断是否有多套餐；自动刷新由 UsageFooter 统一负责。
@@ -294,19 +307,21 @@ export function ProviderCard({
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
-            )}
-            aria-label={t("provider.dragHandle")}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
+          {dragHandleProps && (
+            <button
+              type="button"
+              className={cn(
+                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+                "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+                dragHandleProps.isDragging && "cursor-grabbing",
+              )}
+              aria-label={t("provider.dragHandle")}
+              {...dragHandleProps.attributes}
+              {...dragHandleProps.listeners}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          )}
 
           <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
@@ -406,23 +421,29 @@ export function ProviderCard({
           <div className="ml-auto">
             <div className="flex items-center gap-1">
               {isCopilot ? (
-                <CopilotQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                <Suspense fallback={null}>
+                  <CopilotQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
+                  />
+                </Suspense>
               ) : isCodexOauth ? (
-                <CodexOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
-              ) : isOfficial ? (
-                <SubscriptionQuotaFooter
-                  appId={appId}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                <Suspense fallback={null}>
+                  <CodexOauthQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
+                  />
+                </Suspense>
+              ) : isOfficial && usageCapabilitiesEnabled ? (
+                <Suspense fallback={null}>
+                  <SubscriptionQuotaFooter
+                    appId={appId}
+                    inline={true}
+                    isCurrent={isCurrent}
+                  />
+                </Suspense>
               ) : hasMultiplePlans ? (
                 <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                   <span className="font-medium">

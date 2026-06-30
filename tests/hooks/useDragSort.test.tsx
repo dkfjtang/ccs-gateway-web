@@ -6,6 +6,7 @@ import type { Provider } from "@/types";
 import { useDragSort } from "@/hooks/useDragSort";
 
 const updateSortOrderMock = vi.fn();
+const updateTrayMenuMock = vi.fn();
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -20,6 +21,7 @@ vi.mock("sonner", () => ({
 vi.mock("@/lib/api", () => ({
   providersApi: {
     updateSortOrder: (...args: unknown[]) => updateSortOrderMock(...args),
+    updateTrayMenu: (...args: unknown[]) => updateTrayMenuMock(...args),
   },
 }));
 
@@ -63,6 +65,7 @@ const mockProviders: Record<string, Provider> = {
 describe("useDragSort", () => {
   beforeEach(() => {
     updateSortOrderMock.mockReset();
+    updateTrayMenuMock.mockReset();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     consoleErrorSpy.mockClear();
@@ -114,8 +117,35 @@ describe("useDragSort", () => {
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["providers", "claude"],
     });
+    expect(updateTrayMenuMock).toHaveBeenCalledTimes(1);
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("should skip tray menu refresh when desktop helpers are disabled", async () => {
+    updateSortOrderMock.mockResolvedValue(true);
+    const { wrapper } = createWrapper();
+
+    const { result } = renderHook(
+      () =>
+        useDragSort(mockProviders, "claude", {
+          desktopHelpersEnabled: false,
+        }),
+      {
+        wrapper,
+      },
+    );
+
+    await act(async () => {
+      await result.current.handleDragEnd({
+        active: { id: "b" },
+        over: { id: "a" },
+      } as any);
+    });
+
+    expect(updateSortOrderMock).toHaveBeenCalledTimes(1);
+    expect(updateTrayMenuMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
   });
 
   it("should show error toast when drag operation fails", async () => {

@@ -22,6 +22,8 @@ param(
     [string]$Service = "ccs-gateway-web",
     [string]$ContainerName = "ccs-gateway-web",
     [string]$Image = "ccs-gateway-web:local",
+    [ValidateSet("full", "slim")]
+    [string]$Profile = "full",
     [string]$WebHealthUrl = "http://127.0.0.1:17666/",
     [string]$ApiHealthUrl = "http://127.0.0.1:17666/api/invoke",
     [string]$ProxyHost = "127.0.0.1",
@@ -62,6 +64,9 @@ if ($RepairRelay -and -not $DryRun -and -not $Force) {
 }
 if (-not $RepairRelay -and [string]::IsNullOrWhiteSpace($Distro)) {
     throw "WSL distro is required. Pass -Distro '<wsl-distro>' or set CCS_WSL_DISTRO for this command."
+}
+if (-not $RepairRelay -and $Profile -eq "slim" -and $SkipHealthCheck) {
+    throw "Slim profile publishing requires health and profile checks. Do not use -SkipHealthCheck with -Profile slim."
 }
 
 function Write-Step {
@@ -218,6 +223,38 @@ function Wait-ApiHealth {
     throw "$Name check failed after $HealthRetries attempts: $Url"
 }
 
+function Get-BuildInfoUrl {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WebHealthUrl
+    )
+
+    $builder = [System.UriBuilder]::new([System.Uri]$WebHealthUrl)
+    $builder.Path = "/build-info.json"
+    $builder.Query = $null
+    $builder.Fragment = $null
+    return $builder.Uri.AbsoluteUri
+}
+
+function Assert-ServedProfileMatches {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WebHealthUrl,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("full", "slim")]
+        [string]$Profile
+    )
+
+    $url = Get-BuildInfoUrl -WebHealthUrl $WebHealthUrl
+    $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10
+    $info = $response.Content | ConvertFrom-Json
+    $servedProfile = [string]$info.profile
+    Write-Host ("Served profile: expected={0} served={1}" -f $Profile, $servedProfile)
+    if ($servedProfile -ne $Profile) {
+        throw "Served build profile mismatch. expected=${Profile}; served=${servedProfile}; url=${url}"
+    }
+}
+
 function Test-TcpPort {
     param(
         [Parameter(Mandatory = $true)]
@@ -328,6 +365,33 @@ function Assert-ServedBuildMatchesDockerFrontendSnapshot {
     }
 }
 
+function Assert-SlimPublishAuthBoundary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$LocalComposePath,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("full", "slim")]
+        [string]$Profile
+    )
+
+    if ($Profile -ne "slim") {
+        return
+    }
+
+    if ($env:CCS_WEB_SLIM_ALLOW_NO_AUTH) {
+        throw "CCS_WEB_SLIM_ALLOW_NO_AUTH is not allowed when publishing -Profile slim."
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($LocalComposePath) -and (Test-Path -LiteralPath $LocalComposePath -PathType Leaf)) {
+        $localCompose = Get-Content -LiteralPath $LocalComposePath -Encoding UTF8 -Raw
+        if ($localCompose -match 'CCS_WEB_SLIM_ALLOW_NO_AUTH') {
+            throw "Local compose overlay must not set CCS_WEB_SLIM_ALLOW_NO_AUTH for -Profile slim: $LocalComposePath"
+        }
+    }
+}
+
 function ConvertTo-WslPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -399,18 +463,22 @@ function Ensure-Directory {
 function Get-LocalPublishCacheLayout {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ProjectRoot
+        [string]$ProjectRoot,
+        [ValidateSet("full", "slim")]
+        [string]$Profile = "full"
     )
 
     $buildCacheRoot = Resolve-LocalRunPath -ProjectRoot $ProjectRoot -RelativePath ".run/build-cache"
     $metaRoot = Join-Path $buildCacheRoot "meta"
+    $profileCacheRoot = Join-Path $buildCacheRoot $Profile
 
     $layout = [ordered]@{
         BuildCacheRoot = $buildCacheRoot
-        FrontendDist = Join-Path $buildCacheRoot "frontend-dist"
-        DockerCache = Join-Path $buildCacheRoot "docker"
+        ProfileCacheRoot = $profileCacheRoot
+        FrontendDist = Join-Path $profileCacheRoot "frontend-dist"
+        DockerCache = Join-Path $profileCacheRoot "docker"
         MetaRoot = $metaRoot
-        FrontendFingerprint = Join-Path $metaRoot "frontend-dist.fingerprint"
+        FrontendFingerprint = Join-Path $metaRoot "frontend-dist.$Profile.fingerprint"
     }
 
     foreach ($path in $layout.Values) {
@@ -433,7 +501,9 @@ function Get-FrontendFingerprint {
         [Parameter(Mandatory = $true)]
         [string]$ProjectRoot,
         [Parameter(Mandatory = $true)]
-        [string]$ScriptRoot
+        [string]$ScriptRoot,
+        [ValidateSet("full", "slim")]
+        [string]$Profile = "full"
     )
 
     $fingerprintScript = Join-Path $ScriptRoot "get-local-wsl-publish-fingerprint.ps1"
@@ -441,7 +511,7 @@ function Get-FrontendFingerprint {
         throw "Fingerprint script not found: $fingerprintScript"
     }
 
-    $fingerprint = powershell -NoProfile -ExecutionPolicy Bypass -File $fingerprintScript -ProjectRoot $ProjectRoot
+    $fingerprint = powershell -NoProfile -ExecutionPolicy Bypass -File $fingerprintScript -ProjectRoot $ProjectRoot -Profile $Profile
     if ($LASTEXITCODE -ne 0) {
         throw "Frontend fingerprint script failed with exit code ${LASTEXITCODE}."
     }
@@ -486,12 +556,14 @@ function Ensure-DockerFrontendSnapshot {
         [string]$ScriptRoot,
         [Parameter(Mandatory = $true)]
         [hashtable]$CacheLayout,
+        [ValidateSet("full", "slim")]
+        [string]$Profile = "full",
         [switch]$SkipFrontendBuild,
         [switch]$NoCache
     )
 
     $snapshotIndexPath = Join-Path $CacheLayout.FrontendDist "index.html"
-    $currentFingerprint = Get-FrontendFingerprint -ProjectRoot $ProjectRoot -ScriptRoot $ScriptRoot
+    $currentFingerprint = Get-FrontendFingerprint -ProjectRoot $ProjectRoot -ScriptRoot $ScriptRoot -Profile $Profile
     $storedFingerprint = Get-StoredFrontendFingerprint -FingerprintPath $CacheLayout.FrontendFingerprint
     $snapshotExists = Test-Path -LiteralPath $snapshotIndexPath -PathType Leaf
     $needsRefresh = $NoCache -or (-not $snapshotExists) -or ([string]::IsNullOrWhiteSpace($storedFingerprint)) -or ($storedFingerprint -ne $currentFingerprint)
@@ -704,29 +776,31 @@ function Invoke-DockerComposeBuildWithCache {
         [string]$DockerCacheWsl,
         [Parameter(Mandatory = $true)]
         [string]$BuilderName,
+        [ValidateSet("full", "slim")]
+        [string]$Profile = "full",
         [string]$ProxyUrl,
         [switch]$NoCache
     )
 
     $proxyPrefix = ""
-    $proxyArgs = ""
+    $proxyArgs = " --set " + (Quote-BashArg "${Service}.args.CCS_WEB_PROFILE=$Profile")
     if (-not [string]::IsNullOrWhiteSpace($ProxyUrl)) {
         $proxyArg = Quote-BashArg $ProxyUrl
         $proxyPrefix = "HTTP_PROXY=$proxyArg HTTPS_PROXY=$proxyArg http_proxy=$proxyArg https_proxy=$proxyArg "
-        $proxyArgs = " --set " + (Quote-BashArg "$Service.args.HTTP_PROXY=$ProxyUrl") + " --set " + (Quote-BashArg "$Service.args.HTTPS_PROXY=$ProxyUrl") + " --set " + (Quote-BashArg "$Service.args.http_proxy=$ProxyUrl") + " --set " + (Quote-BashArg "$Service.args.https_proxy=$ProxyUrl")
+        $proxyArgs += " --set " + (Quote-BashArg "${Service}.args.HTTP_PROXY=$ProxyUrl") + " --set " + (Quote-BashArg "${Service}.args.HTTPS_PROXY=$ProxyUrl") + " --set " + (Quote-BashArg "${Service}.args.http_proxy=$ProxyUrl") + " --set " + (Quote-BashArg "${Service}.args.https_proxy=$ProxyUrl")
     }
 
     if ($env:CCS_WEB_NODE_IMAGE) {
-        $proxyArgs += " --set " + (Quote-BashArg "$Service.args.NODE_IMAGE=$($env:CCS_WEB_NODE_IMAGE)")
+        $proxyArgs += " --set " + (Quote-BashArg "${Service}.args.NODE_IMAGE=$($env:CCS_WEB_NODE_IMAGE)")
     }
     if ($env:CCS_WEB_RUST_IMAGE) {
-        $proxyArgs += " --set " + (Quote-BashArg "$Service.args.RUST_IMAGE=$($env:CCS_WEB_RUST_IMAGE)")
+        $proxyArgs += " --set " + (Quote-BashArg "${Service}.args.RUST_IMAGE=$($env:CCS_WEB_RUST_IMAGE)")
     }
     if ($env:CCS_WEB_DEBIAN_IMAGE) {
-        $proxyArgs += " --set " + (Quote-BashArg "$Service.args.DEBIAN_IMAGE=$($env:CCS_WEB_DEBIAN_IMAGE)")
+        $proxyArgs += " --set " + (Quote-BashArg "${Service}.args.DEBIAN_IMAGE=$($env:CCS_WEB_DEBIAN_IMAGE)")
     }
 
-    $command = "cd " + (Quote-BashArg $BuildContextWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx bake --pull=false --builder " + (Quote-BashArg $BuilderName) + " --file " + (Quote-BashArg $ComposeFile) + " " + (Quote-BashArg $Service) + " --load --set " + (Quote-BashArg "$Service.context=$BuildContextWsl") + " --set " + (Quote-BashArg "$Service.cache-from=type=local,src=$DockerCacheWsl") + " --set " + (Quote-BashArg "$Service.cache-to=type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
+    $command = "cd " + (Quote-BashArg $BuildContextWsl) + " && ${proxyPrefix}DOCKER_BUILDKIT=1 docker buildx bake --pull=false --builder " + (Quote-BashArg $BuilderName) + " --file " + (Quote-BashArg $ComposeFile) + " " + (Quote-BashArg $Service) + " --load --set " + (Quote-BashArg "${Service}.context=$BuildContextWsl") + " --set " + (Quote-BashArg "${Service}.cache-from=type=local,src=$DockerCacheWsl") + " --set " + (Quote-BashArg "${Service}.cache-to=type=local,dest=$DockerCacheWsl,mode=max") + $proxyArgs
     if ($NoCache) {
         $command += " --no-cache"
     }
@@ -746,6 +820,8 @@ function Export-DockerFrontendDistWithCache {
         [string]$BuilderName,
         [Parameter(Mandatory = $true)]
         [string]$FrontendDistPath,
+        [ValidateSet("full", "slim")]
+        [string]$Profile = "full",
         [string]$ProxyUrl,
         [switch]$NoCache
     )
@@ -757,11 +833,11 @@ function Export-DockerFrontendDistWithCache {
     Ensure-Directory -Path $FrontendDistPath
 
     $proxyPrefix = ""
-    $proxyArgs = ""
+    $proxyArgs = " --build-arg CCS_WEB_PROFILE=" + (Quote-BashArg $Profile)
     if (-not [string]::IsNullOrWhiteSpace($ProxyUrl)) {
         $proxyArg = Quote-BashArg $ProxyUrl
         $proxyPrefix = "HTTP_PROXY=$proxyArg HTTPS_PROXY=$proxyArg http_proxy=$proxyArg https_proxy=$proxyArg "
-        $proxyArgs = " --build-arg HTTP_PROXY=$proxyArg --build-arg HTTPS_PROXY=$proxyArg --build-arg http_proxy=$proxyArg --build-arg https_proxy=$proxyArg"
+        $proxyArgs += " --build-arg HTTP_PROXY=$proxyArg --build-arg HTTPS_PROXY=$proxyArg --build-arg http_proxy=$proxyArg --build-arg https_proxy=$proxyArg"
     }
 
     if ($env:CCS_WEB_NODE_IMAGE) {
@@ -839,6 +915,7 @@ $composeFiles.Add($ComposeFile)
 if ($localComposePath -and (Test-Path -LiteralPath $localComposePath -PathType Leaf)) {
     $composeFiles.Add($LocalComposeFile)
 }
+Assert-SlimPublishAuthBoundary -LocalComposePath $localComposePath -Profile $Profile
 
 function Test-WslTcpPortsReleased {
     param(
@@ -1054,7 +1131,7 @@ if (-not (Test-Path -LiteralPath $composePath)) {
 
 $projectRootWsl = ConvertTo-WslPath -WindowsPath $projectRoot
 $resolvedLogDir = Resolve-LocalLogDir -ProjectRoot $projectRoot -RelativeLogDir $LogDir
-$cacheLayout = Get-LocalPublishCacheLayout -ProjectRoot $projectRoot
+$cacheLayout = Get-LocalPublishCacheLayout -ProjectRoot $projectRoot -Profile $Profile
 $dockerCacheWsl = ConvertTo-WslPath -WindowsPath $cacheLayout.DockerCache
 $builderName = Get-DockerBuildxBuilderName -ProjectRoot $projectRoot
 $buildContextWsl = Get-WslBuildContextPath -ProjectRoot $projectRoot
@@ -1076,6 +1153,7 @@ try {
     Write-Host "Service:         $Service"
     Write-Host "Container:       $ContainerName"
     Write-Host "Image:           $Image"
+    Write-Host "Profile:         $Profile"
     Write-Host "Web URL:         $WebHealthUrl"
     Write-Host "API health URL:  $ApiHealthUrl"
     Write-Host "Proxy TCP:       ${ProxyHost}:${ProxyPort}"
@@ -1110,7 +1188,7 @@ try {
     $command = "docker inspect " + (Quote-BashArg $ContainerName) + " --format " + (Quote-BashArg "id={{.Id}} image={{.Image}} created={{.Created}} restart={{.HostConfig.RestartPolicy.Name}} mounts={{range .Mounts}}{{.Source}}:{{.Destination}};{{end}}") + " 2>/dev/null || true"
     Invoke-Wsl $command
 
-    $frontendSnapshot = Ensure-DockerFrontendSnapshot -ProjectRoot $projectRoot -ScriptRoot $scriptRoot -CacheLayout $cacheLayout -SkipFrontendBuild:$SkipFrontendBuild -NoCache:$NoCache
+    $frontendSnapshot = Ensure-DockerFrontendSnapshot -ProjectRoot $projectRoot -ScriptRoot $scriptRoot -CacheLayout $cacheLayout -Profile $Profile -SkipFrontendBuild:$SkipFrontendBuild -NoCache:$NoCache
     $snapshotIndexPath = $frontendSnapshot.IndexPath
 
     if ($SkipBuild -and ($frontendSnapshot.NeedsRefresh -or (-not (Test-Path -LiteralPath $snapshotIndexPath -PathType Leaf)))) {
@@ -1123,7 +1201,7 @@ try {
 
         Write-Step "Building local image"
         Ensure-DockerBuildxBuilder -BuilderName $builderName -ProxyUrl $autoBuildProxyUrl
-        Invoke-DockerComposeBuildWithCache -ProjectRootWsl $projectRootWsl -BuildContextWsl $buildContextWsl -ComposeFile $ComposeFile -Service $Service -DockerCacheWsl $dockerCacheWsl -BuilderName $builderName -ProxyUrl $autoBuildProxyUrl -NoCache:$NoCache
+        Invoke-DockerComposeBuildWithCache -ProjectRootWsl $projectRootWsl -BuildContextWsl $buildContextWsl -ComposeFile $ComposeFile -Service $Service -DockerCacheWsl $dockerCacheWsl -BuilderName $builderName -Profile $Profile -ProxyUrl $autoBuildProxyUrl -NoCache:$NoCache
 
         $command = "docker image inspect " + (Quote-BashArg $Image) + " --format " + (Quote-BashArg "image={{.Id}} created={{.Created}} size={{.Size}}")
         Invoke-Wsl $command
@@ -1134,13 +1212,14 @@ try {
     if ($frontendSnapshot.NeedsRefresh -or (-not (Test-Path -LiteralPath $snapshotIndexPath -PathType Leaf))) {
         Write-Step "Exporting Docker frontend dist snapshot"
         Ensure-DockerBuildxBuilder -BuilderName $builderName -ProxyUrl $autoBuildProxyUrl
-        $snapshotIndexPath = Export-DockerFrontendDistWithCache -ProjectRoot $projectRoot -ProjectRootWsl $projectRootWsl -DockerCacheWsl $dockerCacheWsl -BuilderName $builderName -FrontendDistPath $cacheLayout.FrontendDist -ProxyUrl $autoBuildProxyUrl -NoCache:$NoCache
+        $snapshotIndexPath = Export-DockerFrontendDistWithCache -ProjectRoot $projectRoot -ProjectRootWsl $projectRootWsl -DockerCacheWsl $dockerCacheWsl -BuilderName $builderName -FrontendDistPath $cacheLayout.FrontendDist -Profile $Profile -ProxyUrl $autoBuildProxyUrl -NoCache:$NoCache
         Set-StoredFrontendFingerprint -FingerprintPath $cacheLayout.FrontendFingerprint -Fingerprint $frontendSnapshot.Fingerprint
     }
 
     if (-not $NoStart) {
         $publishedPorts = @($ProxyPort, 17666) | Sort-Object -Unique
         $composeArgString = " -f " + (Quote-BashArg $ComposeFile)
+        $profileEnvPrefix = "CCS_WEB_PROFILE=" + (Quote-BashArg $Profile) + " "
         if ($composeFiles.Count -gt 1) {
             $localComposeWsl = ConvertTo-WslPath -WindowsPath $localComposePath
             $composeArgString += " -f " + (Quote-BashArg $localComposeWsl)
@@ -1148,9 +1227,9 @@ try {
 
         Write-Step "Stopping existing local WSL container"
         Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "Before stop"
-        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString stop -t $StopTimeoutSeconds " + (Quote-BashArg $Service) + " || true"
+        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && ${profileEnvPrefix}docker compose$composeArgString stop -t $StopTimeoutSeconds " + (Quote-BashArg $Service) + " || true"
         Invoke-Wsl $command
-        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString rm -f " + (Quote-BashArg $Service) + " || true"
+        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && ${profileEnvPrefix}docker compose$composeArgString rm -f " + (Quote-BashArg $Service) + " || true"
         Invoke-Wsl $command
         $command = "docker ps -a --filter " + (Quote-BashArg "name=^/${ContainerName}$") + " --filter " + (Quote-BashArg "label=com.docker.compose.service=$Service") + " --format " + (Quote-BashArg "{{.ID}}") + " | xargs -r docker rm -f"
         Invoke-Wsl $command
@@ -1173,7 +1252,7 @@ try {
         }
 
         Write-Step "Recreating local WSL container"
-        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && docker compose$composeArgString up -d --force-recreate --remove-orphans " + (Quote-BashArg $Service)
+        $command = "cd " + (Quote-BashArg $projectRootWsl) + " && ${profileEnvPrefix}docker compose$composeArgString up -d --force-recreate --remove-orphans " + (Quote-BashArg $Service)
         Invoke-Wsl $command
 
         Write-Step "New container state"
@@ -1192,6 +1271,7 @@ try {
 
         Write-Step "Served build check"
         Assert-ServedBuildMatchesDockerFrontendSnapshot -SnapshotIndexPath $snapshotIndexPath -Url $WebHealthUrl
+        Assert-ServedProfileMatches -WebHealthUrl $WebHealthUrl -Profile $Profile
     }
 
     Write-Step "Done"

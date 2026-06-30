@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Server, Activity, Zap, Globe, ShieldAlert } from "lucide-react";
-import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import {
   Accordion,
@@ -82,12 +81,7 @@ export function ProxyTabContent({
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      className="space-y-4"
-    >
+    <div className="space-y-4 animate-fade-in">
       <Accordion type="multiple" defaultValue={[]} className="w-full space-y-4">
         {/* Local Proxy */}
         <AccordionItem
@@ -313,6 +307,6 @@ export function ProxyTabContent({
         onConfirm={() => void handleFailoverConfirm()}
         onCancel={() => setShowFailoverConfirm(false)}
       />
-    </motion.div>
+    </div>
   );
 }

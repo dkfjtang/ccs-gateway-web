@@ -4,13 +4,11 @@ import {
   keepPreviousData,
 } from "@tanstack/react-query";
 import { useEffect } from "react";
-import {
-  providersApi,
-  settingsApi,
-  usageApi,
-  sessionsApi,
-  type AppId,
-} from "@/lib/api";
+import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import { usageApi } from "@/lib/api/usage";
+import { sessionsApi } from "@/lib/api/sessions";
+import type { AppId } from "@/lib/api/types";
 import type {
   Provider,
   Settings,

@@ -15,13 +15,18 @@ export interface UseSettingsMetadataResult {
  * - isPortable（便携模式）
  * - requiresRestart（需要重启标志）
  */
-export function useSettingsMetadata(): UseSettingsMetadataResult {
+export function useSettingsMetadata(enabled = true): UseSettingsMetadataResult {
   const [isPortable, setIsPortable] = useState(false);
   const [requiresRestart, setRequiresRestart] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // 加载元数据
   useEffect(() => {
+    if (!enabled) {
+      setIsLoading(false);
+      return;
+    }
+
     let active = true;
     setIsLoading(true);
 
@@ -45,7 +50,7 @@ export function useSettingsMetadata(): UseSettingsMetadataResult {
     return () => {
       active = false;
     };
-  }, []);
+  }, [enabled]);
 
   const acknowledgeRestart = useCallback(() => {
     setRequiresRestart(false);

@@ -5,7 +5,8 @@ use axum::{routing::get, Router};
 use cc_switch::{AppState, Database};
 use cc_switch_core::CoreContext;
 use cc_switch_server::{
-    api::upgrade_handler, create_event_bus, AuthConfig, ServerEvent, ServerState, SessionStore,
+    api::upgrade_handler, build_info::build_info_from_assets, create_event_bus,
+    profile::ProfileConfig, AuthConfig, ServerEvent, ServerState, SessionStore,
 };
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -15,6 +16,8 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 fn test_state() -> (Arc<ServerState>, cc_switch_server::EventSender) {
     let event_bus = create_event_bus(8);
     let db = Arc::new(Database::memory().expect("in-memory database"));
+    let profile = ProfileConfig::default();
+    let build_info = build_info_from_assets(&profile, Vec::new(), "test");
     let state = Arc::new(ServerState {
         auth_token: None,
         event_bus: event_bus.clone(),
@@ -22,6 +25,8 @@ fn test_state() -> (Arc<ServerState>, cc_switch_server::EventSender) {
         session_store: Arc::new(SessionStore::new()),
         auth_config: None::<AuthConfig>,
         allow_extension_session_header: true,
+        profile,
+        build_info,
     });
 
     (state, event_bus)

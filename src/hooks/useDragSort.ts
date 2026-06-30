@@ -13,9 +13,18 @@ import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
 
-export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
+export interface UseDragSortOptions {
+  desktopHelpersEnabled?: boolean;
+}
+
+export function useDragSort(
+  providers: Record<string, Provider>,
+  appId: AppId,
+  options: UseDragSortOptions = {},
+) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
+  const { desktopHelpersEnabled = true } = options;
 
   const sortedProviders = useMemo(() => {
     const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
@@ -81,11 +90,13 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         });
 
         // 更新托盘菜单以反映新的排序（失败不影响主操作）
-        try {
-          await providersApi.updateTrayMenu();
-        } catch (trayError) {
-          console.error("Failed to update tray menu after sort", trayError);
-          // 托盘菜单更新失败不影响排序成功
+        if (desktopHelpersEnabled) {
+          try {
+            await providersApi.updateTrayMenu();
+          } catch (trayError) {
+            console.error("Failed to update tray menu after sort", trayError);
+            // 托盘菜单更新失败不影响排序成功
+          }
         }
 
         toast.success(
@@ -103,7 +114,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         );
       }
     },
-    [sortedProviders, appId, queryClient, t],
+    [sortedProviders, appId, queryClient, t, desktopHelpersEnabled],
   );
 
   return {

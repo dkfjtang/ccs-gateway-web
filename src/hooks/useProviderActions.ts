@@ -2,7 +2,9 @@ import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { providersApi, settingsApi, openclawApi, type AppId } from "@/lib/api";
+import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import type { AppId } from "@/lib/api/types";
 import type {
   Provider,
   UsageScript,
@@ -18,7 +20,12 @@ import {
   useSwitchProviderMutation,
 } from "@/lib/query";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { openclawKeys } from "@/hooks/useOpenClaw";
+import { openclawKeys } from "@/lib/query/localToolKeys";
+
+export interface ProviderActionOptions {
+  desktopHelpersEnabled?: boolean;
+  thirdPartyLocalToolsEnabled?: boolean;
+}
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -28,19 +35,30 @@ export function useProviderActions(
   activeApp: AppId,
   isProxyRunning?: boolean,
   isProxyTakeover?: boolean,
+  options: ProviderActionOptions = {},
 ) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const {
+    desktopHelpersEnabled = true,
+    thirdPartyLocalToolsEnabled = true,
+  } = options;
 
-  const addProviderMutation = useAddProviderMutation(activeApp);
+  const addProviderMutation = useAddProviderMutation(activeApp, {
+    desktopHelpersEnabled,
+  });
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
-  const deleteProviderMutation = useDeleteProviderMutation(activeApp);
-  const switchProviderMutation = useSwitchProviderMutation(activeApp);
+  const deleteProviderMutation = useDeleteProviderMutation(activeApp, {
+    desktopHelpersEnabled,
+  });
+  const switchProviderMutation = useSwitchProviderMutation(activeApp, {
+    desktopHelpersEnabled,
+  });
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
     async (provider: Provider) => {
-      if (activeApp !== "claude") return;
+      if (activeApp !== "claude" || !thirdPartyLocalToolsEnabled) return;
 
       try {
         const settings = await settingsApi.get();
@@ -61,7 +79,7 @@ export function useProviderActions(
         toast.error(detail, { duration: 4200 });
       }
     },
-    [activeApp, t],
+    [activeApp, t, thirdPartyLocalToolsEnabled],
   );
 
   // 添加供应商
@@ -77,11 +95,17 @@ export function useProviderActions(
       await addProviderMutation.mutateAsync(enhanced);
 
       // OpenClaw: register models to allowlist after adding provider
-      if (activeApp === "openclaw" && provider.suggestedDefaults) {
+      if (
+        activeApp === "openclaw" &&
+        thirdPartyLocalToolsEnabled &&
+        provider.suggestedDefaults
+      ) {
         const { model, modelCatalog } = provider.suggestedDefaults;
         let modelsRegistered = false;
 
         try {
+          const { openclawApi } = await import("@/lib/api/openclaw");
+
           // 1. Merge model catalog (allowlist)
           if (modelCatalog && Object.keys(modelCatalog).length > 0) {
             const existingCatalog = (await openclawApi.getModelCatalog()) || {};
@@ -122,7 +146,13 @@ export function useProviderActions(
         }
       }
     },
-    [addProviderMutation, activeApp, queryClient, t],
+    [
+      addProviderMutation,
+      activeApp,
+      queryClient,
+      t,
+      thirdPartyLocalToolsEnabled,
+    ],
   );
 
   // 更新供应商
@@ -131,21 +161,38 @@ export function useProviderActions(
       await updateProviderMutation.mutateAsync({ provider, originalId });
 
       // 更新托盘菜单（失败不影响主操作）
-      try {
-        await providersApi.updateTrayMenu();
-      } catch (trayError) {
-        console.error(
-          "Failed to update tray menu after updating provider",
-          trayError,
-        );
+      if (desktopHelpersEnabled) {
+        try {
+          await providersApi.updateTrayMenu();
+        } catch (trayError) {
+          console.error(
+            "Failed to update tray menu after updating provider",
+            trayError,
+          );
+        }
       }
     },
-    [updateProviderMutation],
+    [updateProviderMutation, desktopHelpersEnabled],
   );
 
   // 切换供应商
   const switchProvider = useCallback(
     async (provider: Provider) => {
+      if (
+        !thirdPartyLocalToolsEnabled &&
+        (activeApp === "claude-desktop" ||
+          activeApp === "opencode" ||
+          activeApp === "openclaw" ||
+          activeApp === "hermes")
+      ) {
+        toast.error(
+          t("notifications.capabilityDisabled", {
+            defaultValue: "当前 slim 配置已禁用此本地工具操作",
+          }),
+        );
+        return;
+      }
+
       const isCopilotProvider =
         activeApp === "claude" &&
         provider.meta?.providerType === "github_copilot";
@@ -257,6 +304,7 @@ export function useProviderActions(
       isProxyRunning,
       isProxyTakeover,
       t,
+      thirdPartyLocalToolsEnabled,
     ],
   );
 
@@ -310,6 +358,15 @@ export function useProviderActions(
   // Set provider as default model (OpenClaw only)
   const setAsDefaultModel = useCallback(
     async (provider: Provider) => {
+      if (!thirdPartyLocalToolsEnabled) {
+        toast.error(
+          t("notifications.capabilityDisabled", {
+            defaultValue: "当前 slim 配置已禁用此本地工具操作",
+          }),
+        );
+        return;
+      }
+
       const config = provider.settingsConfig as OpenClawProviderConfig;
       if (!config.models || config.models.length === 0) {
         toast.error(
@@ -326,6 +383,7 @@ export function useProviderActions(
       };
 
       try {
+        const { openclawApi } = await import("@/lib/api/openclaw");
         await openclawApi.setDefaultModel(model);
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.defaultModel,
@@ -348,7 +406,7 @@ export function useProviderActions(
         toast.error(detail);
       }
     },
-    [queryClient, t],
+    [queryClient, t, thirdPartyLocalToolsEnabled],
   );
 
   return {

@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$ProjectRoot
+    [string]$ProjectRoot,
+    [ValidateSet("full", "slim")]
+    [string]$Profile = "full"
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,8 +72,11 @@ $orderedTargets = $targets | Sort-Object -Unique
 $sha256 = [System.Security.Cryptography.SHA256]::Create()
 try {
     if ($orderedTargets.Count -eq 0) {
-        Add-FileHashInput -Hasher $sha256 -Buffer ([System.Text.Encoding]::UTF8.GetBytes("<empty>")) -Finalize
+        Add-FileHashInput -Hasher $sha256 -Buffer ([System.Text.Encoding]::UTF8.GetBytes("profile=$Profile")) -Finalize
     } else {
+        Add-FileHashInput -Hasher $sha256 -Buffer ([System.Text.Encoding]::UTF8.GetBytes("profile=$Profile"))
+        Add-FileHashInput -Hasher $sha256 -Buffer ([byte[]](0))
+
         for ($index = 0; $index -lt $orderedTargets.Count; $index++) {
             $filePath = $orderedTargets[$index]
             $relativePath = Get-RelativeUnixPath -Root $resolvedProjectRoot -Path $filePath

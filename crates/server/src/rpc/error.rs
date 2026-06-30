@@ -57,4 +57,20 @@ impl RpcError {
             data: None,
         }
     }
+
+    pub fn capability_disabled(capability: &str, command: Option<&str>) -> Self {
+        let mut data = serde_json::json!({
+            "error": "capability_disabled",
+            "capability": capability,
+            "message": "This capability is disabled in the current ccs-web profile."
+        });
+        if let Some(command) = command {
+            data["command"] = serde_json::json!(command);
+        }
+        Self {
+            code: -32043,
+            message: "capability_disabled".into(),
+            data: Some(data),
+        }
+    }
 }

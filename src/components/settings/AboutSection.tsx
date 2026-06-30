@@ -30,6 +30,7 @@ import { isWindows } from "@/lib/platform";
 
 interface AboutSectionProps {
   isPortable: boolean;
+  localEnvCheckEnabled?: boolean;
 }
 
 interface ToolVersion {
@@ -88,7 +89,10 @@ npm i -g @google/gemini-cli@latest
 # OpenCode
 curl -fsSL https://opencode.ai/install | bash`;
 
-export function AboutSection({ isPortable }: AboutSectionProps) {
+export function AboutSection({
+  isPortable,
+  localEnvCheckEnabled = true,
+}: AboutSectionProps) {
   // ... (use hooks as before) ...
   const { t } = useTranslation();
   const [version, setVersion] = useState<string | null>(null);
@@ -199,7 +203,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       try {
         const [appVersion] = await Promise.all([
           getCurrentVersion(),
-          ...(isWindows() ? [] : [loadAllToolVersions()]),
+          ...(localEnvCheckEnabled && !isWindows()
+            ? [loadAllToolVersions()]
+            : []),
         ]);
 
         if (active) {
@@ -423,7 +429,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         )}
       </motion.div>
 
-      {!isWindows() && (
+      {localEnvCheckEnabled && !isWindows() && (
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-sm font-medium">

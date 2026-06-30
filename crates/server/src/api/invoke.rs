@@ -30,7 +30,7 @@ pub struct InvokeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error: Option<Value>,
 }
 
 pub async fn invoke_handler(
@@ -65,7 +65,7 @@ pub async fn invoke_handler(
                 HeaderMap::new(),
                 Json(InvokeResponse {
                     result: None,
-                    error: Some("Unauthorized".to_string()),
+                    error: Some(serde_json::json!("Unauthorized")),
                 }),
             );
         }
@@ -102,12 +102,23 @@ pub async fn invoke_handler(
             )
         }
         Err(err) => (
-            StatusCode::BAD_REQUEST,
+            if is_capability_disabled(&err.data) {
+                StatusCode::FORBIDDEN
+            } else {
+                StatusCode::BAD_REQUEST
+            },
             HeaderMap::new(),
             Json(InvokeResponse {
                 result: None,
-                error: Some(err.message),
+                error: Some(err.data.unwrap_or_else(|| serde_json::json!(err.message))),
             }),
         ),
     }
+}
+
+fn is_capability_disabled(data: &Option<Value>) -> bool {
+    data.as_ref()
+        .and_then(|value| value.get("error"))
+        .and_then(|value| value.as_str())
+        == Some("capability_disabled")
 }

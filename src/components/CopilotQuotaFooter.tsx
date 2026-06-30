@@ -8,7 +8,7 @@ import { PROVIDER_TYPES } from "@/config/constants";
 import {
   TierBadge,
   utilizationColor,
-} from "@/components/SubscriptionQuotaFooter";
+} from "@/components/subscriptionQuotaDisplay";
 
 interface CopilotQuotaFooterProps {
   meta?: ProviderMeta;

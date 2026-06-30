@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile.web
       pull: false
+      args:
+        CCS_WEB_PROFILE: ${CCS_WEB_PROFILE:-full}
     image: ccs-gateway-web:local
     container_name: ccs-gateway-web
     restart: unless-stopped
@@ -11,6 +13,7 @@ services:
       CC_SWITCH_HOST: 0.0.0.0
       CC_SWITCH_PORT: 17666
       CC_SWITCH_AUTO_PORT: "false"
+      CCS_WEB_PROFILE: ${CCS_WEB_PROFILE:-full}
       CC_SWITCH_START_PROXY: "true"
       CC_SWITCH_ALLOW_EXTENSION_SESSION_HEADER: "true"
       RUST_LOG: cc_switch_server=info,tower_http=info

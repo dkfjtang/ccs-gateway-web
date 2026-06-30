@@ -1,25 +1,19 @@
-import { CSS } from "@dnd-kit/utilities";
-import { DndContext, closestCenter } from "@dnd-kit/core";
 import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import {
+  useCallback,
   useEffect,
+  lazy,
   useMemo,
   useRef,
+  Suspense,
   useState,
-  type CSSProperties,
+  type ComponentProps,
 } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { AlertTriangle, Search, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import { useDragSort } from "@/hooks/useDragSort";
 import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
@@ -41,12 +35,18 @@ import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
 } from "@/lib/query/omo";
-import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api/settings";
 import { toast } from "sonner";
+
+const ProviderListDnd = lazy(async () => ({
+  default: (await import("@/components/providers/ProviderListDnd"))
+    .ProviderListDnd,
+}));
+
+export type ProviderCardItemProps = ComponentProps<typeof ProviderCard>;
 
 interface ProviderListProps {
   providers: Record<string, Provider>;
@@ -68,6 +68,9 @@ interface ProviderListProps {
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  desktopHelpersEnabled?: boolean;
+  thirdPartyLocalToolsEnabled?: boolean;
+  usageCapabilitiesEnabled?: boolean;
 }
 
 export function ProviderList({
@@ -90,30 +93,52 @@ export function ProviderList({
   isProxyTakeover = false,
   activeProviderId,
   onSetAsDefault,
+  desktopHelpersEnabled = true,
+  thirdPartyLocalToolsEnabled = true,
+  usageCapabilitiesEnabled = true,
 }: ProviderListProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
-  const { sortedProviders, sensors, handleDragEnd } = useDragSort(
-    providers,
-    appId,
-  );
+  const localToolQueriesEnabled = thirdPartyLocalToolsEnabled;
+  const sortedProviders = useMemo(() => {
+    const locale = i18n.language === "zh" ? "zh-CN" : "en-US";
+    return Object.values(providers).sort((a, b) => {
+      if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
+        return a.sortIndex - b.sortIndex;
+      }
+      if (a.sortIndex !== undefined) return -1;
+      if (b.sortIndex !== undefined) return 1;
+
+      const timeA = a.createdAt ?? 0;
+      const timeB = b.createdAt ?? 0;
+      if (timeA && timeB && timeA !== timeB) {
+        return timeA - timeB;
+      }
+
+      return a.name.localeCompare(b.name, locale);
+    });
+  }, [providers, i18n.language]);
 
   const { data: opencodeLiveIds } = useQuery({
     queryKey: ["opencodeLiveProviderIds"],
     queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
-    enabled: appId === "opencode",
+    enabled: localToolQueriesEnabled && appId === "opencode",
   });
 
   // OpenClaw: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
   const { data: openclawLiveIds } = useOpenClawLiveProviderIds(
-    appId === "openclaw",
+    localToolQueriesEnabled && appId === "openclaw",
   );
 
   // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
-  const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
+  const { data: hermesLiveIds } = useHermesLiveProviderIds(
+    localToolQueriesEnabled && appId === "hermes",
+  );
 
   // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
-  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const { data: hermesModelConfig } = useHermesModelConfig(
+    localToolQueriesEnabled && appId === "hermes",
+  );
   const hermesCurrentProviderId = hermesModelConfig?.provider;
 
   // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
@@ -135,7 +160,7 @@ export function ProviderList({
 
   // OpenClaw: query default model to determine which provider is default
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
-    appId === "openclaw",
+    localToolQueriesEnabled && appId === "openclaw",
   );
 
   const isProviderDefaultModel = useCallback(
@@ -148,16 +173,26 @@ export function ProviderList({
 
   // 故障转移相关
   const { data: isAutoFailoverEnabled } = useAutoFailoverEnabled(appId);
-  const { data: failoverQueue } = useFailoverQueue(appId);
+  // Queue membership only affects the failover control UI when proxy takeover
+  // and auto failover are both active. Keep the proxy runtime path unchanged
+  // while avoiding an invisible queue request during normal provider browsing.
+  const shouldFetchFailoverQueue =
+    isProxyTakeover === true && isAutoFailoverEnabled === true;
+  const { data: failoverQueue } = useFailoverQueue(appId, {
+    enabled: shouldFetchFailoverQueue,
+  });
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
 
-  const isFailoverModeActive =
-    isProxyTakeover === true && isAutoFailoverEnabled === true;
+  const isFailoverModeActive = shouldFetchFailoverQueue;
 
   const isOpenCode = appId === "opencode";
-  const { data: currentOmoId } = useCurrentOmoProviderId(isOpenCode);
-  const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(isOpenCode);
+  const { data: currentOmoId } = useCurrentOmoProviderId(
+    localToolQueriesEnabled && isOpenCode,
+  );
+  const { data: currentOmoSlimId } = useCurrentOmoSlimProviderId(
+    localToolQueriesEnabled && isOpenCode,
+  );
 
   const getFailoverPriority = useCallback(
     (providerId: string): number | undefined => {
@@ -198,8 +233,9 @@ export function ProviderList({
   const { data: claudeDesktopStatus } = useQuery({
     queryKey: ["claudeDesktopStatus"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
-    enabled: appId === "claude-desktop",
-    refetchInterval: appId === "claude-desktop" ? 5000 : false,
+    enabled: localToolQueriesEnabled && appId === "claude-desktop",
+    refetchInterval:
+      localToolQueriesEnabled && appId === "claude-desktop" ? 5000 : false,
   });
 
   // Query settings for streamCheckConfirmed flag
@@ -241,6 +277,9 @@ export function ProviderList({
   const queryClient = useQueryClient();
   const importMutation = useMutation({
     mutationFn: async (): Promise<boolean> => {
+      if (!thirdPartyLocalToolsEnabled) {
+        return providersApi.importDefault(appId);
+      }
       if (appId === "opencode") {
         const count = await providersApi.importOpenCodeFromLive();
         return count > 0;
@@ -313,6 +352,7 @@ export function ProviderList({
       );
     });
   }, [searchTerm, sortedProviders]);
+  const isFilteringProviders = searchTerm.trim().length > 0;
 
   const claudeDesktopStatusMessages = useMemo(() => {
     if (appId !== "claude-desktop" || !claudeDesktopStatus) return [];
@@ -371,6 +411,121 @@ export function ProviderList({
     return messages;
   }, [appId, claudeDesktopStatus, t]);
 
+  const getProviderCardProps = useCallback(
+    (provider: Provider): ProviderCardItemProps => {
+      const isOmo = provider.category === "omo";
+      const isOmoSlim = provider.category === "omo-slim";
+      const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
+      const isOmoSlimCurrent =
+        isOmoSlim && provider.id === (currentOmoSlimId || "");
+      const isHermesCurrent =
+        appId === "hermes" && hermesCurrentProviderId === provider.id;
+
+      return {
+        provider,
+        isCurrent: isOmo
+          ? isOmoCurrent
+          : isOmoSlim
+            ? isOmoSlimCurrent
+            : appId === "hermes"
+              ? isHermesCurrent
+              : provider.id === currentProviderId,
+        appId,
+        isInConfig: localToolQueriesEnabled
+          ? isProviderInConfig(provider.id)
+          : true,
+        isOmo,
+        isOmoSlim,
+        onSwitch,
+        onEdit,
+        onDelete,
+        onRemoveFromConfig,
+        onDisableOmo,
+        onDisableOmoSlim,
+        onDuplicate,
+        onConfigureUsage: onConfigureUsage ?? (() => undefined),
+        onOpenWebsite,
+        onOpenTerminal,
+        onTest: handleTest,
+        isTesting: isChecking(provider.id),
+        isProxyRunning,
+        isProxyTakeover,
+        isAutoFailoverEnabled: isFailoverModeActive,
+        failoverPriority: getFailoverPriority(provider.id),
+        isInFailoverQueue: isInFailoverQueue(provider.id),
+        onToggleFailover: (enabled) => handleToggleFailover(provider.id, enabled),
+        activeProviderId,
+        isDefaultModel: !localToolQueriesEnabled
+          ? false
+          : appId === "hermes"
+            ? isHermesCurrent
+            : isProviderDefaultModel(provider.id),
+        onSetAsDefault: onSetAsDefault
+          ? () => onSetAsDefault(provider)
+          : undefined,
+        usageCapabilitiesEnabled,
+      };
+    },
+    [
+      activeProviderId,
+      appId,
+      currentOmoId,
+      currentOmoSlimId,
+      currentProviderId,
+      failoverQueue,
+      getFailoverPriority,
+      handleTest,
+      handleToggleFailover,
+      hermesCurrentProviderId,
+      isChecking,
+      isFailoverModeActive,
+      isInFailoverQueue,
+      isProviderDefaultModel,
+      isProviderInConfig,
+      isProxyRunning,
+      isProxyTakeover,
+      localToolQueriesEnabled,
+      onConfigureUsage,
+      onDelete,
+      onDisableOmo,
+      onDisableOmoSlim,
+      onDuplicate,
+      onEdit,
+      onOpenTerminal,
+      onOpenWebsite,
+      onRemoveFromConfig,
+      onSetAsDefault,
+      onSwitch,
+      usageCapabilitiesEnabled,
+    ],
+  );
+
+  const renderPlainProviderList = () => (
+    <div className="space-y-3">
+      {filteredProviders.map((provider) => (
+        <ProviderCard key={provider.id} {...getProviderCardProps(provider)} />
+      ))}
+    </div>
+  );
+
+  const renderProviderList = () => {
+    if (desktopHelpersEnabled && !isFilteringProviders) {
+      return (
+        <Suspense fallback={renderPlainProviderList()}>
+          <ProviderListDnd
+            providers={providers}
+            appId={appId}
+            desktopHelpersEnabled={desktopHelpersEnabled}
+            filteredProviders={filteredProviders}
+            getItemProps={getProviderCardProps}
+          />
+        </Suspense>
+      );
+    }
+
+    return renderPlainProviderList();
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -389,84 +544,18 @@ export function ProviderList({
       <ProviderEmptyState
         appId={appId}
         onCreate={onCreate}
-        onImport={() => importMutation.mutate()}
+        onImport={
+          thirdPartyLocalToolsEnabled ||
+          (appId !== "opencode" &&
+            appId !== "openclaw" &&
+            appId !== "hermes" &&
+            appId !== "claude-desktop")
+            ? () => importMutation.mutate()
+            : undefined
+        }
       />
     );
   }
-
-  const renderProviderList = () => (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragEnd={handleDragEnd}
-    >
-      <SortableContext
-        items={filteredProviders.map((provider) => provider.id)}
-        strategy={verticalListSortingStrategy}
-      >
-        <div className="space-y-3">
-          {filteredProviders.map((provider) => {
-            const isOmo = provider.category === "omo";
-            const isOmoSlim = provider.category === "omo-slim";
-            const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
-            const isOmoSlimCurrent =
-              isOmoSlim && provider.id === (currentOmoSlimId || "");
-            const isHermesCurrent =
-              appId === "hermes" && hermesCurrentProviderId === provider.id;
-            return (
-              <SortableProviderCard
-                key={provider.id}
-                provider={provider}
-                isCurrent={
-                  isOmo
-                    ? isOmoCurrent
-                    : isOmoSlim
-                      ? isOmoSlimCurrent
-                      : appId === "hermes"
-                        ? isHermesCurrent
-                        : provider.id === currentProviderId
-                }
-                appId={appId}
-                isInConfig={isProviderInConfig(provider.id)}
-                isOmo={isOmo}
-                isOmoSlim={isOmoSlim}
-                onSwitch={onSwitch}
-                onEdit={onEdit}
-                onDelete={onDelete}
-                onRemoveFromConfig={onRemoveFromConfig}
-                onDisableOmo={onDisableOmo}
-                onDisableOmoSlim={onDisableOmoSlim}
-                onDuplicate={onDuplicate}
-                onConfigureUsage={onConfigureUsage}
-                onOpenWebsite={onOpenWebsite}
-                onOpenTerminal={onOpenTerminal}
-                onTest={handleTest}
-                isTesting={isChecking(provider.id)}
-                isProxyRunning={isProxyRunning}
-                isProxyTakeover={isProxyTakeover}
-                isAutoFailoverEnabled={isFailoverModeActive}
-                failoverPriority={getFailoverPriority(provider.id)}
-                isInFailoverQueue={isInFailoverQueue(provider.id)}
-                onToggleFailover={(enabled) =>
-                  handleToggleFailover(provider.id, enabled)
-                }
-                activeProviderId={activeProviderId}
-                // OpenClaw: default model / Hermes: model.provider === provider.id
-                isDefaultModel={
-                  appId === "hermes"
-                    ? isHermesCurrent
-                    : isProviderDefaultModel(provider.id)
-                }
-                onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
-                }
-              />
-            );
-          })}
-        </div>
-      </SortableContext>
-    </DndContext>
-  );
 
   return (
     <div className="mt-4 space-y-4">
@@ -485,69 +574,63 @@ export function ProviderList({
           </ul>
         </div>
       )}
-      <AnimatePresence>
-        {isSearchOpen && (
-          <motion.div
-            key="provider-search"
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.98 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 sm:right-6 sm:left-auto sm:translate-x-0"
-          >
-            <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
-              <div className="relative flex items-center gap-2">
-                <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
-                <Input
-                  ref={searchInputRef}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder={t("provider.searchPlaceholder", {
-                    defaultValue: "Search name, notes, or URL...",
-                  })}
-                  aria-label={t("provider.searchAriaLabel", {
-                    defaultValue: "Search providers",
-                  })}
-                  className="pr-16 pl-9"
-                />
-                {searchTerm && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
-                    onClick={() => setSearchTerm("")}
-                  >
-                    {t("common.clear", { defaultValue: "Clear" })}
-                  </Button>
-                )}
+      {isSearchOpen && (
+        <div
+          key="provider-search"
+          className="fixed left-1/2 top-[6.5rem] z-40 w-[min(90vw,26rem)] -translate-x-1/2 animate-fade-in sm:right-6 sm:left-auto sm:translate-x-0"
+        >
+          <div className="p-4 space-y-3 border shadow-md rounded-2xl border-white/10 bg-background/95 shadow-black/20 backdrop-blur-md">
+            <div className="relative flex items-center gap-2">
+              <Search className="absolute w-4 h-4 -translate-y-1/2 pointer-events-none left-3 top-1/2 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder={t("provider.searchPlaceholder", {
+                  defaultValue: "Search name, notes, or URL...",
+                })}
+                aria-label={t("provider.searchAriaLabel", {
+                  defaultValue: "Search providers",
+                })}
+                className="pr-16 pl-9"
+              />
+              {searchTerm && (
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="ml-auto"
-                  onClick={() => setIsSearchOpen(false)}
-                  aria-label={t("provider.searchCloseAriaLabel", {
-                    defaultValue: "Close provider search",
-                  })}
+                  size="sm"
+                  className="absolute text-xs -translate-y-1/2 right-11 top-1/2"
+                  onClick={() => setSearchTerm("")}
                 >
-                  <X className="w-4 h-4" />
+                  {t("common.clear", { defaultValue: "Clear" })}
                 </Button>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>
-                  {t("provider.searchScopeHint", {
-                    defaultValue: "Matches provider name, notes, and URL.",
-                  })}
-                </span>
-                <span>
-                  {t("provider.searchCloseHint", {
-                    defaultValue: "Press Esc to close",
-                  })}
-                </span>
-              </div>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-auto"
+                onClick={() => setIsSearchOpen(false)}
+                aria-label={t("provider.searchCloseAriaLabel", {
+                  defaultValue: "Close provider search",
+                })}
+              >
+                <X className="w-4 h-4" />
+              </Button>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span>
+                {t("provider.searchScopeHint", {
+                  defaultValue: "Matches provider name, notes, and URL.",
+                })}
+              </span>
+              <span>
+                {t("provider.searchCloseHint", {
+                  defaultValue: "Press Esc to close",
+                })}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {filteredProviders.length === 0 ? (
         <div className="px-6 py-8 text-sm text-center border border-dashed rounded-lg border-border text-muted-foreground">
@@ -570,123 +653,6 @@ export function ProviderList({
           setShowStreamCheckConfirm(false);
           setPendingTestProvider(null);
         }}
-      />
-    </div>
-  );
-}
-
-interface SortableProviderCardProps {
-  provider: Provider;
-  isCurrent: boolean;
-  appId: AppId;
-  isInConfig: boolean;
-  isOmo: boolean;
-  isOmoSlim: boolean;
-  onSwitch: (provider: Provider) => void;
-  onEdit: (provider: Provider) => void;
-  onDelete: (provider: Provider) => void;
-  onRemoveFromConfig?: (provider: Provider) => void;
-  onDisableOmo?: () => void;
-  onDisableOmoSlim?: () => void;
-  onDuplicate: (provider: Provider) => void;
-  onConfigureUsage?: (provider: Provider) => void;
-  onOpenWebsite: (url: string) => void;
-  onOpenTerminal?: (provider: Provider) => void;
-  onTest?: (provider: Provider) => void;
-  isTesting: boolean;
-  isProxyRunning: boolean;
-  isProxyTakeover: boolean;
-  isAutoFailoverEnabled: boolean;
-  failoverPriority?: number;
-  isInFailoverQueue: boolean;
-  onToggleFailover: (enabled: boolean) => void;
-  activeProviderId?: string;
-  // OpenClaw: default model
-  isDefaultModel?: boolean;
-  onSetAsDefault?: () => void;
-}
-
-function SortableProviderCard({
-  provider,
-  isCurrent,
-  appId,
-  isInConfig,
-  isOmo,
-  isOmoSlim,
-  onSwitch,
-  onEdit,
-  onDelete,
-  onRemoveFromConfig,
-  onDisableOmo,
-  onDisableOmoSlim,
-  onDuplicate,
-  onConfigureUsage,
-  onOpenWebsite,
-  onOpenTerminal,
-  onTest,
-  isTesting,
-  isProxyRunning,
-  isProxyTakeover,
-  isAutoFailoverEnabled,
-  failoverPriority,
-  isInFailoverQueue,
-  onToggleFailover,
-  activeProviderId,
-  isDefaultModel,
-  onSetAsDefault,
-}: SortableProviderCardProps) {
-  const {
-    setNodeRef,
-    attributes,
-    listeners,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: provider.id });
-
-  const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
-  return (
-    <div ref={setNodeRef} style={style}>
-      <ProviderCard
-        provider={provider}
-        isCurrent={isCurrent}
-        appId={appId}
-        isInConfig={isInConfig}
-        isOmo={isOmo}
-        isOmoSlim={isOmoSlim}
-        onSwitch={onSwitch}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onRemoveFromConfig={onRemoveFromConfig}
-        onDisableOmo={onDisableOmo}
-        onDisableOmoSlim={onDisableOmoSlim}
-        onDuplicate={onDuplicate}
-        onConfigureUsage={
-          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-        }
-        onOpenWebsite={onOpenWebsite}
-        onOpenTerminal={onOpenTerminal}
-        onTest={onTest}
-        isTesting={isTesting}
-        isProxyRunning={isProxyRunning}
-        isProxyTakeover={isProxyTakeover}
-        dragHandleProps={{
-          attributes,
-          listeners,
-          isDragging,
-        }}
-        isAutoFailoverEnabled={isAutoFailoverEnabled}
-        failoverPriority={failoverPriority}
-        isInFailoverQueue={isInFailoverQueue}
-        onToggleFailover={onToggleFailover}
-        activeProviderId={activeProviderId}
-        // OpenClaw: default model
-        isDefaultModel={isDefaultModel}
-        onSetAsDefault={onSetAsDefault}
       />
     </div>
   );

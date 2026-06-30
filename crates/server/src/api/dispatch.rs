@@ -347,6 +347,10 @@ pub async fn dispatch_command(
     method: &str,
     params: &Value,
 ) -> Result<Value, RpcError> {
+    state
+        .profile
+        .ensure_command_allowed_with_params(method, params)?;
+
     let core = &state.core;
 
     match method {
@@ -529,10 +533,9 @@ pub async fn dispatch_command(
             let usage_script = params
                 .get("usageScript")
                 .map(|value| {
-                    serde_json::from_value::<cc_switch_core::UsageScript>(value.clone())
-                        .map_err(|e| {
-                            RpcError::invalid_params(format!("invalid 'usageScript' field: {e}"))
-                        })
+                    serde_json::from_value::<cc_switch_core::UsageScript>(value.clone()).map_err(
+                        |e| RpcError::invalid_params(format!("invalid 'usageScript' field: {e}")),
+                    )
                 })
                 .transpose()?;
 

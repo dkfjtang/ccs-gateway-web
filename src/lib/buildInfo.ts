@@ -1,7 +1,16 @@
+import {
+  getBakedProfile,
+  profileMatchesBuildInfo,
+  type CapabilityManifest,
+  type CcsWebProfile,
+} from "@/lib/capabilities";
+
 export interface BuildInfo {
   build_id?: string;
   buildId?: string;
   assets?: string[];
+  profile?: CcsWebProfile;
+  capabilities?: CapabilityManifest;
 }
 
 export interface BuildUpdateDecision {
@@ -50,6 +59,35 @@ export function shouldNotifyBuildUpdate({
 export async function fetchServerBuildId(
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
+  const info = await fetchServerBuildInfo(fetchImpl);
+  return info?.build_id || info?.buildId || "";
+}
+
+export async function fetchServerBuildInfo(
+  fetchImpl: typeof fetch = fetch,
+): Promise<BuildInfo | null> {
+  const existingRequest = serverBuildInfoRequests.get(fetchImpl);
+  if (existingRequest) {
+    return existingRequest;
+  }
+  const request = fetchServerBuildInfoUncached(fetchImpl);
+  const trackedRequest = request.finally(() => {
+    if (serverBuildInfoRequests.get(fetchImpl) === trackedRequest) {
+      serverBuildInfoRequests.delete(fetchImpl);
+    }
+  });
+  serverBuildInfoRequests.set(fetchImpl, trackedRequest);
+  return trackedRequest;
+}
+
+const serverBuildInfoRequests = new WeakMap<
+  typeof fetch,
+  Promise<BuildInfo | null>
+>();
+
+async function fetchServerBuildInfoUncached(
+  fetchImpl: typeof fetch,
+): Promise<BuildInfo | null> {
   const response = await fetchImpl("/build-info.json", {
     cache: "no-store",
     headers: {
@@ -57,14 +95,47 @@ export async function fetchServerBuildId(
     },
   });
   if (!response.ok) {
-    return "";
+    return null;
   }
-  const info = (await response.json()) as BuildInfo;
-  return info.build_id || info.buildId || "";
+  return (await response.json()) as BuildInfo;
+}
+
+export function assertProfileMatchesBuildInfo(
+  info: BuildInfo | null,
+  bakedProfile: CcsWebProfile = getBakedProfile(),
+): void {
+  if (!profileMatchesBuildInfo(bakedProfile, info?.profile)) {
+    throw new Error(
+      `ccs-web profile mismatch: frontend=${bakedProfile}, backend=${info?.profile}`,
+    );
+  }
+}
+
+export function getProfileMismatchMessage(
+  info: BuildInfo | null,
+  bakedProfile: CcsWebProfile = getBakedProfile(),
+): string | null {
+  try {
+    assertProfileMatchesBuildInfo(info, bakedProfile);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+export async function verifyServerBuildProfile(
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const info = await fetchServerBuildInfo(fetchImpl).catch((error) => {
+    console.error("[build-info] Failed to verify server build profile", error);
+    return null;
+  });
+  assertProfileMatchesBuildInfo(info);
 }
 
 export function startBuildUpdateMonitor(options: {
   onUpdateAvailable: () => void;
+  onProfileMismatch?: (message: string) => void;
   intervalMs?: number;
 }): () => void {
   if (typeof window === "undefined" || typeof document === "undefined") {
@@ -85,7 +156,13 @@ export function startBuildUpdateMonitor(options: {
   const check = async () => {
     if (stopped) return;
     try {
-      const serverBuildId = await fetchServerBuildId();
+      const info = await fetchServerBuildInfo();
+      const profileMismatch = getProfileMismatchMessage(info);
+      if (profileMismatch) {
+        options.onProfileMismatch?.(profileMismatch);
+        return;
+      }
+      const serverBuildId = info?.build_id || info?.buildId || "";
       const notified = shouldNotifyBuildUpdate({
         clientBuildId,
         serverBuildId,
@@ -93,8 +170,9 @@ export function startBuildUpdateMonitor(options: {
         notify: options.onUpdateAvailable,
       });
       alreadyNotified = alreadyNotified || notified;
-    } catch {
-      // Build refresh checks must not interrupt normal app usage.
+    } catch (error) {
+      console.error("[build-info] Failed to verify server build info", error);
+      // Network/build refresh errors must not interrupt normal app usage.
     }
   };
 

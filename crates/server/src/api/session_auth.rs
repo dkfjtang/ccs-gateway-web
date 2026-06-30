@@ -47,7 +47,10 @@ pub(crate) fn has_valid_session_from_header(state: &ServerState, headers: &Heade
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_event_bus, AuthConfig, ServerState, SessionStore};
+    use crate::{
+        build_info::build_info_from_assets, create_event_bus, profile::ProfileConfig, AuthConfig,
+        ServerState, SessionStore,
+    };
     use axum::http::HeaderValue;
     use cc_switch::{AppState, Database};
     use cc_switch_core::CoreContext;
@@ -55,6 +58,8 @@ mod tests {
 
     fn test_state() -> ServerState {
         let db = Arc::new(Database::memory().expect("in-memory database"));
+        let profile = ProfileConfig::default();
+        let build_info = build_info_from_assets(&profile, Vec::new(), "test");
         ServerState {
             auth_token: None,
             event_bus: create_event_bus(8),
@@ -64,6 +69,8 @@ mod tests {
                 password_hash: "test".to_string(),
             }),
             allow_extension_session_header: true,
+            profile,
+            build_info,
         }
     }
 
