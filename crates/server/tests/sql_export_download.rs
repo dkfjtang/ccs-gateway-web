@@ -33,6 +33,7 @@ async fn unauthenticated_sql_download_is_rejected_when_web_auth_is_enabled() {
         allow_extension_session_header: true,
         build_info: test_build_info(&profile),
         profile,
+        auth_vault_receive_window: Default::default(),
     });
 
     let app = Router::new()
@@ -66,6 +67,7 @@ async fn sql_download_returns_attachment_headers_and_sql_body() {
         allow_extension_session_header: true,
         build_info: test_build_info(&profile),
         profile,
+        auth_vault_receive_window: Default::default(),
     });
 
     let app = Router::new()

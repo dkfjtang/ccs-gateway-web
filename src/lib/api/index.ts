@@ -9,6 +9,7 @@ export { usageApi } from "./usage";
 export { subscriptionApi } from "./subscription";
 export { vscodeApi } from "./vscode";
 export { authApi } from "./auth";
+export { authVaultApi } from "./authVault";
 export { proxyApi } from "./proxy";
 export { openclawApi } from "./openclaw";
 export { sessionsApi } from "./sessions";
@@ -28,3 +29,7 @@ export type {
   ManagedAuthStatus,
   ManagedAuthDeviceCodeResponse,
 } from "./auth";
+export type {
+  AuthVaultReceiveClosedReason,
+  AuthVaultReceiveWindowStatus,
+} from "./authVault";

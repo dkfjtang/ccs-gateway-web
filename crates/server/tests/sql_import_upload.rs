@@ -44,6 +44,7 @@ async fn unauthenticated_sql_upload_is_rejected_when_web_auth_is_enabled() {
         allow_extension_session_header: true,
         build_info: test_build_info(&profile),
         profile,
+        auth_vault_receive_window: Default::default(),
     });
 
     let app = Router::new()
@@ -87,6 +88,7 @@ async fn invalid_sql_upload_does_not_pollute_existing_database() {
         allow_extension_session_header: true,
         build_info: test_build_info(&profile),
         profile,
+        auth_vault_receive_window: Default::default(),
     });
 
     let app = Router::new()
@@ -162,6 +164,7 @@ async fn slim_sql_upload_skips_disabled_live_sync_warning() {
         allow_extension_session_header: true,
         build_info: test_build_info(&profile),
         profile,
+        auth_vault_receive_window: Default::default(),
     });
 
     let app = Router::new()

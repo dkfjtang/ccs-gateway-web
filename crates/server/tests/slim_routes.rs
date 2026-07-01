@@ -38,6 +38,7 @@ fn test_state(profile: &str, auth_enabled: bool) -> Arc<ServerState> {
         allow_extension_session_header: true,
         profile,
         build_info,
+        auth_vault_receive_window: Default::default(),
     })
 }
 
@@ -73,6 +74,54 @@ async fn body_json(response: axum::response::Response) -> Value {
         .await
         .expect("body");
     serde_json::from_slice(&body).expect("json body")
+}
+
+fn valid_auth_vault_payload() -> String {
+    json!({
+        "sites": {
+            "example.com": {
+                "origin": "https://example.com",
+                "host": "example.com",
+                "cookieHeader": "session=full-cookie-value",
+                "cookieNames": ["session"],
+                "capturedAt": "2026-07-01T00:00:00Z"
+            }
+        },
+        "tokenVault": {}
+    })
+    .to_string()
+}
+
+fn remote_auth_vault_request(cookie: &str, body: String) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth-vault/tokens")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, cookie)
+        .header("x-ccs-auth-vault-sync", "browser-extension")
+        .extension(ConnectInfo(
+            "198.51.100.10:443"
+                .parse::<std::net::SocketAddr>()
+                .expect("remote socket addr"),
+        ))
+        .body(Body::from(body))
+        .expect("request")
+}
+
+fn remote_auth_vault_header_request(token: &str, body: String) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth-vault/tokens")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-ccs-auth-vault-sync", "browser-extension")
+        .header("x-ccs-auth-vault-session", token)
+        .extension(ConnectInfo(
+            "198.51.100.10:443"
+                .parse::<std::net::SocketAddr>()
+                .expect("remote socket addr"),
+        ))
+        .body(Body::from(body))
+        .expect("request")
 }
 
 #[tokio::test]
@@ -248,6 +297,482 @@ async fn auth_vault_tokens_rejects_before_json_parsing_in_slim() {
     let body = body_json(response).await;
     assert_eq!(body["error"], "capability_disabled");
     assert_eq!(body["capability"], "auth-vault");
+}
+
+#[tokio::test]
+async fn slim_receive_window_allows_one_cookie_authenticated_token_write_only() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(Arc::clone(&state));
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+    let open_body = body_json(open_response).await;
+    assert_eq!(open_body["ok"], true);
+    assert_eq!(open_body["status"], "open");
+
+    let write_response = app
+        .clone()
+        .oneshot(remote_auth_vault_request(
+            &cookie,
+            valid_auth_vault_payload(),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(write_response.status(), StatusCode::OK);
+    let write_body = body_json(write_response).await;
+    assert_eq!(write_body["ok"], true);
+    assert_eq!(write_body["siteCount"], 1);
+
+    let replay_response = app
+        .clone()
+        .oneshot(remote_auth_vault_request(&cookie, json!({}).to_string()))
+        .await
+        .expect("response");
+    assert_eq!(replay_response.status(), StatusCode::FORBIDDEN);
+    let replay_body = body_json(replay_response).await;
+    assert_eq!(replay_body["error"], "auth_vault_receive_window_closed");
+
+    let summary_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth-vault/tokens/summary")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(summary_response.status(), StatusCode::FORBIDDEN);
+    let summary_body = body_json(summary_response).await;
+    assert_eq!(summary_body["error"], "capability_disabled");
+}
+
+#[tokio::test]
+async fn slim_receive_window_allows_remote_receive_session_header() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let token = cookie
+        .strip_prefix("cc-switch-session=")
+        .expect("session cookie token")
+        .to_string();
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    let write_response = app
+        .oneshot(remote_auth_vault_header_request(
+            &token,
+            valid_auth_vault_payload(),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(write_response.status(), StatusCode::OK);
+    let write_body = body_json(write_response).await;
+    assert_eq!(write_body["ok"], true);
+    assert_eq!(write_body["siteCount"], 1);
+}
+
+#[tokio::test]
+async fn slim_receive_window_management_requires_cookie_session() {
+    let state = test_state("slim", true);
+    let app = test_app(state);
+
+    for path in [
+        "/api/auth-vault/receive-window",
+        "/api/auth-vault/receive-window/close",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn slim_receive_window_manual_close_and_reopen() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    let close_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window/close")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(close_response.status(), StatusCode::OK);
+    let close_body = body_json(close_response).await;
+    assert_eq!(close_body["enabled"], false);
+    assert_eq!(close_body["closedReason"], "manual");
+
+    let closed_write = app
+        .clone()
+        .oneshot(remote_auth_vault_request(&cookie, json!({}).to_string()))
+        .await
+        .expect("response");
+    assert_eq!(closed_write.status(), StatusCode::FORBIDDEN);
+    let closed_write_body = body_json(closed_write).await;
+    assert_eq!(
+        closed_write_body["error"],
+        "auth_vault_receive_window_closed"
+    );
+
+    let reopen_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(reopen_response.status(), StatusCode::OK);
+    let reopen_body = body_json(reopen_response).await;
+    assert_eq!(reopen_body["enabled"], true);
+    assert_eq!(reopen_body["status"], "open");
+    assert_eq!(reopen_body["closedReason"], Value::Null);
+    let remaining = reopen_body["remainingSeconds"].as_i64().unwrap_or_default();
+    assert!(remaining > 0 && remaining <= 300);
+}
+
+#[tokio::test]
+async fn slim_receive_window_expires_and_closes() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    state.auth_vault_receive_window.open_for_seconds(-1);
+    let app = test_app(Arc::clone(&state));
+
+    let response = app
+        .oneshot(remote_auth_vault_request(
+            &cookie,
+            valid_auth_vault_payload(),
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = body_json(response).await;
+    assert_eq!(body["error"], "auth_vault_receive_window_closed");
+    let status = state.auth_vault_receive_window.status();
+    assert!(!status.enabled);
+    assert_eq!(
+        serde_json::to_value(status.closed_reason).expect("closed reason"),
+        json!("expired")
+    );
+}
+
+#[tokio::test]
+async fn slim_receive_window_rejects_remote_extension_session_header() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/tokens")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie)
+                .header("x-ccs-auth-vault-sync", "browser-extension")
+                .header("x-ccs-session", "loopback-only")
+                .extension(ConnectInfo(
+                    "198.51.100.10:443"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("remote socket addr"),
+                ))
+                .body(Body::from(json!({}).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = body_json(response).await;
+    assert_eq!(body["error"], "auth_vault_receive_forbidden_header");
+}
+
+#[tokio::test]
+async fn slim_receive_window_rejects_missing_sync_header() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/tokens")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie)
+                .extension(ConnectInfo(
+                    "198.51.100.10:443"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("remote socket addr"),
+                ))
+                .body(Body::from(valid_auth_vault_payload()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = body_json(response).await;
+    assert_eq!(body["error"], "auth_vault_receive_sync_header_required");
+}
+
+#[tokio::test]
+async fn slim_receive_window_rejects_cross_site_origin() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::HOST, "ccs.example.com")
+                .header(header::ORIGIN, "https://ccs.example.com")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/tokens")
+                .header(header::HOST, "ccs.example.com")
+                .header(header::ORIGIN, "https://attacker.example")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, cookie)
+                .header("x-ccs-auth-vault-sync", "browser-extension")
+                .extension(ConnectInfo(
+                    "198.51.100.10:443"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("remote socket addr"),
+                ))
+                .body(Body::from(valid_auth_vault_payload()))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = body_json(response).await;
+    assert_eq!(body["error"], "auth_vault_receive_origin_forbidden");
+}
+
+#[tokio::test]
+async fn slim_receive_window_allows_only_one_concurrent_success() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    let first = app.clone().oneshot(remote_auth_vault_request(
+        &cookie,
+        valid_auth_vault_payload(),
+    ));
+    let second = app.clone().oneshot(remote_auth_vault_request(
+        &cookie,
+        valid_auth_vault_payload(),
+    ));
+    let (first, second) = tokio::join!(first, second);
+    let statuses = [
+        first.expect("first response").status(),
+        second.expect("second response").status(),
+    ];
+
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::FORBIDDEN)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn slim_receive_window_closes_after_five_failed_writes() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(state);
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    for attempt in 1..=5 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/auth-vault/tokens")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::COOKIE, cookie.clone())
+                    .header("x-ccs-auth-vault-sync", "browser-extension")
+                    .extension(ConnectInfo(
+                        "198.51.100.10:443"
+                            .parse::<std::net::SocketAddr>()
+                            .expect("remote socket addr"),
+                    ))
+                    .body(Body::from(
+                        json!({
+                            "sites": {
+                                "bad host": {
+                                    "origin": "https://example.com",
+                                    "host": "bad host",
+                                    "cookieHeader": "session=value"
+                                }
+                            },
+                            "tokenVault": {}
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "attempt {attempt}"
+        );
+    }
+
+    let response = app
+        .oneshot(remote_auth_vault_request(
+            &cookie,
+            valid_auth_vault_payload(),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = body_json(response).await;
+    assert_eq!(body["error"], "auth_vault_receive_window_closed");
 }
 
 #[tokio::test]

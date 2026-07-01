@@ -3,10 +3,18 @@
   "name": "CCS 登录态同步工具",
   "version": "0.1.0",
   "description": "Capture logged-in site storage and cookie state, then sync it to CCS Web.",
-  "permissions": ["activeTab", "cookies", "permissions", "scripting", "storage"],
-  "host_permissions": ["<all_urls>", "http://127.0.0.1/*", "http://localhost/*"],
+  "permissions": [
+    "activeTab",
+    "cookies",
+    "permissions",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "optional_host_permissions": ["<all_urls>"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "action": {
     "default_title": "同步登录态到 CCS",

@@ -334,6 +334,20 @@
         "title": "数据管理",
         "description": "导入和导出本地配置数据"
       },
+      "authVaultReceive": {
+        "title": "Auth Vault 临时接收",
+        "description": "手工打开远端登录态接收窗口",
+        "switchLabel": "允许接收浏览器扩展推送",
+        "switchDescription": "打开后 5 分钟内仅允许写入一次 Auth Vault；成功、过期或连续失败 5 次会自动关闭。",
+        "statusLabel": "当前状态",
+        "statusOpen": "接收中",
+        "statusClosed": "已关闭",
+        "remainingLabel": "剩余时间",
+        "failureLabel": "失败次数",
+        "openSuccess": "Auth Vault 接收窗口已打开",
+        "closeSuccess": "Auth Vault 接收窗口已关闭",
+        "requestFailed": "Auth Vault 接收窗口操作失败"
+      },
       "backup": {
         "title": "备份与恢复",
         "description": "管理自动备份，查看和恢复数据库快照"

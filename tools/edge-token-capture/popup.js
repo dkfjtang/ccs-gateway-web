@@ -1,11 +1,17 @@
+import {
+  buildSyncRequest,
+  formatSyncError,
+  getRequiredSyncOrigins,
+  isLoopbackServerUrl,
+} from "./sync-policy.js";
+import { defaultServerUrl, normalizeServerUrl } from "./url-policy.js";
+
 const captureButton = document.getElementById("capture");
 const copyButton = document.getElementById("copy");
 const output = document.getElementById("output");
 const meta = document.getElementById("meta");
 const candidatesList = document.getElementById("candidates");
 const serverInput = document.getElementById("server");
-const defaultServerUrl = "http://127.0.0.1:17666";
-const fixedVaultPath = "/api/auth-vault/tokens";
 
 function setMeta(text, error = false) {
   meta.textContent = text;
@@ -18,21 +24,6 @@ function safeSerialize(value) {
   } catch {
     return "{}";
   }
-}
-
-function normalizeServerUrl(value) {
-  const text = String(value || "").trim().replace(/\/+$/, "");
-  if (!text) {
-    return defaultServerUrl;
-  }
-  const url = new URL(text);
-  if (!["http:", "https:"].includes(url.protocol)) {
-    throw new Error("服务地址必须以 http:// 或 https:// 开头。");
-  }
-  if (!["127.0.0.1", "localhost"].includes(url.hostname)) {
-    throw new Error("当前扩展只允许同步到 127.0.0.1 或 localhost。");
-  }
-  return url.origin;
 }
 
 async function getServerUrl() {
@@ -51,7 +42,9 @@ async function getCcsSessionHeader(serverUrl) {
     throw new Error(sessionResponse?.error || "读取 CCS 登录态失败。");
   }
   if (!sessionResponse.value) {
-    throw new Error("CCS 未登录或登录态已过期，请先打开 CCS Web 并完成登录。");
+    throw new Error(
+      "本地 CCS 未登录或登录态已过期，请先打开 CCS Web 并完成登录。",
+    );
   }
   return sessionResponse.value;
 }
@@ -68,7 +61,9 @@ function previewSecret(value) {
 }
 
 function base64UrlDecode(value) {
-  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const normalized = String(value || "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
   return atob(padded);
 }
@@ -103,7 +98,9 @@ function buildAuthTokenReview(candidate) {
   const value = String(candidate.value);
   const payload = parseJwtPayload(value);
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const expiresInSeconds = Number.isFinite(payload?.exp) ? payload.exp - nowSeconds : null;
+  const expiresInSeconds = Number.isFinite(payload?.exp)
+    ? payload.exp - nowSeconds
+    : null;
 
   return {
     source: `${candidate.source}.${candidate.key}`,
@@ -133,7 +130,11 @@ function looksLikeAuthValue(source, key, value) {
   if (!valueText || valueText.length < 20) {
     return false;
   }
-  if (/(^|[_-])(auth|access|id|api)?[_-]?(token|jwt|bearer)([_-]|$)/i.test(keyText)) {
+  if (
+    /(^|[_-])(auth|access|id|api)?[_-]?(token|jwt|bearer)([_-]|$)/i.test(
+      keyText,
+    )
+  ) {
     return true;
   }
   if (
@@ -142,7 +143,9 @@ function looksLikeAuthValue(source, key, value) {
   ) {
     return true;
   }
-  if (/^(eyJ[A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.test(valueText)) {
+  if (
+    /^(eyJ[A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.test(valueText)
+  ) {
     return true;
   }
   if (/^Bearer\s+[A-Za-z0-9._~+/=-]{20,}$/i.test(valueText)) {
@@ -191,7 +194,9 @@ function findAuthCandidates(capture) {
   for (const [key, value] of Object.entries(capture?.sessionStorage || {})) {
     addCandidate("sessionStorage", key, value);
   }
-  for (const [key, value] of Object.entries(extractCookieMap(capture?.cookie || ""))) {
+  for (const [key, value] of Object.entries(
+    extractCookieMap(capture?.cookie || ""),
+  )) {
     addCandidate("cookie", key, value);
   }
 
@@ -200,8 +205,14 @@ function findAuthCandidates(capture) {
 
 function pickAuthToken(candidates) {
   return (
-    candidates.find((candidate) => candidate.source !== "cookie" && candidate.key === "auth_token") ||
-    candidates.find((candidate) => candidate.source !== "cookie" && /token/i.test(candidate.key)) ||
+    candidates.find(
+      (candidate) =>
+        candidate.source !== "cookie" && candidate.key === "auth_token",
+    ) ||
+    candidates.find(
+      (candidate) =>
+        candidate.source !== "cookie" && /token/i.test(candidate.key),
+    ) ||
     candidates.find((candidate) => candidate.source !== "cookie") ||
     null
   );
@@ -216,9 +227,13 @@ function sanitizeCapture(capture) {
     url: capture?.url,
     origin: capture?.origin,
     cookieSource: capture?.cookieSource || null,
-    cookieCount: Number.isFinite(capture?.cookieCount) ? capture.cookieCount : null,
+    cookieCount: Number.isFinite(capture?.cookieCount)
+      ? capture.cookieCount
+      : null,
     cookieError: capture?.cookieError || null,
-    authCandidateCount: candidates.filter((candidate) => candidate.source !== "cookie").length,
+    authCandidateCount: candidates.filter(
+      (candidate) => candidate.source !== "cookie",
+    ).length,
     tokenCandidateCount: candidates.length,
     selectedAuthToken: buildAuthTokenReview(authToken),
     authCandidates: candidates.map(({ value, ...candidate }) => candidate),
@@ -244,15 +259,21 @@ function toSiteEntry(capture) {
     title: capture.title,
     capturedAt: capture.capturedAt,
     cookieSource: capture.cookieSource || null,
-    cookieCount: Number.isFinite(capture.cookieCount) ? capture.cookieCount : null,
-    authCandidateCount: candidates.filter((candidate) => candidate.source !== "cookie").length,
+    cookieCount: Number.isFinite(capture.cookieCount)
+      ? capture.cookieCount
+      : null,
+    authCandidateCount: candidates.filter(
+      (candidate) => candidate.source !== "cookie",
+    ).length,
     tokenCandidateCount: candidates.length,
     authToken: authToken?.value || null,
     authTokenSource: authToken ? `${authToken.source}.${authToken.key}` : null,
     authTokenPreview: authToken ? previewSecret(authToken.value) : null,
     cookieHeader: cookieHeader || null,
     cookieNames,
-    cookieHeaderPreview: cookieHeader ? `${cookieNames.join("; ")} len=${cookieHeader.length}` : null,
+    cookieHeaderPreview: cookieHeader
+      ? `${cookieNames.join("; ")} len=${cookieHeader.length}`
+      : null,
     candidates: candidates.map(({ value, ...candidate }) => candidate),
   };
 }
@@ -262,7 +283,10 @@ function buildFreshnessNote(previousSiteEntry, nextSiteEntry, summary) {
     return null;
   }
 
-  if ((summary.cookieCount || 0) === 0 && (previousSiteEntry.authToken || previousSiteEntry.cookieHeader)) {
+  if (
+    (summary.cookieCount || 0) === 0 &&
+    (previousSiteEntry.authToken || previousSiteEntry.cookieHeader)
+  ) {
     return "本次未取到 Cookie，但该站点已有历史认证记录，可能已过期、被轮换或被浏览器权限拦截。";
   }
 
@@ -378,10 +402,13 @@ async function captureCurrentTab() {
       .join("; ");
     capture.cookie = cookieHeader || capture.cookie || "";
     capture.cookieCount = cookies.length;
-    capture.cookieSource = cookieHeader ? "background.cookies" : "background.cookies(empty)";
+    capture.cookieSource = cookieHeader
+      ? "background.cookies"
+      : "background.cookies(empty)";
   } catch (error) {
     capture.cookieSource = "document.cookie";
-    capture.cookieError = error instanceof Error ? error.message : String(error);
+    capture.cookieError =
+      error instanceof Error ? error.message : String(error);
     capture.cookieCount = 0;
   }
 
@@ -401,7 +428,11 @@ async function saveCaptureToVault(capture, summary) {
     "tokenVault",
   ]);
   const previousSiteEntry = siteVault[siteEntry.host] || null;
-  const freshnessNote = buildFreshnessNote(previousSiteEntry, siteEntry, summary);
+  const freshnessNote = buildFreshnessNote(
+    previousSiteEntry,
+    siteEntry,
+    summary,
+  );
   const nextSiteVault = {
     ...siteVault,
     [siteEntry.host]: siteEntry,
@@ -410,7 +441,10 @@ async function saveCaptureToVault(capture, summary) {
     ...tokenVault,
     ...(entry ? { [entry.tokenName]: entry } : {}),
   };
-  await chrome.storage.local.set({ siteVault: nextSiteVault, tokenVault: nextVault });
+  await chrome.storage.local.set({
+    siteVault: nextSiteVault,
+    tokenVault: nextVault,
+  });
   return { siteEntry, entry, freshnessNote, previousSiteEntry };
 }
 
@@ -424,25 +458,45 @@ async function syncVaultToCcs() {
   }
 
   const serverUrl = await getServerUrl();
+  const requiredSyncOrigins = getRequiredSyncOrigins(serverUrl);
+  if (
+    requiredSyncOrigins.length &&
+    chrome.permissions?.contains &&
+    chrome.permissions?.request
+  ) {
+    const hasSyncOrigin = await chrome.permissions.contains({
+      origins: requiredSyncOrigins,
+    });
+    if (!hasSyncOrigin) {
+      const granted = await chrome.permissions.request({
+        origins: requiredSyncOrigins,
+      });
+      if (!granted) {
+        throw new Error("未授予扩展访问远程 CCS 服务地址的权限。");
+      }
+    }
+  }
   const ccsSession = await getCcsSessionHeader(serverUrl);
-  const response = await fetch(`${serverUrl}${fixedVaultPath}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CCS-Session": ccsSession,
-    },
-    body: JSON.stringify({ sites: siteVault, tokenVault }),
+  const request = buildSyncRequest({
+    serverUrl,
+    payload: { sites: siteVault, tokenVault },
+    ccsSession,
   });
+  const response = await fetch(request.url, request.init);
   const result = await response.json();
   if (!response.ok || !result.ok) {
-    throw new Error(result?.error || `CCS 返回 HTTP ${response.status}`);
+    throw new Error(formatSyncError(result, response.status));
   }
 
   return result;
 }
 
 async function loadLastCapture() {
-  const { lastCaptureSummary = null, serverUrl = defaultServerUrl, siteVault = {} } = await chrome.storage.local.get([
+  const {
+    lastCaptureSummary = null,
+    serverUrl = defaultServerUrl,
+    siteVault = {},
+  } = await chrome.storage.local.get([
     "lastCaptureSummary",
     "serverUrl",
     "siteVault",
@@ -450,8 +504,14 @@ async function loadLastCapture() {
   serverInput.value = serverUrl;
   if (lastCaptureSummary) {
     output.textContent = safeSerialize(lastCaptureSummary);
-    renderCandidates(lastCaptureSummary.authCandidates || lastCaptureSummary.tokenCandidates || []);
-    setMeta(`上次读取：${lastCaptureSummary.origin || "未知站点"}；已保存站点 ${Object.keys(siteVault).length} 个`);
+    renderCandidates(
+      lastCaptureSummary.authCandidates ||
+        lastCaptureSummary.tokenCandidates ||
+        [],
+    );
+    setMeta(
+      `上次读取：${lastCaptureSummary.origin || "未知站点"}；已保存站点 ${Object.keys(siteVault).length} 个`,
+    );
   }
 }
 
@@ -465,7 +525,8 @@ captureButton.addEventListener("click", async () => {
       lastCaptureRaw: capture,
       lastCaptureSummary: summary,
     });
-    const { siteEntry, freshnessNote, previousSiteEntry } = await saveCaptureToVault(capture, summary);
+    const { siteEntry, freshnessNote, previousSiteEntry } =
+      await saveCaptureToVault(capture, summary);
     const syncResult = await syncVaultToCcs();
     output.textContent = safeSerialize({
       capture: summary,

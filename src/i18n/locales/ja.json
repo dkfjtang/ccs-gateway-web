@@ -334,6 +334,20 @@
         "title": "データ管理",
         "description": "ローカル設定データのインポートとエクスポート"
       },
+      "authVaultReceive": {
+        "title": "Auth Vault 一時受信",
+        "description": "リモートのログイン状態受信ウィンドウを手動で開きます",
+        "switchLabel": "ブラウザー拡張の送信を許可",
+        "switchDescription": "開くと 5 分間、Auth Vault への 1 回の書き込みだけを許可します。成功、期限切れ、または連続 5 回の失敗で自動的に閉じます。",
+        "statusLabel": "現在の状態",
+        "statusOpen": "受信中",
+        "statusClosed": "閉じています",
+        "remainingLabel": "残り時間",
+        "failureLabel": "失敗回数",
+        "openSuccess": "Auth Vault 受信ウィンドウを開きました",
+        "closeSuccess": "Auth Vault 受信ウィンドウを閉じました",
+        "requestFailed": "Auth Vault 受信ウィンドウ操作に失敗しました"
+      },
       "backup": {
         "title": "バックアップと復元",
         "description": "自動バックアップの管理、データベーススナップショットの表示と復元"

@@ -1,6 +1,7 @@
 use axum::{
+    body::Bytes,
     extract::{connect_info::ConnectInfo, DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode, Uri},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -10,10 +11,16 @@ use serde_json::Value;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use crate::{
-    api::session_auth::{has_valid_session, has_valid_session_from_header, is_loopback_peer},
-    profile::{CapabilityGroup, ProfileConfig},
-    state::ServerState,
+    api::session_auth::{
+        has_valid_session, has_valid_session_from_header, has_valid_session_from_named_header,
+        is_loopback_peer,
+    },
+    profile::{CapabilityGroup, CcsWebProfile, ProfileConfig},
+    state::{AuthVaultReceiveBegin, ServerState},
 };
+
+const RECEIVE_SYNC_HEADER: &str = "x-ccs-auth-vault-sync";
+const RECEIVE_SESSION_HEADER: &str = "x-ccs-auth-vault-session";
 
 #[derive(Debug, Deserialize)]
 pub struct AuthVaultRequest {
@@ -211,6 +218,46 @@ fn unauthorized() -> (StatusCode, Json<Value>) {
     )
 }
 
+fn receive_window_closed() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "auth_vault_receive_window_closed"
+        })),
+    )
+}
+
+fn receive_forbidden_header() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "auth_vault_receive_forbidden_header"
+        })),
+    )
+}
+
+fn receive_sync_header_required() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "auth_vault_receive_sync_header_required"
+        })),
+    )
+}
+
+fn receive_origin_forbidden() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "auth_vault_receive_origin_forbidden"
+        })),
+    )
+}
+
 pub fn auth_vault_disabled() -> (StatusCode, Json<Value>) {
     (
         StatusCode::FORBIDDEN,
@@ -240,9 +287,116 @@ fn is_save_authorized(state: &ServerState, headers: &HeaderMap, peer_addr: &Sock
             && has_valid_session_from_header(state, headers))
 }
 
+fn has_extension_session_header(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-ccs-session")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+}
+
+fn has_receive_sync_header(headers: &HeaderMap) -> bool {
+    headers
+        .get(RECEIVE_SYNC_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .map(|value| value == "browser-extension")
+        .unwrap_or(false)
+}
+
+fn has_valid_receive_session(state: &ServerState, headers: &HeaderMap) -> bool {
+    has_valid_session(state, headers)
+        || has_valid_session_from_named_header(state, headers, RECEIVE_SESSION_HEADER)
+}
+
+fn request_host(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn strip_port(host: &str) -> &str {
+    if host.starts_with('[') {
+        if let Some(end) = host.find(']') {
+            return &host[..=end];
+        }
+    }
+    if host.matches(':').count() > 1 {
+        return host;
+    }
+    host.split_once(':').map(|(host, _)| host).unwrap_or(host)
+}
+
+fn uri_host(value: &str) -> Option<String> {
+    value.parse::<Uri>().ok()?.host().map(str::to_string)
+}
+
+fn is_same_request_host(headers: &HeaderMap, value: &str) -> bool {
+    let Some(request_host) = request_host(headers) else {
+        return false;
+    };
+    let Some(value_host) = uri_host(value) else {
+        return false;
+    };
+    strip_port(request_host).eq_ignore_ascii_case(strip_port(&value_host))
+}
+
+fn is_extension_origin(value: &str) -> bool {
+    let Ok(uri) = value.parse::<Uri>() else {
+        return false;
+    };
+    matches!(
+        uri.scheme_str(),
+        Some("chrome-extension" | "moz-extension" | "ms-browser-extension")
+    )
+}
+
+fn origin_or_referer_allowed(headers: &HeaderMap, allow_extension_origin: bool) -> bool {
+    let check = |value: &str| {
+        is_same_request_host(headers, value)
+            || (allow_extension_origin && is_extension_origin(value))
+    };
+
+    if let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return check(origin);
+    }
+
+    if let Some(referer) = headers
+        .get(header::REFERER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return check(referer);
+    }
+
+    true
+}
+
 pub fn auth_vault_routes(profile: &ProfileConfig) -> Router<Arc<ServerState>> {
     if !profile.is_group_enabled(CapabilityGroup::AuthVault) {
-        return Router::new().fallback(|| async { auth_vault_disabled() });
+        return Router::new()
+            .route(
+                "/tokens",
+                post(save_auth_vault_handler).layer(DefaultBodyLimit::max(1024 * 1024)),
+            )
+            .route(
+                "/receive-window",
+                post(open_auth_vault_receive_window_handler),
+            )
+            .route(
+                "/receive-window/close",
+                post(close_auth_vault_receive_window_handler),
+            )
+            .fallback(|| async { auth_vault_disabled() });
     }
 
     Router::new()
@@ -254,25 +408,128 @@ pub fn auth_vault_routes(profile: &ProfileConfig) -> Router<Arc<ServerState>> {
         .fallback(|| async { auth_vault_not_found() })
 }
 
+pub async fn open_auth_vault_receive_window_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if state.profile.profile != CcsWebProfile::Slim {
+        return auth_vault_disabled();
+    }
+    if !origin_or_referer_allowed(&headers, false) {
+        return receive_origin_forbidden();
+    }
+    if state.auth_config.is_some() && !has_valid_session(&state, &headers) {
+        return unauthorized();
+    }
+
+    let status = state.auth_vault_receive_window.open_default();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "status": status.status,
+            "enabled": status.enabled,
+            "expiresAt": status.expires_at,
+            "remainingSeconds": status.remaining_seconds,
+            "failureCount": status.failure_count,
+            "closedReason": status.closed_reason
+        })),
+    )
+}
+
+pub async fn close_auth_vault_receive_window_handler(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if state.profile.profile != CcsWebProfile::Slim {
+        return auth_vault_disabled();
+    }
+    if !origin_or_referer_allowed(&headers, false) {
+        return receive_origin_forbidden();
+    }
+    if state.auth_config.is_some() && !has_valid_session(&state, &headers) {
+        return unauthorized();
+    }
+
+    let status = state.auth_vault_receive_window.close_manual();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "status": status.status,
+            "enabled": status.enabled,
+            "expiresAt": status.expires_at,
+            "remainingSeconds": status.remaining_seconds,
+            "failureCount": status.failure_count,
+            "closedReason": status.closed_reason
+        })),
+    )
+}
+
 pub async fn save_auth_vault_handler(
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<ServerState>>,
     headers: HeaderMap,
-    Json(req): Json<AuthVaultRequest>,
+    body: Bytes,
 ) -> impl IntoResponse {
-    if state
-        .profile
-        .ensure_group_allowed(CapabilityGroup::AuthVault)
-        .is_err()
-    {
-        return auth_vault_disabled();
-    }
+    let full_auth_vault = state.profile.is_group_enabled(CapabilityGroup::AuthVault);
+    let receive_only = state.profile.profile == CcsWebProfile::Slim;
 
-    if !is_save_authorized(&state, &headers, &peer_addr) {
+    if !full_auth_vault {
+        if !receive_only {
+            return auth_vault_disabled();
+        }
+        let receive_status = state.auth_vault_receive_window.status();
+        if !receive_status.enabled {
+            if receive_status.closed_reason.is_none() {
+                return auth_vault_disabled();
+            }
+            return receive_window_closed();
+        }
+        if has_extension_session_header(&headers) && !is_loopback_peer(&peer_addr) {
+            state.auth_vault_receive_window.record_failure();
+            return receive_forbidden_header();
+        }
+        if !origin_or_referer_allowed(&headers, true) {
+            state.auth_vault_receive_window.record_failure();
+            return receive_origin_forbidden();
+        }
+        if state.auth_config.is_some() && !has_valid_receive_session(&state, &headers) {
+            state.auth_vault_receive_window.record_failure();
+            return unauthorized();
+        }
+        if !has_receive_sync_header(&headers) {
+            state.auth_vault_receive_window.record_failure();
+            return receive_sync_header_required();
+        }
+        match state.auth_vault_receive_window.begin_receive() {
+            AuthVaultReceiveBegin::Claimed => {}
+            AuthVaultReceiveBegin::NeverOpened => return auth_vault_disabled(),
+            AuthVaultReceiveBegin::Closed | AuthVaultReceiveBegin::Busy => {
+                return receive_window_closed();
+            }
+        }
+    } else if !is_save_authorized(&state, &headers, &peer_addr) {
         return unauthorized();
     }
 
+    let req: AuthVaultRequest = match serde_json::from_slice(&body) {
+        Ok(req) => req,
+        Err(error) => {
+            if !full_auth_vault {
+                state.auth_vault_receive_window.finish_receive_failure();
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "ok": false, "error": error.to_string() })),
+            );
+        }
+    };
+
     if let Err(error) = validate_sites(&req.sites) {
+        if !full_auth_vault {
+            state.auth_vault_receive_window.finish_receive_failure();
+        }
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "ok": false, "error": error })),
@@ -280,6 +537,9 @@ pub async fn save_auth_vault_handler(
     }
 
     if let Err(error) = validate_token_vault(&req.token_vault) {
+        if !full_auth_vault {
+            state.auth_vault_receive_window.finish_receive_failure();
+        }
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "ok": false, "error": error })),
@@ -296,6 +556,9 @@ pub async fn save_auth_vault_handler(
 
     if let Some(parent) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(parent) {
+            if !full_auth_vault {
+                state.auth_vault_receive_window.finish_receive_failure();
+            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "ok": false, "error": error.to_string() })),
@@ -310,6 +573,9 @@ pub async fn save_auth_vault_handler(
         .and_then(|_| std::fs::rename(&temp_path, &path).map_err(|error| error.to_string()));
 
     if let Err(error) = write_result {
+        if !full_auth_vault {
+            state.auth_vault_receive_window.finish_receive_failure();
+        }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "ok": false, "error": error })),
@@ -317,6 +583,9 @@ pub async fn save_auth_vault_handler(
     }
 
     let summary = summarize(&file.sites, &file.token_vault);
+    if !full_auth_vault {
+        state.auth_vault_receive_window.close_success();
+    }
     (
         StatusCode::OK,
         Json(serde_json::json!({
@@ -396,6 +665,7 @@ mod tests {
             allow_extension_session_header,
             profile,
             build_info,
+            auth_vault_receive_window: Default::default(),
         }
     }
 
@@ -440,6 +710,14 @@ mod tests {
         assert!(!body.contains("\"cookieHeader\":"));
         assert!(body.contains("full-a...value"));
         assert!(body.contains("session; csrf"));
+    }
+
+    #[test]
+    fn strip_port_handles_hosts_and_ipv6_literals() {
+        assert_eq!(strip_port("ccs.example.com:443"), "ccs.example.com");
+        assert_eq!(strip_port("ccs.example.com"), "ccs.example.com");
+        assert_eq!(strip_port("[::1]:17666"), "[::1]");
+        assert_eq!(strip_port("::1"), "::1");
     }
 
     #[test]

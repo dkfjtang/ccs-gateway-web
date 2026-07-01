@@ -35,8 +35,16 @@ pub(crate) fn is_loopback_peer(addr: &SocketAddr) -> bool {
 }
 
 pub(crate) fn has_valid_session_from_header(state: &ServerState, headers: &HeaderMap) -> bool {
+    has_valid_session_from_named_header(state, headers, "x-ccs-session")
+}
+
+pub(crate) fn has_valid_session_from_named_header(
+    state: &ServerState,
+    headers: &HeaderMap,
+    header_name: &'static str,
+) -> bool {
     headers
-        .get("x-ccs-session")
+        .get(header_name)
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|token| !token.is_empty())
@@ -71,6 +79,7 @@ mod tests {
             allow_extension_session_header: true,
             profile,
             build_info,
+            auth_vault_receive_window: Default::default(),
         }
     }
 
@@ -82,6 +91,23 @@ mod tests {
         headers.insert("x-ccs-session", HeaderValue::from_str(&token).unwrap());
 
         assert!(has_valid_session_from_header(&state, &headers));
+    }
+
+    #[test]
+    fn validates_session_from_named_header() {
+        let state = test_state();
+        let token = state.session_store.create_session();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-ccs-auth-vault-session",
+            HeaderValue::from_str(&token).unwrap(),
+        );
+
+        assert!(has_valid_session_from_named_header(
+            &state,
+            &headers,
+            "x-ccs-auth-vault-session"
+        ));
     }
 
     #[test]

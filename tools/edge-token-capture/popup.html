@@ -8,7 +8,12 @@
       body {
         margin: 0;
         width: 420px;
-        font: 13px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font:
+          13px/1.5 system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
         color: #111827;
         background: #f8fafc;
       }
@@ -96,7 +101,12 @@
     <div class="panel">
       <div class="config">
         <label for="server">CCS 服务地址</label>
-        <input id="server" type="text" spellcheck="false" value="http://127.0.0.1:17666" />
+        <input
+          id="server"
+          type="text"
+          spellcheck="false"
+          value="http://127.0.0.1:17666"
+        />
       </div>
       <div class="row">
         <button id="capture" class="primary">读取并保存并同步</button>
@@ -106,6 +116,6 @@
       <ul id="candidates" class="candidates"></ul>
       <pre id="output">{}</pre>
     </div>
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>

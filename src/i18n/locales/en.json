@@ -334,6 +334,20 @@
         "title": "Data Management",
         "description": "Import and export local configuration data"
       },
+      "authVaultReceive": {
+        "title": "Auth Vault Temporary Receive",
+        "description": "Manually open the remote login-state receive window",
+        "switchLabel": "Allow browser extension push",
+        "switchDescription": "After opening, one Auth Vault write is allowed for 5 minutes. Success, expiry, or 5 consecutive failures closes it automatically.",
+        "statusLabel": "Current status",
+        "statusOpen": "Receiving",
+        "statusClosed": "Closed",
+        "remainingLabel": "Remaining",
+        "failureLabel": "Failures",
+        "openSuccess": "Auth Vault receive window opened",
+        "closeSuccess": "Auth Vault receive window closed",
+        "requestFailed": "Auth Vault receive window request failed"
+      },
       "backup": {
         "title": "Backup & Restore",
         "description": "Manage automatic backups, view and restore database snapshots"

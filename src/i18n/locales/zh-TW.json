@@ -349,6 +349,20 @@
         "title": "資料管理",
         "description": "匯入和匯出本地設定資料"
       },
+      "authVaultReceive": {
+        "title": "Auth Vault 臨時接收",
+        "description": "手動開啟遠端登入狀態接收視窗",
+        "switchLabel": "允許接收瀏覽器擴充功能推送",
+        "switchDescription": "開啟後 5 分鐘內僅允許寫入一次 Auth Vault；成功、過期或連續失敗 5 次會自動關閉。",
+        "statusLabel": "目前狀態",
+        "statusOpen": "接收中",
+        "statusClosed": "已關閉",
+        "remainingLabel": "剩餘時間",
+        "failureLabel": "失敗次數",
+        "openSuccess": "Auth Vault 接收視窗已開啟",
+        "closeSuccess": "Auth Vault 接收視窗已關閉",
+        "requestFailed": "Auth Vault 接收視窗操作失敗"
+      },
       "backup": {
         "title": "備份與還原",
         "description": "管理自動備份，查看和還原資料庫快照"

@@ -27,6 +27,7 @@ fn test_state() -> (Arc<ServerState>, cc_switch_server::EventSender) {
         allow_extension_session_header: true,
         profile,
         build_info,
+        auth_vault_receive_window: Default::default(),
     });
 
     (state, event_bus)
