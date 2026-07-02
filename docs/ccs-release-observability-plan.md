@@ -32,10 +32,10 @@ From WSL, `127.0.0.1` can resolve to the WSL network namespace rather than the W
 rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && docker build --build-arg HTTP_PROXY=http://<proxy-host>:<proxy-port> --build-arg HTTPS_PROXY=http://<proxy-host>:<proxy-port> --build-arg http_proxy=http://<proxy-host>:<proxy-port> --build-arg https_proxy=http://<proxy-host>:<proxy-port> -f Dockerfile.web -t ccs-gateway-web:<local-image-tag> .'
 ```
 
-If `host.docker.internal` is unavailable in the WSL Docker engine, resolve the WSL default gateway and use that address:
+If `host.docker.internal` is unavailable in the WSL Docker engine, resolve the WSL default gateway, build a machine-local proxy URL outside the repository, and pass that placeholder value to Docker:
 
 ```powershell
-rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && proxy_host="$(ip route | awk "/default/ {print \$3; exit}")" && docker build --build-arg HTTP_PROXY="http://$proxy_host:7890" --build-arg HTTPS_PROXY="http://$proxy_host:7890" --build-arg http_proxy="http://$proxy_host:7890" --build-arg https_proxy="http://$proxy_host:7890" -f Dockerfile.web -t ccs-gateway-web:<local-image-tag> .'
+rtk wsl.exe -d <wsl-distro> -- bash -lc 'cd <repo-root-wsl> && proxy_host="$(ip route | awk "/default/ {print \$3; exit}")" && proxy_url="<proxy-url-for-$proxy_host>" && docker build --build-arg HTTP_PROXY="$proxy_url" --build-arg HTTPS_PROXY="$proxy_url" --build-arg http_proxy="$proxy_url" --build-arg https_proxy="$proxy_url" -f Dockerfile.web -t ccs-gateway-web:<local-image-tag> .'
 ```
 
 Run the local container without using production data:
