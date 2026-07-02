@@ -119,7 +119,7 @@ check_local_only_literals() {
   [[ -n "$files" ]] || return 0
 
   local pattern
-  pattern='(172\.28\.|124\.156\.|43\.161\.|C:\\Users\\Administrator|F:\\development|cookies\.jar|ccs-gateway-web,\.local)'
+  pattern='(172\.28\.|124\.156\.|43\.161\.|C:\\Users\\Administrator|F:\\development|cookies\.jar|ccs-gateway-web,\.local|(^|[^A-Za-z0-9_])(HTTP_PROXY|HTTPS_PROXY|ALL_PROXY|http_proxy|https_proxy|all_proxy)[[:space:]]*[:=][[:space:]]*["'\'']?https?://[^[:space:]#"'\'']*:7890)'
 
   while IFS= read -r file; do
     [[ -f "$file" ]] || continue
