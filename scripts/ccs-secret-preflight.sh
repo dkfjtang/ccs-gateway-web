@@ -113,6 +113,27 @@ check_sensitive_literals() {
   return 0
 }
 
+check_local_only_literals() {
+  local files
+  files="$(changed_files | grep -Ev '(^|/)(package-lock.json|pnpm-lock.yaml|CHANGELOG.md|scripts/ccs-secret-preflight\.sh|.*\.lock|.*\.(svg|png|jpg|jpeg|ico|icns)|\.env\.web)$' || true)"
+  [[ -n "$files" ]] || return 0
+
+  local pattern
+  pattern='(172\.28\.48\.|172\.28\.62\.196|124\.156\.|43\.161\.|C:\\Users\\Administrator|F:\\development|cookies\.jar|ccs-gateway-web,\.local)'
+
+  while IFS= read -r file; do
+    [[ -f "$file" ]] || continue
+    local matches
+    matches="$(grep -nIE "$pattern" "$file" || true)"
+    if [[ -n "$matches" ]]; then
+      printf '%s\n' "$matches"
+      return 1
+    fi
+  done <<< "$files"
+
+  return 0
+}
+
 check_large_new_files() {
   local large_files
   large_files="$(
@@ -144,6 +165,7 @@ run_check "Git status" check_git_clean
 run_check "Env/private filename scan" check_for_tracked_env_files
 run_check "Docker context exclusions" check_dockerignore
 run_check "Sensitive literal scan" check_sensitive_literals
+run_check "Local-only literal scan" check_local_only_literals
 run_check "Large untracked file scan" check_large_new_files
 run_check "Optional gitleaks scan" check_optional_gitleaks
 
