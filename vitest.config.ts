@@ -27,6 +27,7 @@ export default defineConfig({
       "**/node_modules/**",
       "**/dist/**",
       "**/.upstream/**",
+      "**/.worktrees/**",
       "**/.run/**",
       "**/.pnpm-store/**",
       "**/tmp/**",
