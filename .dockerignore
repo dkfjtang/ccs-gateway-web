@@ -1,6 +1,11 @@
 .git
 node_modules
 .pnpm-store
+.codex
+.learnings
+.serena
+.upstream
+.worktrees
 dist
 target
 src-tauri/target
@@ -11,4 +16,5 @@ crates/**/target
 .env.*
 !.env.web
 .run
+tmp
 docker-compose.ccs-web.local.yml

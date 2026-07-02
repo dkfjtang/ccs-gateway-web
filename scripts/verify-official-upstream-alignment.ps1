@@ -216,6 +216,9 @@ Write-Host "ok: .upstream archive is not tracked"
 Write-Host "==> test isolation policy"
 $vitestConfig = Get-Content -LiteralPath (Join-Path $repoRoot "vitest.config.ts") -Raw -Encoding UTF8
 Assert-Contains "Vitest excludes upstream archive" $vitestConfig "**/.upstream/**"
+Assert-Contains "Vitest excludes local worktrees" $vitestConfig "**/.worktrees/**"
+Assert-Contains "Vitest excludes local run evidence" $vitestConfig "**/.run/**"
+Assert-Contains "Vitest excludes local temp files" $vitestConfig "**/tmp/**"
 
 Write-Host "==> migration docs"
 $migrationDoc = Get-Content -LiteralPath (Join-Path $repoRoot "docs\ccs-official-upstream-migration.md") -Raw -Encoding UTF8
