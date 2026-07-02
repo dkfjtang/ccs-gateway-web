@@ -582,11 +582,18 @@ pub async fn dispatch_command(
                 .get("modelsUrl")
                 .or_else(|| params.get("models_url"))
                 .and_then(|v| v.as_str());
+            let custom_user_agent =
+                get_optional_str_param(params, &["customUserAgent", "custom_user_agent"])?;
 
-            let models =
-                cc_switch_core::fetch_models_for_config(base_url, api_key, is_full_url, models_url)
-                    .await
-                    .map_err(RpcError::app_error)?;
+            let models = cc_switch_core::fetch_models_for_config(
+                base_url,
+                api_key,
+                is_full_url,
+                models_url,
+                custom_user_agent,
+            )
+            .await
+            .map_err(RpcError::app_error)?;
 
             serde_json::to_value(models).map_err(|e| RpcError::internal_error(e.to_string()))
         }

@@ -349,8 +349,16 @@ pub async fn fetch_models_for_config(
     api_key: &str,
     is_full_url: bool,
     models_url: Option<&str>,
+    custom_user_agent: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
-    cc_switch::fetch_models(base_url, api_key, is_full_url, models_url, None).await
+    cc_switch::fetch_models(
+        base_url,
+        api_key,
+        is_full_url,
+        models_url,
+        custom_user_agent,
+    )
+    .await
 }
 
 pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, String> {
