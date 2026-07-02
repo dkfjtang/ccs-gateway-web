@@ -44,10 +44,18 @@ fn decompress_body(content_encoding: &str, body: &[u8]) -> Result<Vec<u8>, std::
             Ok(decompressed)
         }
         "deflate" => {
-            let mut decoder = flate2::read::DeflateDecoder::new(body);
+            let mut decoder = flate2::read::ZlibDecoder::new(body);
             let mut decompressed = Vec::new();
-            decoder.read_to_end(&mut decompressed)?;
-            Ok(decompressed)
+            match decoder.read_to_end(&mut decompressed) {
+                Ok(_) => Ok(decompressed),
+                Err(zlib_err) => {
+                    log::debug!("deflate zlib decode failed ({zlib_err}), falling back to raw");
+                    let mut decoder = flate2::read::DeflateDecoder::new(body);
+                    let mut decompressed = Vec::new();
+                    decoder.read_to_end(&mut decompressed)?;
+                    Ok(decompressed)
+                }
+            }
         }
         "br" => {
             let mut decompressed = Vec::new();
@@ -893,6 +901,7 @@ mod tests {
     use crate::proxy::types::{ProxyConfig, ProxyStatus};
     use rust_decimal::Decimal;
     use std::collections::HashMap;
+    use std::io::Write;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -916,6 +925,32 @@ mod tests {
             Some("message_start")
         );
         assert_eq!(super::strip_sse_field("id:1", "data"), None);
+    }
+
+    #[test]
+    fn decompress_body_accepts_zlib_wrapped_deflate() {
+        let payload = b"{\"ok\":true}";
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let decoded = decompress_body("deflate", &compressed).unwrap();
+
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn decompress_body_accepts_raw_deflate() {
+        let payload = b"{\"ok\":true}";
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        let decoded = decompress_body("deflate", &compressed).unwrap();
+
+        assert_eq!(decoded, payload);
     }
 
     #[test]
