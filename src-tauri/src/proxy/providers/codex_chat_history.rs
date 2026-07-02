@@ -150,7 +150,7 @@ impl CodexChatHistoryStore {
                 Some(item_type) if is_call_item_type(item_type) => {
                     if let Some(call_id) = response_item_call_id(&item) {
                         if let Some(cached) = lookup.call(&call_id) {
-                            if enrich_call_item_reasoning(&mut item, cached) {
+                            if enrich_call_item_from_cache(&mut item, cached) {
                                 enriched += 1;
                             }
                         }
@@ -466,17 +466,26 @@ fn is_call_output_item_type(item_type: &str) -> bool {
     )
 }
 
-fn enrich_call_item_reasoning(item: &mut Value, cached: &Value) -> bool {
+fn enrich_call_item_from_cache(item: &mut Value, cached: &Value) -> bool {
     let mut changed = false;
-    for key in ["reasoning_content", "reasoning"] {
+    for key in [
+        "name",
+        "namespace",
+        "arguments",
+        "input",
+        "status",
+        "execution",
+        "reasoning_content",
+        "reasoning",
+    ] {
         if item.get(key).is_some_and(|value| !is_empty_value(value)) {
             continue;
         }
-        let Some(reasoning) = cached.get(key).filter(|value| !is_empty_value(value)) else {
+        let Some(value) = cached.get(key).filter(|value| !is_empty_value(value)) else {
             continue;
         };
         if let Some(object) = item.as_object_mut() {
-            object.insert(key.to_string(), reasoning.clone());
+            object.insert(key.to_string(), value.clone());
             changed = true;
         }
     }
@@ -673,6 +682,58 @@ mod tests {
         let input = request["input"].as_array().unwrap();
         assert_eq!(input[0]["reasoning_content"], "Need to inspect the file.");
         assert_eq!(input.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn enriches_existing_call_item_missing_cached_tool_fields() {
+        let history = CodexChatHistoryStore::default();
+        history
+            .record_response(&json!({
+                "id": "resp_1",
+                "output": [
+                    {
+                        "type": "custom_tool_call",
+                        "call_id": "call_1",
+                        "name": "apply_patch",
+                        "namespace": "tools",
+                        "arguments": "{\"ignored\":true}",
+                        "input": "*** Begin Patch\n*** End Patch",
+                        "status": "completed",
+                        "execution": "client",
+                        "reasoning": {
+                            "summary": [{"type": "summary_text", "text": "Need to patch."}]
+                        },
+                        "reasoning_content": "Need to patch."
+                    }
+                ]
+            }))
+            .await;
+
+        let mut request = json!({
+            "previous_response_id": "resp_1",
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_1"
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_1",
+                    "output": "ok"
+                }
+            ]
+        });
+
+        assert_eq!(history.enrich_request(&mut request).await, 1);
+        let call = &request["input"][0];
+        assert_eq!(call["name"], "apply_patch");
+        assert_eq!(call["namespace"], "tools");
+        assert_eq!(call["arguments"], "{\"ignored\":true}");
+        assert_eq!(call["input"], "*** Begin Patch\n*** End Patch");
+        assert_eq!(call["status"], "completed");
+        assert_eq!(call["execution"], "client");
+        assert_eq!(call["reasoning_content"], "Need to patch.");
+        assert_eq!(call["reasoning"]["summary"][0]["text"], "Need to patch.");
     }
 
     #[tokio::test]
