@@ -1138,10 +1138,12 @@ pub fn get_usage_summary(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
 ) -> Result<UsageSummary, String> {
     ctx.app_state()
         .db
-        .get_usage_summary(start_date, end_date, app_type, None, None)
+        .get_usage_summary(start_date, end_date, app_type, provider_name, model)
         .map_err(|e| e.to_string())
 }
 
@@ -1149,10 +1151,12 @@ pub fn get_usage_summary_by_app(
     ctx: &CoreContext,
     start_date: Option<i64>,
     end_date: Option<i64>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
 ) -> Result<Vec<UsageSummaryByApp>, String> {
     ctx.app_state()
         .db
-        .get_usage_summary_by_app(start_date, end_date, None, None)
+        .get_usage_summary_by_app(start_date, end_date, provider_name, model)
         .map_err(|e| e.to_string())
 }
 
@@ -1161,10 +1165,12 @@ pub fn get_usage_trends(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
 ) -> Result<Vec<DailyStats>, String> {
     ctx.app_state()
         .db
-        .get_daily_trends(start_date, end_date, app_type, None, None)
+        .get_daily_trends(start_date, end_date, app_type, provider_name, model)
         .map_err(|e| e.to_string())
 }
 
@@ -1173,10 +1179,12 @@ pub fn get_provider_stats(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
 ) -> Result<Vec<ProviderStats>, String> {
     ctx.app_state()
         .db
-        .get_provider_stats(start_date, end_date, app_type, None, None)
+        .get_provider_stats(start_date, end_date, app_type, provider_name, model)
         .map_err(|e| e.to_string())
 }
 
@@ -1185,10 +1193,12 @@ pub fn get_model_stats(
     start_date: Option<i64>,
     end_date: Option<i64>,
     app_type: Option<&str>,
+    provider_name: Option<&str>,
+    model: Option<&str>,
 ) -> Result<Vec<ModelStats>, String> {
     ctx.app_state()
         .db
-        .get_model_stats(start_date, end_date, app_type, None, None)
+        .get_model_stats(start_date, end_date, app_type, provider_name, model)
         .map_err(|e| e.to_string())
 }
 

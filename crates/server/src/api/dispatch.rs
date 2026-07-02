@@ -1003,9 +1003,18 @@ pub async fn dispatch_command(
             let start_date = get_optional_i64_param(params, &["startDate", "start_date"])?;
             let end_date = get_optional_i64_param(params, &["endDate", "end_date"])?;
             let app_type = get_optional_str_param(params, &["appType", "app_type"])?;
+            let provider_name = get_optional_str_param(params, &["providerName", "provider_name"])?;
+            let model = get_optional_str_param(params, &["model"])?;
 
-            let summary = cc_switch_core::get_usage_summary(core, start_date, end_date, app_type)
-                .map_err(RpcError::app_error)?;
+            let summary = cc_switch_core::get_usage_summary(
+                core,
+                start_date,
+                end_date,
+                app_type,
+                provider_name,
+                model,
+            )
+            .map_err(RpcError::app_error)?;
 
             serde_json::to_value(summary).map_err(|e| RpcError::internal_error(e.to_string()))
         }
@@ -1013,9 +1022,17 @@ pub async fn dispatch_command(
         "get_usage_summary_by_app" => {
             let start_date = get_optional_i64_param(params, &["startDate", "start_date"])?;
             let end_date = get_optional_i64_param(params, &["endDate", "end_date"])?;
+            let provider_name = get_optional_str_param(params, &["providerName", "provider_name"])?;
+            let model = get_optional_str_param(params, &["model"])?;
 
-            let summary = cc_switch_core::get_usage_summary_by_app(core, start_date, end_date)
-                .map_err(RpcError::app_error)?;
+            let summary = cc_switch_core::get_usage_summary_by_app(
+                core,
+                start_date,
+                end_date,
+                provider_name,
+                model,
+            )
+            .map_err(RpcError::app_error)?;
 
             serde_json::to_value(summary).map_err(|e| RpcError::internal_error(e.to_string()))
         }
@@ -1024,9 +1041,18 @@ pub async fn dispatch_command(
             let start_date = get_optional_i64_param(params, &["startDate", "start_date"])?;
             let end_date = get_optional_i64_param(params, &["endDate", "end_date"])?;
             let app_type = get_optional_str_param(params, &["appType", "app_type"])?;
+            let provider_name = get_optional_str_param(params, &["providerName", "provider_name"])?;
+            let model = get_optional_str_param(params, &["model"])?;
 
-            let trends = cc_switch_core::get_usage_trends(core, start_date, end_date, app_type)
-                .map_err(RpcError::app_error)?;
+            let trends = cc_switch_core::get_usage_trends(
+                core,
+                start_date,
+                end_date,
+                app_type,
+                provider_name,
+                model,
+            )
+            .map_err(RpcError::app_error)?;
 
             serde_json::to_value(trends).map_err(|e| RpcError::internal_error(e.to_string()))
         }
@@ -1035,9 +1061,18 @@ pub async fn dispatch_command(
             let start_date = get_optional_i64_param(params, &["startDate", "start_date"])?;
             let end_date = get_optional_i64_param(params, &["endDate", "end_date"])?;
             let app_type = get_optional_str_param(params, &["appType", "app_type"])?;
+            let provider_name = get_optional_str_param(params, &["providerName", "provider_name"])?;
+            let model = get_optional_str_param(params, &["model"])?;
 
-            let stats = cc_switch_core::get_provider_stats(core, start_date, end_date, app_type)
-                .map_err(RpcError::app_error)?;
+            let stats = cc_switch_core::get_provider_stats(
+                core,
+                start_date,
+                end_date,
+                app_type,
+                provider_name,
+                model,
+            )
+            .map_err(RpcError::app_error)?;
 
             serde_json::to_value(stats).map_err(|e| RpcError::internal_error(e.to_string()))
         }
@@ -1046,9 +1081,18 @@ pub async fn dispatch_command(
             let start_date = get_optional_i64_param(params, &["startDate", "start_date"])?;
             let end_date = get_optional_i64_param(params, &["endDate", "end_date"])?;
             let app_type = get_optional_str_param(params, &["appType", "app_type"])?;
+            let provider_name = get_optional_str_param(params, &["providerName", "provider_name"])?;
+            let model = get_optional_str_param(params, &["model"])?;
 
-            let stats = cc_switch_core::get_model_stats(core, start_date, end_date, app_type)
-                .map_err(RpcError::app_error)?;
+            let stats = cc_switch_core::get_model_stats(
+                core,
+                start_date,
+                end_date,
+                app_type,
+                provider_name,
+                model,
+            )
+            .map_err(RpcError::app_error)?;
 
             serde_json::to_value(stats).map_err(|e| RpcError::internal_error(e.to_string()))
         }
