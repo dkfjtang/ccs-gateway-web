@@ -119,7 +119,7 @@ check_local_only_literals() {
   [[ -n "$files" ]] || return 0
 
   local pattern
-  pattern='(172\.28\.48\.|172\.28\.62\.196|124\.156\.|43\.161\.|C:\\Users\\Administrator|F:\\development|cookies\.jar|ccs-gateway-web,\.local)'
+  pattern='(172\.28\.|124\.156\.|43\.161\.|C:\\Users\\Administrator|F:\\development|cookies\.jar|ccs-gateway-web,\.local)'
 
   while IFS= read -r file; do
     [[ -f "$file" ]] || continue
