@@ -1667,6 +1667,8 @@ struct PricingInfo {
 }
 
 impl Database {
+    const USAGE_COST_BACKFILL_PAGE_SIZE: usize = 1000;
+
     /// Recalculate stored zero-cost usage rows once pricing becomes available.
     pub(crate) fn backfill_missing_usage_costs(&self) -> Result<u64, AppError> {
         let conn = lock_conn!(self.conn);
@@ -1686,6 +1688,18 @@ impl Database {
         conn: &Connection,
         only_model_id: Option<&str>,
     ) -> Result<u64, AppError> {
+        Self::backfill_missing_usage_costs_on_conn_with_page_size(
+            conn,
+            only_model_id,
+            Self::USAGE_COST_BACKFILL_PAGE_SIZE,
+        )
+    }
+
+    fn backfill_missing_usage_costs_on_conn_with_page_size(
+        conn: &Connection,
+        only_model_id: Option<&str>,
+        page_size: usize,
+    ) -> Result<u64, AppError> {
         const BASE_SQL: &str =
             "SELECT request_id, provider_id, NULL AS provider_name, app_type, model, request_model,
                         cost_multiplier,
@@ -1697,27 +1711,19 @@ impl Database {
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
-                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)";
+                    OR cache_read_tokens > 0 OR cache_creation_tokens > 0)
+               AND (created_at > ?1 OR (created_at = ?1 AND request_id > ?2))
+             ORDER BY created_at ASC, request_id ASC
+             LIMIT ?3";
 
-        let mut logs = {
-            match only_model_id {
-                Some(model) => {
-                    let sql = format!(
-                        "{BASE_SQL} AND (model = ?1 OR request_model = ?1 OR pricing_model = ?1)"
-                    );
-                    let mut stmt = conn.prepare(&sql)?;
-                    let rows = stmt.query_map([model], row_to_request_log_detail)?;
-                    rows.collect::<Result<Vec<_>, _>>()?
-                }
-                None => {
-                    let mut stmt = conn.prepare(BASE_SQL)?;
-                    let rows = stmt.query_map([], row_to_request_log_detail)?;
-                    rows.collect::<Result<Vec<_>, _>>()?
-                }
-            }
-        };
-
-        if logs.is_empty() {
+        if page_size == 0 {
+            return Ok(0);
+        }
+        let target_candidates = only_model_id.map(model_pricing_candidates);
+        if target_candidates
+            .as_ref()
+            .is_some_and(|candidates| candidates.is_empty())
+        {
             return Ok(0);
         }
 
@@ -1727,9 +1733,33 @@ impl Database {
 
         let mut updated = 0u64;
         let mut pricing_cache = HashMap::new();
-        for log in &mut logs {
-            if Self::maybe_backfill_log_costs(&tx, log, &mut pricing_cache)? {
-                updated += 1;
+        let mut last_created_at = i64::MIN;
+        let mut last_request_id = String::new();
+
+        loop {
+            let mut logs = {
+                let mut stmt = tx.prepare(BASE_SQL)?;
+                let rows = stmt.query_map(
+                    params![last_created_at, last_request_id, page_size as i64],
+                    row_to_request_log_detail,
+                )?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+
+            let Some(last_log) = logs.last() else {
+                break;
+            };
+            last_created_at = last_log.created_at;
+            last_request_id = last_log.request_id.clone();
+
+            if let Some(target) = target_candidates.as_ref() {
+                logs.retain(|log| log_pricing_scope_matches(log, target));
+            }
+
+            for log in &mut logs {
+                if Self::maybe_backfill_log_costs(&tx, log, &mut pricing_cache)? {
+                    updated += 1;
+                }
             }
         }
         tx.commit()
@@ -1930,6 +1960,27 @@ pub(crate) fn find_model_pricing_row(
 pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
     let normalized = model_id.trim().to_ascii_lowercase();
     normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
+}
+
+fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String]) -> bool {
+    [
+        Some(log.model.as_str()),
+        log.request_model.as_deref(),
+        log.pricing_model.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|field| {
+        model_pricing_candidates(field).iter().any(|candidate| {
+            target_candidates.iter().any(|target| {
+                target == candidate
+                    || (should_try_pricing_prefix_match(candidate)
+                        && target
+                            .strip_prefix(candidate.as_str())
+                            .is_some_and(|rest| rest.starts_with('-')))
+            })
+        })
+    })
 }
 
 fn query_model_pricing_exact(
@@ -2460,6 +2511,145 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(total_cost, "5.000000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_backfill_matches_raw_alias_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "non-target-zero-cost",
+                "claude",
+                "provider-1",
+                "unpriced-model",
+                "proxy",
+                900,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "openrouter-alias-zero-cost",
+                "claude",
+                "provider-1",
+                "openrouter/moonshot/kimi-k2-novel:free",
+                "proxy",
+                1000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('kimi-k2-novel', 'Kimi K2 Novel', '0.6', '2.5')",
+                [],
+            )?;
+        }
+
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("kimi-k2-novel")?,
+            1
+        );
+
+        let conn = lock_conn!(db.conn);
+        let (alias_cost, non_target_cost): (String, String) = conn.query_row(
+            "SELECT
+                (SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'openrouter-alias-zero-cost'),
+                (SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'non-target-zero-cost')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(alias_cost, "0.600000");
+        assert_eq!(non_target_cost, "0");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_backfill_paginates_zero_cost_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "first-non-target",
+                "claude",
+                "provider-1",
+                "unpriced-model",
+                "proxy",
+                1000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            insert_usage_log(
+                &conn,
+                "second-target-alias",
+                "claude",
+                "provider-1",
+                "openrouter/moonshot/kimi-k2-novel:free",
+                "proxy",
+                2000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('kimi-k2-novel', 'Kimi K2 Novel', '0.6', '2.5')",
+                [],
+            )?;
+        }
+
+        let conn = lock_conn!(db.conn);
+        assert_eq!(
+            Database::backfill_missing_usage_costs_on_conn_with_page_size(
+                &conn,
+                Some("kimi-k2-novel"),
+                1,
+            )?,
+            1
+        );
+
+        let rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE CAST(total_cost_usd AS REAL) > 0",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rows, 1);
+
+        let total_cost: String = conn.query_row(
+            "SELECT total_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'second-target-alias'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(total_cost, "0.600000");
 
         Ok(())
     }
