@@ -24,17 +24,14 @@ export function buildSyncRequest({ serverUrl, payload, ccsSession }) {
   };
   const usesLoopbackBridge = isLoopbackServerUrl(serverUrl);
 
-  if (!ccsSession) {
-    throw new Error(
-      usesLoopbackBridge
-        ? "本地 CCS 未登录或登录态已过期，请先打开 CCS Web 并完成登录。"
-        : "远端 CCS 未登录或登录态已过期，请先在远端 CCS 页面完成登录。",
-    );
-  }
-
   if (usesLoopbackBridge) {
+    if (!ccsSession) {
+      throw new Error(
+        "本地 CCS 未登录或登录态已过期，请先打开 CCS Web 并完成登录。",
+      );
+    }
     headers["X-CCS-Session"] = ccsSession;
-  } else {
+  } else if (ccsSession) {
     headers["X-CCS-Auth-Vault-Session"] = ccsSession;
   }
 
@@ -42,7 +39,11 @@ export function buildSyncRequest({ serverUrl, payload, ccsSession }) {
     url: `${serverUrl}${fixedVaultPath}`,
     init: {
       method: "POST",
-      credentials: usesLoopbackBridge ? "same-origin" : "include",
+      credentials: usesLoopbackBridge
+        ? "same-origin"
+        : ccsSession
+          ? "omit"
+          : "include",
       headers,
       body: JSON.stringify(payload),
     },

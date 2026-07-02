@@ -23,7 +23,7 @@
 
 弹窗里不会展示完整认证值，只显示来源、长度和脱敏预览。最新读取结果和保存的认证值暂存在扩展自己的本地存储中。
 
-同步路径固定为 `/api/auth-vault/tokens`，扩展只允许配置 CCS Web 服务 origin，不开放自定义 API 路径。非本地服务地址必须使用 `https://`，同步时扩展会读取该 origin 的 CCS 登录 Cookie，并通过 Auth Vault 专用同步头提交；本地回环地址仍使用扩展桥接的 `X-CCS-Session`。远端接收窗口关闭时，同步会被拒绝，需要手工打开后重试。
+同步路径固定为 `/api/auth-vault/tokens`，扩展只允许配置 CCS Web 服务 origin，不开放自定义 API 路径。非本地服务地址必须使用 `https://`，同步时会使用浏览器对该 origin 的正常登录 Cookie；如果扩展能读取 CCS 登录 Cookie，会同时通过 Auth Vault 专用同步头提交。本地回环地址仍使用扩展桥接的 `X-CCS-Session`。远端接收窗口关闭时，同步会被拒绝，需要手工打开后重试。
 
 ## 在脚本中使用
 

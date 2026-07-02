@@ -85,11 +85,11 @@ describe("edge token capture CCS sync policy", () => {
     });
   });
 
-  it("uses a dedicated receive session header for remote HTTPS CCS servers", () => {
+  it("uses browser cookies for remote HTTPS CCS servers", () => {
     const request = buildSyncRequest({
       serverUrl: "https://ccs.example.com",
       payload: vaultPayload,
-      ccsSession: "session-token",
+      ccsSession: null,
     });
 
     expect(request.url).toBe("https://ccs.example.com/api/auth-vault/tokens");
@@ -97,19 +97,24 @@ describe("edge token capture CCS sync policy", () => {
     expect(request.init.headers).toEqual({
       "Content-Type": "application/json",
       "X-CCS-Auth-Vault-Sync": "browser-extension",
+    });
+  });
+
+  it("keeps the dedicated receive session header available for remote HTTPS CCS servers", () => {
+    const request = buildSyncRequest({
+      serverUrl: "https://ccs.example.com",
+      payload: vaultPayload,
+      ccsSession: "session-token",
+    });
+
+    expect(request.url).toBe("https://ccs.example.com/api/auth-vault/tokens");
+    expect(request.init.credentials).toBe("omit");
+    expect(request.init.headers).toEqual({
+      "Content-Type": "application/json",
+      "X-CCS-Auth-Vault-Sync": "browser-extension",
       "X-CCS-Auth-Vault-Session": "session-token",
     });
     expect(request.init.headers).not.toHaveProperty("X-CCS-Session");
-  });
-
-  it("requires a session token for remote HTTPS CCS sync", () => {
-    expect(() =>
-      buildSyncRequest({
-        serverUrl: "https://ccs.example.com",
-        payload: vaultPayload,
-        ccsSession: null,
-      }),
-    ).toThrow("远端 CCS 未登录或登录态已过期");
   });
 
   it("requires host access for remote HTTPS CCS sync origins", () => {

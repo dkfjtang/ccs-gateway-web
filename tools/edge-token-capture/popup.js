@@ -476,7 +476,16 @@ async function syncVaultToCcs() {
       }
     }
   }
-  const ccsSession = await getCcsSessionHeader(serverUrl);
+  let ccsSession = null;
+  if (isLoopbackServerUrl(serverUrl)) {
+    ccsSession = await getCcsSessionHeader(serverUrl);
+  } else {
+    try {
+      ccsSession = await getCcsSessionHeader(serverUrl);
+    } catch {
+      ccsSession = null;
+    }
+  }
   const request = buildSyncRequest({
     serverUrl,
     payload: { sites: siteVault, tokenVault },
