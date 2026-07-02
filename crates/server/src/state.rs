@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 
-use cc_switch_core::CoreContext;
+use cc_switch_core::{AppError, CoreContext};
 
 use crate::auth::{AuthConfig, SessionStore};
 use crate::build_info::BuildInfo;
@@ -193,12 +193,10 @@ impl ServerState {
         allow_extension_session_header: bool,
         profile: ProfileConfig,
         build_info: BuildInfo,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, AppError> {
         // 初始化核心上下文（数据库、SkillService 等）
-        let core = CoreContext::new().unwrap_or_else(|e| {
-            panic!("failed to initialize cc-switch core context: {e}");
-        });
-        Arc::new(Self {
+        let core = CoreContext::new()?;
+        Ok(Arc::new(Self {
             auth_token,
             event_bus,
             core,
@@ -208,6 +206,6 @@ impl ServerState {
             profile,
             build_info,
             auth_vault_receive_window: AuthVaultReceiveWindow::default(),
-        })
+        }))
     }
 }

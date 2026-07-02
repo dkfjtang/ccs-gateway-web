@@ -1,9 +1,8 @@
 use axum::{
     body::Body,
     extract::DefaultBodyLimit,
-    extract::State,
     http::{header, Response, StatusCode, Uri},
-    response::{Html, IntoResponse},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -19,6 +18,7 @@ use cc_switch_server::{
         auth_vault_routes, export_sql_download_handler, import_sql_upload_handler, invoke_handler,
         upgrade_handler, MAX_SQL_UPLOAD_BYTES,
     },
+    app::{build_info_handler, degraded_app, health_handler},
     auth_config_for_profile,
     build_info::{build_info_from_assets, index_assets_from_html},
     create_event_bus, load_auth_config_result,
@@ -70,13 +70,6 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     }
 }
 
-async fn build_info_handler(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
-    (
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(state.build_info.clone()),
-    )
-}
-
 async fn api_not_found_handler() -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
@@ -93,37 +86,6 @@ fn current_build_info(profile: &ProfileConfig) -> cc_switch_server::build_info::
         .map(|html| index_assets_from_html(&html))
         .unwrap_or_default();
     build_info_from_assets(profile, assets, env!("CARGO_PKG_VERSION"))
-}
-
-// 健康检查和欢迎页面
-async fn welcome_handler() -> Html<&'static str> {
-    Html(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>CC-Switch Web</title>
-    <style>
-        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-        h1 { color: #2563eb; }
-        .info { background: #f1f5f9; padding: 20px; border-radius: 8px; }
-        code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; }
-        a { color: #2563eb; }
-    </style>
-</head>
-<body>
-    <h1>🚀 CC-Switch Web Server</h1>
-    <div class="info">
-        <p><strong>Status:</strong> Running</p>
-        <p><strong>API Endpoints:</strong></p>
-        <ul>
-            <li>HTTP: <code>POST /api/invoke</code></li>
-            <li>WebSocket: <code>GET /api/ws</code></li>
-        </ul>
-        <p><strong>Frontend:</strong> <a href="/">Open Web UI</a></p>
-    </div>
-</body>
-</html>"#,
-    )
 }
 
 fn try_bind_listener(host: &str, port: u16) -> Option<StdTcpListener> {
@@ -238,7 +200,7 @@ async fn main() {
     // Create server state
     let auth_token = std::env::var("CC_SWITCH_AUTH_TOKEN").ok();
     let build_info = current_build_info(&profile);
-    let state = ServerState::new(
+    let state = match ServerState::new(
         auth_token,
         event_bus,
         session_store,
@@ -246,7 +208,40 @@ async fn main() {
         allow_extension_session_header,
         profile.clone(),
         build_info,
-    );
+    ) {
+        Ok(state) => state,
+        Err(cc_switch_core::AppError::DatabaseVersionTooNew {
+            found_version,
+            supported_version,
+        }) => {
+            tracing::error!(
+                found_version,
+                supported_version,
+                profile = ?profile.profile,
+                "Database schema is newer than this ccs-web build; starting degraded health server"
+            );
+            start_server(
+                &host,
+                is_loopback,
+                degraded_app(
+                    current_build_info(&profile),
+                    cc_switch_server::StartupHealth::db_version_too_new(
+                        found_version,
+                        supported_version,
+                        profile.profile,
+                    ),
+                ),
+                false,
+                None,
+            )
+            .await;
+            return;
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "Failed to initialize cc-switch core context");
+            std::process::exit(1);
+        }
+    };
 
     let auto_start_proxy = std::env::var("CC_SWITCH_START_PROXY")
         .map(|v| v != "0" && v.to_lowercase() != "false")
@@ -291,7 +286,7 @@ async fn main() {
         Router::new()
             .nest("/api", api_routes)
             .route("/build-info.json", get(build_info_handler))
-            .route("/health", get(welcome_handler))
+            .route("/health", get(health_handler))
             .fallback(static_handler)
             .with_state(state.clone())
             .layer(cors)
@@ -299,13 +294,25 @@ async fn main() {
         tracing::warn!("No frontend assets found, running in API-only mode");
         tracing::warn!("Build frontend first: pnpm build:web");
         Router::new()
-            .route("/", get(welcome_handler))
-            .route("/health", get(welcome_handler))
+            .route("/", get(health_handler))
+            .route("/health", get(health_handler))
             .route("/build-info.json", get(build_info_handler))
             .nest("/api", api_routes)
             .with_state(state.clone())
             .layer(cors)
     };
+
+    start_server(&host, is_loopback, app, has_frontend, Some(state)).await;
+}
+
+async fn start_server(
+    host: &str,
+    is_loopback: bool,
+    app: Router,
+    has_frontend: bool,
+    state: Option<Arc<ServerState>>,
+) {
+    let degraded = state.is_none();
 
     // Get port from environment or use default
     let requested_port: u16 = std::env::var("CC_SWITCH_PORT")
@@ -384,33 +391,55 @@ async fn main() {
     println!("╔════════════════════════════════════════════════════╗");
     println!("║           CC-Switch Web Server v0.1.0              ║");
     println!("╠════════════════════════════════════════════════════╣");
-    if has_frontend {
-        println!("║  🌐 Web UI:    http://{}:{:<21}║", host, port);
+    if degraded {
+        println!("║  🩺 Health:    http://{}:{}/health{:11}║", host, port, "");
+        println!(
+            "║  ℹ️  Build info: http://{}:{}/build-info.json{:3}║",
+            host, port, ""
+        );
+    } else {
+        if has_frontend {
+            println!("║  🌐 Web UI:    http://{}:{:<21}║", host, port);
+        }
+        println!("║  📡 API:       http://{}:{}/api{:14}║", host, port, "");
+        println!("║  🔌 WebSocket: ws://{}:{}/api/ws{:11}║", host, port, "");
     }
-    println!("║  📡 API:       http://{}:{}/api{:14}║", host, port, "");
-    println!("║  🔌 WebSocket: ws://{}:{}/api/ws{:11}║", host, port, "");
     println!("╠════════════════════════════════════════════════════╣");
-    if !is_loopback {
+    if !degraded && !is_loopback {
         println!("║  🔒 Auth:      Enable ~/.cc-switch/web-auth.json   ║");
         println!("║  📥 SQL Upload: POST /api/import-config            ║");
         println!("║  📤 SQL Export: GET  /api/export-config            ║");
+        println!("╠════════════════════════════════════════════════════╣");
+    }
+    if degraded {
+        println!("║  ⚠️  Degraded mode: DB schema is too new           ║");
+        println!("║     Only health/build-info endpoints are served    ║");
         println!("╠════════════════════════════════════════════════════╣");
     }
     println!("║  Press Ctrl+C to stop                              ║");
     println!("╚════════════════════════════════════════════════════╝");
     println!();
 
-    if !is_loopback {
+    if !degraded && !is_loopback {
         tracing::info!("Remote access enabled on http://{}", addr);
-        if state.auth_config.is_some() {
-            tracing::info!("Authenticated SQL upload available at /api/import-config");
-            tracing::info!("Authenticated SQL export available at /api/export-config");
-        } else {
-            tracing::warn!("Remote access is enabled without web-auth.json; authenticated upload protection is disabled");
+        if let Some(state) = &state {
+            if state.auth_config.is_some() {
+                tracing::info!("Authenticated SQL upload available at /api/import-config");
+                tracing::info!("Authenticated SQL export available at /api/export-config");
+            } else {
+                tracing::warn!("Remote access is enabled without web-auth.json; authenticated upload protection is disabled");
+            }
         }
     }
 
-    tracing::info!("Starting CC-Switch server on {}", addr);
+    if degraded {
+        tracing::warn!(
+            "Starting CC-Switch server in degraded health-only mode on {}",
+            addr
+        );
+    } else {
+        tracing::info!("Starting CC-Switch server on {}", addr);
+    }
 
     if let Err(e) = std_listener.set_nonblocking(true) {
         eprintln!("❌ Failed to configure listener for {}: {}", addr, e);

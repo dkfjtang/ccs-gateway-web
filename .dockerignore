@@ -11,3 +11,4 @@ crates/**/target
 .env.*
 !.env.web
 .run
+docker-compose.ccs-web.local.yml

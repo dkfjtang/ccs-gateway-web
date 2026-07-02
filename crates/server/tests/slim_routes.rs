@@ -14,10 +14,11 @@ use cc_switch_server::{
         auth_vault_routes, export_sql_download_handler, import_sql_upload_handler, invoke_handler,
         upgrade_handler,
     },
+    app::{build_info_handler, degraded_app, health_handler},
     build_info::build_info_from_assets,
     create_event_bus,
     profile::{CapabilityGroup, CcsWebProfile, ProfileConfig},
-    AuthConfig, ServerState, SessionStore,
+    AuthConfig, ServerState, SessionStore, StartupHealth,
 };
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
@@ -45,6 +46,8 @@ fn test_state(profile: &str, auth_enabled: bool) -> Arc<ServerState> {
 fn test_app(state: Arc<ServerState>) -> Router {
     let profile = state.profile.clone();
     Router::new()
+        .route("/health", get(health_handler))
+        .route("/build-info.json", get(build_info_handler))
         .route("/api/invoke", post(invoke_handler))
         .nest("/api/auth-vault", auth_vault_routes(&profile))
         .route("/api/ws", get(upgrade_handler))
@@ -52,6 +55,11 @@ fn test_app(state: Arc<ServerState>) -> Router {
         .route("/api/export-config", get(export_sql_download_handler))
         .fallback(api_not_found_handler)
         .with_state(state)
+}
+
+fn slim_build_info() -> cc_switch_server::build_info::BuildInfo {
+    let profile = ProfileConfig::from_env_value(Some("slim")).unwrap();
+    build_info_from_assets(&profile, Vec::new(), "test")
 }
 
 async fn api_not_found_handler() -> impl axum::response::IntoResponse {
@@ -803,6 +811,65 @@ async fn unknown_api_route_does_not_fall_through_to_spa() {
     );
     let body = body_json(response).await;
     assert_eq!(body["error"], "api_route_not_found");
+}
+
+#[tokio::test]
+async fn slim_health_reports_too_new_db_and_keeps_build_info() {
+    let build_info = slim_build_info();
+    let app = degraded_app(
+        build_info,
+        StartupHealth::db_version_too_new(12, 11, CcsWebProfile::Slim),
+    );
+
+    let health_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/health")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("health response");
+    assert_eq!(health_response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let health = body_json(health_response).await;
+    assert_eq!(health["error"], "db_version_too_new");
+    assert_eq!(health["supportedDbVersion"], 11);
+    assert_eq!(health["foundDbVersion"], 12);
+    assert_eq!(health["profile"], "slim");
+
+    let root_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("root health response");
+    assert_eq!(root_response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let root_health = body_json(root_response).await;
+    assert_eq!(root_health["error"], "db_version_too_new");
+    assert_eq!(root_health["supportedDbVersion"], 11);
+    assert_eq!(root_health["foundDbVersion"], 12);
+    assert_eq!(root_health["profile"], "slim");
+
+    let build_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/build-info.json")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("build-info response");
+    assert_eq!(build_response.status(), StatusCode::OK);
+    let build = body_json(build_response).await;
+    assert_eq!(build["profile"], "slim");
 }
 
 #[test]

@@ -122,6 +122,114 @@ function Invoke-Wsl {
     }
 }
 
+function Invoke-WslCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = wsl -d $Distro -- bash -lc "export CI=1 DOCKER_CLI_HINTS=false BUILDKIT_PROGRESS=plain; $Command" 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($exitCode -ne 0) {
+        throw "WSL command failed with exit code ${exitCode}: $Command"
+    }
+
+    return (($output | ForEach-Object { "$_" }) -join "`n").Trim()
+}
+
+function Read-HttpExceptionResponse {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
+    )
+
+    $Exception = $ErrorRecord.Exception
+    $response = $Exception.Response
+    if ($null -eq $response) {
+        return @{
+            status = 0
+            body = if ($null -ne $ErrorRecord.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($ErrorRecord.ErrorDetails.Message)) { $ErrorRecord.ErrorDetails.Message } else { $Exception.Message }
+        }
+    }
+
+    $status = 0
+    try {
+        if ($null -ne $response.StatusCode) {
+            $status = [int]$response.StatusCode
+        }
+    } catch {
+        $status = 0
+    }
+
+    $body = $null
+    if ($null -ne $ErrorRecord.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($ErrorRecord.ErrorDetails.Message)) {
+        $body = $ErrorRecord.ErrorDetails.Message
+    }
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($body) -and $null -ne $response.Content -and $response.Content.PSObject.Methods.Name -contains "ReadAsStringAsync") {
+            $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        }
+    } catch {
+        $body = $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        try {
+            $stream = $response.GetResponseStream()
+            if ($null -ne $stream) {
+                $reader = [System.IO.StreamReader]::new($stream)
+                try {
+                    $body = $reader.ReadToEnd()
+                } finally {
+                    $reader.Dispose()
+                }
+            }
+        } catch {
+            $body = $null
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        $body = $Exception.Message
+    }
+
+    return @{
+        status = $status
+        body = ($body | Out-String).Trim()
+    }
+}
+
+function Test-DbVersionTooNewHealth {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Result
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Result.body)) {
+        return $null
+    }
+
+    try {
+        $health = $Result.body | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $null
+    }
+
+    if ($health.error -ne "db_version_too_new") {
+        return $null
+    }
+
+    return $health
+}
+
 function Test-Http {
     param(
         [Parameter(Mandatory = $true)]
@@ -136,10 +244,11 @@ function Test-Http {
             body = ($response.Content | Out-String).Trim()
         }
     } catch {
+        $failure = Read-HttpExceptionResponse -ErrorRecord $_
         return @{
             ok = $false
-            status = 0
-            body = $_.Exception.Message
+            status = $failure.status
+            body = $failure.body
         }
     }
 }
@@ -155,6 +264,10 @@ function Wait-Http {
     for ($attempt = 1; $attempt -le $HealthRetries; $attempt++) {
         $result = Test-Http $Url
         Write-Host ("{0}: attempt {1}/{2}: {3} {4}" -f $Name, $attempt, $HealthRetries, $result.status, $result.body)
+        $dbVersionTooNew = Test-DbVersionTooNewHealth -Result $result
+        if ($null -ne $dbVersionTooNew) {
+            throw ("{0} HTTP check returned db_version_too_new: foundDbVersion={1} supportedDbVersion={2} profile={3} body={4}" -f $Name, $dbVersionTooNew.foundDbVersion, $dbVersionTooNew.supportedDbVersion, $dbVersionTooNew.profile, $result.body)
+        }
         if ($result.ok) {
             return $result
         }
@@ -252,6 +365,406 @@ function Assert-ServedProfileMatches {
     Write-Host ("Served profile: expected={0} served={1}" -f $Profile, $servedProfile)
     if ($servedProfile -ne $Profile) {
         throw "Served build profile mismatch. expected=${Profile}; served=${servedProfile}; url=${url}"
+    }
+}
+
+function Get-Sha256Text {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-FirstJsonLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    foreach ($line in ($Text -split "`r?`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith("{") -or $trimmed.StartsWith("[")) {
+            return $trimmed
+        }
+    }
+
+    return $null
+}
+
+function ConvertTo-OrderedJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        $Value
+    )
+
+    return ($Value | ConvertTo-Json -Depth 20 -Compress)
+}
+
+function Convert-EnvListToMap {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        $EnvList
+    )
+
+    $map = @{}
+    foreach ($entry in @($EnvList)) {
+        $text = [string]$entry
+        $separator = $text.IndexOf("=")
+        if ($separator -lt 0) {
+            continue
+        }
+
+        $key = $text.Substring(0, $separator)
+        $value = $text.Substring($separator + 1)
+        $map[$key] = $value
+    }
+
+    return $map
+}
+
+function Get-EnvMapValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Map,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if ($Map.ContainsKey($Key)) {
+        return [string]$Map[$Key]
+    }
+
+    return ""
+}
+
+function Get-DockerInspectJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName,
+        [Parameter(Mandatory = $true)]
+        [string]$Format
+    )
+
+    $command = "docker inspect " + (Quote-BashArg $ContainerName) + " --format " + (Quote-BashArg $Format) + " 2>/dev/null || true"
+    $text = Invoke-WslCapture $command
+    return Get-FirstJsonLine -Text $text
+}
+
+function Get-NormalizedDockerMounts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [string]$Json
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        return ""
+    }
+
+    $mounts = $Json | ConvertFrom-Json
+    $lines = @(
+        foreach ($mount in @($mounts)) {
+            "{0}|{1}|{2}|{3}" -f [string]$mount.Source, [string]$mount.Destination, [bool]$mount.RW, [string]$mount.Type
+        }
+    ) | Sort-Object
+
+    return ($lines -join "`n")
+}
+
+function Get-NormalizedDockerPortBindings {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [string]$Json
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        return ""
+    }
+
+    $bindings = $Json | ConvertFrom-Json
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($containerPort in @($bindings.PSObject.Properties.Name | Sort-Object)) {
+        $entries = @($bindings.$containerPort)
+        foreach ($entry in ($entries | Sort-Object HostIp, HostPort)) {
+            $lines.Add(("{0}={1}:{2}" -f $containerPort, [string]$entry.HostIp, [string]$entry.HostPort))
+        }
+    }
+
+    return ($lines -join "`n")
+}
+
+function Get-NormalizedProxyRuntimeEnv {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [string]$Json
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        return ""
+    }
+
+    $envList = $Json | ConvertFrom-Json
+    $envMap = Convert-EnvListToMap -EnvList $envList
+    $keys = @(
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "CC_SWITCH_START_PROXY",
+        "CC_SWITCH_HOST",
+        "CC_SWITCH_PORT",
+        "CC_SWITCH_AUTO_PORT",
+        "CC_SWITCH_ALLOW_EXTENSION_SESSION_HEADER"
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($key in ($keys | Sort-Object)) {
+        $lines.Add(("{0}={1}" -f $key, (Get-EnvMapValue -Map $envMap -Key $key)))
+    }
+
+    return ($lines -join "`n")
+}
+
+function Get-StableProxyStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TcpHost,
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        [int]$Attempts = 1,
+        [int]$DelaySeconds = 1
+    )
+
+    $url = "http://${TcpHost}:${Port}/status"
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10
+            $status = $response.Content | ConvertFrom-Json
+            return ConvertTo-OrderedJson -Value ([ordered]@{
+                running = [bool]$status.running
+                address = [string]$status.address
+                port = [int]$status.port
+                current_provider_id = [string]$status.current_provider_id
+                current_provider = [string]$status.current_provider
+            })
+        } catch {
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Seconds $DelaySeconds
+            }
+        }
+    }
+
+    return $null
+}
+
+function Wait-ProxyStatus {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TcpHost,
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $attempts = [Math]::Max($HealthRetries, 36)
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        $status = Get-StableProxyStatus -TcpHost $TcpHost -Port $Port
+        $statusHash = if ($null -eq $status) { "<unavailable>" } else { Get-Sha256Text -Text $status }
+        Write-Host ("{0}: attempt {1}/{2}: status={3}" -f $Name, $attempt, $attempts, $statusHash)
+        if ($null -ne $status) {
+            return $status
+        }
+
+        if ($attempt -lt $attempts) {
+            Start-Sleep -Seconds $HealthDelaySeconds
+        }
+    }
+
+    throw "$Name check failed after $attempts attempts: http://${TcpHost}:${Port}/status"
+}
+
+function Get-PersistentProxyConfigHash {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName
+    )
+
+    $safeContainer = ($ContainerName -replace '[^A-Za-z0-9_.-]', '-')
+    $stamp = [System.Guid]::NewGuid().ToString("N")
+    $containerDbCopy = "/tmp/cc-switch-config-${stamp}.db"
+    $hostDbCopy = "/tmp/cc-switch-config-${safeContainer}-${stamp}.db"
+    $localPythonScript = Join-Path ([System.IO.Path]::GetTempPath()) "cc-switch-config-${safeContainer}-${stamp}.py"
+
+    try {
+        Invoke-WslCapture ("docker exec " + (Quote-BashArg $ContainerName) + " sh -c " + (Quote-BashArg ("cp /root/.cc-switch/cc-switch.db $containerDbCopy"))) | Out-Null
+        Invoke-WslCapture ("docker cp " + (Quote-BashArg "${ContainerName}:$containerDbCopy") + " " + (Quote-BashArg $hostDbCopy)) | Out-Null
+        $settingsHashText = Invoke-WslCapture ("docker exec " + (Quote-BashArg $ContainerName) + " sh -c " + (Quote-BashArg "sha256sum /root/.cc-switch/settings.json 2>/dev/null || true"))
+        $settingsHash = ""
+        foreach ($line in ($settingsHashText -split "`r?`n")) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match '^[0-9a-fA-F]{64}\b') {
+                $settingsHash = $Matches[0].ToLowerInvariant()
+                break
+            }
+        }
+
+        $python = @"
+import hashlib, json, sqlite3, sys
+db_path = sys.argv[1]
+settings_hash = sys.argv[2]
+con = sqlite3.connect(db_path)
+con.row_factory = sqlite3.Row
+
+def rows(table, order_by):
+    cols = [row[1] for row in con.execute(f"pragma table_info({table})")]
+    return [
+        {col: row[col] for col in cols}
+        for row in con.execute(f"select * from {table} order by {order_by}")
+    ]
+
+payload = {
+    "settings_json_sha256": settings_hash,
+    "providers": rows("providers", "app_type, id, name"),
+    "settings": rows("settings", "key"),
+}
+text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+print(hashlib.sha256(text.encode("utf-8")).hexdigest())
+"@
+        [System.IO.File]::WriteAllText($localPythonScript, $python, [System.Text.Encoding]::UTF8)
+        $localPythonScriptWsl = ConvertTo-WslPath -WindowsPath $localPythonScript
+        $hashText = Invoke-WslCapture ("python3 " + (Quote-BashArg $localPythonScriptWsl) + " " + (Quote-BashArg $hostDbCopy) + " " + (Quote-BashArg $settingsHash))
+        foreach ($line in ($hashText -split "`r?`n")) {
+            $trimmed = $line.Trim()
+            if ($trimmed -match '^[0-9a-fA-F]{64}$') {
+                return $trimmed.ToLowerInvariant()
+            }
+        }
+
+        throw "Persistent proxy config hash command did not return a SHA256 hash."
+    } finally {
+        try {
+            Invoke-WslCapture ("docker exec " + (Quote-BashArg $ContainerName) + " rm -f " + (Quote-BashArg $containerDbCopy) + " 2>/dev/null || true") | Out-Null
+        } catch {
+        }
+        try {
+            Invoke-WslCapture ("rm -f " + (Quote-BashArg $hostDbCopy) + " 2>/dev/null || true") | Out-Null
+        } catch {
+        }
+        try {
+            if (Test-Path -LiteralPath $localPythonScript) {
+                Remove-Item -LiteralPath $localPythonScript -Force
+            }
+        } catch {
+        }
+    }
+}
+
+function Get-LocalUpgradeProtectionSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName,
+        [Parameter(Mandatory = $true)]
+        [string]$ProxyHost,
+        [Parameter(Mandatory = $true)]
+        [int]$ProxyPort,
+        [int]$ProxyStatusAttempts = 1,
+        [int]$ProxyStatusDelaySeconds = 1
+    )
+
+    $mountsJson = Get-DockerInspectJson -ContainerName $ContainerName -Format "{{json .Mounts}}"
+    $portsJson = Get-DockerInspectJson -ContainerName $ContainerName -Format "{{json .HostConfig.PortBindings}}"
+    $envJson = Get-DockerInspectJson -ContainerName $ContainerName -Format "{{json .Config.Env}}"
+    $exists = -not ([string]::IsNullOrWhiteSpace($mountsJson) -and [string]::IsNullOrWhiteSpace($portsJson) -and [string]::IsNullOrWhiteSpace($envJson))
+
+    $mounts = Get-NormalizedDockerMounts -Json $mountsJson
+    $ports = Get-NormalizedDockerPortBindings -Json $portsJson
+    $proxyEnv = Get-NormalizedProxyRuntimeEnv -Json $envJson
+    $proxyStatus = Get-StableProxyStatus -TcpHost $ProxyHost -Port $ProxyPort -Attempts $ProxyStatusAttempts -DelaySeconds $ProxyStatusDelaySeconds
+    $persistentConfigHash = if ($exists) { Get-PersistentProxyConfigHash -ContainerName $ContainerName } else { "<missing>" }
+
+    return [ordered]@{
+        exists = $exists
+        mounts = $mounts
+        ports = $ports
+        proxy_env = $proxyEnv
+        proxy_status = $proxyStatus
+        persistent_config_hash = $persistentConfigHash
+        mounts_hash = Get-Sha256Text -Text $mounts
+        ports_hash = Get-Sha256Text -Text $ports
+        proxy_env_hash = Get-Sha256Text -Text $proxyEnv
+        proxy_status_hash = if ($null -eq $proxyStatus) { "<unavailable>" } else { Get-Sha256Text -Text $proxyStatus }
+    }
+}
+
+function Write-LocalUpgradeProtectionSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Snapshot
+    )
+
+    Write-Host ("{0}: exists={1} mounts={2} ports={3} proxy_env={4} persistent_config={5} proxy_status={6}" -f $Name, $Snapshot.exists, $Snapshot.mounts_hash, $Snapshot.ports_hash, $Snapshot.proxy_env_hash, $Snapshot.persistent_config_hash, $Snapshot.proxy_status_hash)
+}
+
+function Assert-LocalUpgradePreservedConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Before,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$After
+    )
+
+    if (-not [bool]$Before.exists) {
+        Write-Host "No existing local CCS container was found before publish; config preservation comparison is skipped."
+        return
+    }
+
+    if (-not [bool]$After.exists) {
+        throw "Local CCS upgrade did not recreate the expected container; refusing to treat this as a config-preserving upgrade."
+    }
+
+    if ($Before.mounts -ne $After.mounts) {
+        throw "Local CCS upgrade changed persistent mounts. This path may replace user configuration and is not allowed."
+    }
+
+    if ($Before.ports -ne $After.ports) {
+        throw "Local CCS upgrade changed published port bindings. This path may change proxy exposure and is not allowed."
+    }
+
+    if ($Before.proxy_env -ne $After.proxy_env) {
+        throw "Local CCS upgrade changed proxy-related runtime environment. This path may change proxy behavior and is not allowed."
+    }
+
+    if ($Before.persistent_config_hash -ne $After.persistent_config_hash) {
+        throw "Local CCS upgrade changed persistent proxy/provider configuration. This path may change user configuration and is not allowed."
+    }
+
+    if ($null -eq $After.proxy_status) {
+        throw "Local CCS proxy status is not reachable after publish."
+    }
+
+    if ($null -eq $Before.proxy_status) {
+        Write-Host "Proxy status was not reachable before publish; post-publish proxy reachability was verified."
     }
 }
 
@@ -912,6 +1425,14 @@ $composePath = Join-Path $projectRoot $ComposeFile
 $localComposePath = if ([string]::IsNullOrWhiteSpace($LocalComposeFile)) { $null } else { Join-Path $projectRoot $LocalComposeFile }
 $composeFiles = New-Object System.Collections.Generic.List[string]
 $composeFiles.Add($ComposeFile)
+if (-not $RepairRelay) {
+    if ([string]::IsNullOrWhiteSpace($LocalComposeFile)) {
+        throw "Local compose override is required for local WSL publishing. Pass -LocalComposeFile or restore docker-compose.ccs-web.local.yml."
+    }
+    if (-not (Test-Path -LiteralPath $localComposePath -PathType Leaf)) {
+        throw "Local compose override is required for local WSL publishing but was not found: $localComposePath"
+    }
+}
 if ($localComposePath -and (Test-Path -LiteralPath $localComposePath -PathType Leaf)) {
     $composeFiles.Add($LocalComposeFile)
 }
@@ -1139,6 +1660,8 @@ $autoBuildProxyUrl = $null
 New-Item -ItemType Directory -Force -Path $resolvedLogDir | Out-Null
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $logPath = Join-Path $resolvedLogDir "publish-local-wsl-ccs-web-$timestamp.log"
+$preUpgradeSnapshot = $null
+$postUpgradeSnapshot = $null
 
 try {
     Start-Transcript -LiteralPath $logPath -Force | Out-Null
@@ -1147,9 +1670,7 @@ try {
     Write-Step "Preflight"
     Write-Host "Distro:          $Distro"
     Write-Host "Compose file:    $ComposeFile"
-    if ($composeFiles.Count -gt 1) {
-        Write-Host "Local compose:   $LocalComposeFile"
-    }
+    Write-Host "Local compose:   $LocalComposeFile"
     Write-Host "Service:         $Service"
     Write-Host "Container:       $ContainerName"
     Write-Host "Image:           $Image"
@@ -1187,6 +1708,8 @@ try {
     Invoke-Wsl $command
     $command = "docker inspect " + (Quote-BashArg $ContainerName) + " --format " + (Quote-BashArg "id={{.Id}} image={{.Image}} created={{.Created}} restart={{.HostConfig.RestartPolicy.Name}} mounts={{range .Mounts}}{{.Source}}:{{.Destination}};{{end}}") + " 2>/dev/null || true"
     Invoke-Wsl $command
+    $preUpgradeSnapshot = Get-LocalUpgradeProtectionSnapshot -ContainerName $ContainerName -ProxyHost $ProxyHost -ProxyPort $ProxyPort
+    Write-LocalUpgradeProtectionSnapshot -Name "Initial protection snapshot" -Snapshot $preUpgradeSnapshot
 
     $frontendSnapshot = Ensure-DockerFrontendSnapshot -ProjectRoot $projectRoot -ScriptRoot $scriptRoot -CacheLayout $cacheLayout -Profile $Profile -SkipFrontendBuild:$SkipFrontendBuild -NoCache:$NoCache
     $snapshotIndexPath = $frontendSnapshot.IndexPath
@@ -1225,6 +1748,10 @@ try {
             $composeArgString += " -f " + (Quote-BashArg $localComposeWsl)
         }
 
+        Write-Step "Pre-stop protection snapshot"
+        $preUpgradeSnapshot = Get-LocalUpgradeProtectionSnapshot -ContainerName $ContainerName -ProxyHost $ProxyHost -ProxyPort $ProxyPort -ProxyStatusAttempts $HealthRetries -ProxyStatusDelaySeconds $HealthDelaySeconds
+        Write-LocalUpgradeProtectionSnapshot -Name "Pre-stop protection snapshot" -Snapshot $preUpgradeSnapshot
+
         Write-Step "Stopping existing local WSL container"
         Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "Before stop"
         $command = "cd " + (Quote-BashArg $projectRootWsl) + " && ${profileEnvPrefix}docker compose$composeArgString stop -t $StopTimeoutSeconds " + (Quote-BashArg $Service) + " || true"
@@ -1259,6 +1786,8 @@ try {
         $command = "docker ps --filter " + (Quote-BashArg "name=^/${ContainerName}$") + " --format " + (Quote-BashArg "name={{.Names}} image={{.Image}} status={{.Status}} ports={{.Ports}}")
         Invoke-Wsl $command
         Write-WindowsTcpConnectionsForPorts -Ports $publishedPorts -Name "After start"
+        $postUpgradeSnapshot = Get-LocalUpgradeProtectionSnapshot -ContainerName $ContainerName -ProxyHost $ProxyHost -ProxyPort $ProxyPort
+        Write-LocalUpgradeProtectionSnapshot -Name "Post-upgrade protection snapshot" -Snapshot $postUpgradeSnapshot
     } else {
         Write-Step "Skipping container start"
     }
@@ -1268,10 +1797,19 @@ try {
         Wait-Http -Url $WebHealthUrl -Name "Web UI" | Out-Null
         Wait-ApiHealth -Url $ApiHealthUrl -Name "API health" | Out-Null
         Wait-TcpPort -TcpHost $ProxyHost -Port $ProxyPort -Name "Proxy port" | Out-Null
+        Wait-ProxyStatus -TcpHost $ProxyHost -Port $ProxyPort -Name "Proxy status" | Out-Null
 
         Write-Step "Served build check"
         Assert-ServedBuildMatchesDockerFrontendSnapshot -SnapshotIndexPath $snapshotIndexPath -Url $WebHealthUrl
         Assert-ServedProfileMatches -WebHealthUrl $WebHealthUrl -Profile $Profile
+    }
+
+    if (-not $NoStart) {
+        Write-Step "Config preservation check"
+        $proxyStatusRetries = [Math]::Max($HealthRetries, 36)
+        $postUpgradeSnapshot = Get-LocalUpgradeProtectionSnapshot -ContainerName $ContainerName -ProxyHost $ProxyHost -ProxyPort $ProxyPort -ProxyStatusAttempts $proxyStatusRetries -ProxyStatusDelaySeconds $HealthDelaySeconds
+        Write-LocalUpgradeProtectionSnapshot -Name "Post-upgrade protection snapshot" -Snapshot $postUpgradeSnapshot
+        Assert-LocalUpgradePreservedConfig -Before $preUpgradeSnapshot -After $postUpgradeSnapshot
     }
 
     Write-Step "Done"

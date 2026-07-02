@@ -43,6 +43,7 @@ use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
+use std::path::Path;
 use std::sync::Mutex;
 
 // DAO 方法通过 impl Database 提供，无需额外导出
@@ -95,6 +96,10 @@ impl Database {
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
     pub fn init() -> Result<Self, AppError> {
         let db_path = get_app_config_dir().join("cc-switch.db");
+        Self::init_at_path(&db_path)
+    }
+
+    pub(crate) fn init_at_path(db_path: &Path) -> Result<Self, AppError> {
         let db_exists = db_path.exists();
         let db_path_display = db_path.display().to_string();
 
@@ -127,6 +132,18 @@ impl Database {
         }
         register_db_change_hook(&conn);
 
+        let version = Self::get_user_version(&conn).map_err(|e| {
+            AppError::Database(format!(
+                "read schema version from {db_path_display} failed: {e}"
+            ))
+        })?;
+        if version > SCHEMA_VERSION {
+            return Err(AppError::DatabaseVersionTooNew {
+                found_version: version,
+                supported_version: SCHEMA_VERSION,
+            });
+        }
+
         let db = Self {
             conn: Mutex::new(conn),
         };
@@ -135,21 +152,10 @@ impl Database {
         })?;
 
         // Pre-migration backup: only when upgrading from an existing database
-        {
-            let conn = lock_conn!(db.conn);
-            let version = Self::get_user_version(&conn).map_err(|e| {
-                AppError::Database(format!(
-                    "read schema version from {db_path_display} failed: {e}"
-                ))
-            })?;
-            drop(conn);
-            if version > 0 && version < SCHEMA_VERSION {
-                log::info!(
-                    "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
-                );
-                if let Err(e) = db.backup_database_file() {
-                    log::warn!("Pre-migration backup failed, continuing migration: {e}");
-                }
+        if version > 0 && version < SCHEMA_VERSION {
+            log::info!("Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})");
+            if let Err(e) = db.backup_database_file() {
+                log::warn!("Pre-migration backup failed, continuing migration: {e}");
             }
         }
 

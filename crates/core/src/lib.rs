@@ -15,9 +15,9 @@ use std::{
 };
 
 use cc_switch::{
-    default_sql_export_file_name, export_database_sql, export_database_to_file, AppError,
-    AppSettings, AppState, AppType, Database, EndpointLatency, McpServer, Provider,
-    ProviderService, SkillService, SpeedtestService,
+    default_sql_export_file_name, export_database_sql, export_database_to_file, AppSettings,
+    AppState, AppType, Database, EndpointLatency, McpServer, Provider, ProviderService,
+    SkillService, SpeedtestService,
 };
 use chrono::Utc;
 use indexmap::IndexMap;
@@ -25,6 +25,7 @@ use tokio::sync::RwLock;
 
 /// 对外暴露的核心类型别名，便于直接使用
 pub use cc_switch::{
+    AppError,
     AppSettings as CoreAppSettings, AppType as CoreAppType, BackupEntry, ClaudeDesktopDefaultRoute,
     ClaudeDesktopStatus, CodexOAuthManager, CodexOAuthStatus, ConfigStatus, CopilotAuthManager,
     CopilotAuthStatus, CopilotModel, CopilotUsageResponse, CredentialStatus, DailyStats,

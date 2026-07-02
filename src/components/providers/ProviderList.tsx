@@ -509,7 +509,7 @@ export function ProviderList({
   );
 
   const renderProviderList = () => {
-    if (desktopHelpersEnabled && !isFilteringProviders) {
+    if (!isFilteringProviders) {
       return (
         <Suspense fallback={renderPlainProviderList()}>
           <ProviderListDnd

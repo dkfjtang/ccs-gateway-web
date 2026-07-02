@@ -184,6 +184,51 @@ fn schema_migration_rejects_future_version() {
 }
 
 #[test]
+fn schema_init_rejects_future_version_before_writes() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let db_path = temp.path().join("cc-switch.db");
+    {
+        let conn = Connection::open(&db_path).expect("open temp db");
+        conn.execute("CREATE TABLE sentinel (id INTEGER PRIMARY KEY)", [])
+            .expect("create sentinel table");
+        Database::set_user_version(&conn, SCHEMA_VERSION + 1).expect("set future version");
+    }
+
+    let err = match Database::init_at_path(&db_path) {
+        Ok(_) => panic!("future schema version should be rejected"),
+        Err(err) => err,
+    };
+    match err {
+        AppError::DatabaseVersionTooNew {
+            found_version,
+            supported_version,
+        } => {
+            assert_eq!(found_version, SCHEMA_VERSION + 1);
+            assert_eq!(supported_version, SCHEMA_VERSION);
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+
+    let conn = Connection::open(&db_path).expect("reopen temp db");
+    let sentinel_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sentinel'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count sentinel");
+    assert_eq!(sentinel_exists, 1);
+    let generated_tables: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('providers', 'model_pricing')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count generated tables");
+    assert_eq!(generated_tables, 0);
+}
+
+#[test]
 fn schema_migration_adds_missing_columns_for_providers() {
     let conn = Connection::open_in_memory().expect("open memory db");
 

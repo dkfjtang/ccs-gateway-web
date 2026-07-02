@@ -277,7 +277,7 @@ describe("ProviderList Component", () => {
     expect(handleCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("should render in sorted order and pass through action callbacks without dnd wiring", async () => {
+  it("should render in sorted order and pass through action callbacks with dnd wiring", async () => {
     const providerA = createProvider({ id: "a", name: "A", sortIndex: 1 });
     const providerB = createProvider({ id: "b", name: "B", sortIndex: 0 });
 
@@ -318,9 +318,13 @@ describe("ProviderList Component", () => {
     // Verify current provider marker
     expect(providerCardRenderSpy.mock.calls[0][0].isCurrent).toBe(true);
 
-    expect(providerCardRenderSpy.mock.calls[0][0].dragHandleProps).toBeUndefined();
-    expect(useDragSortMock).not.toHaveBeenCalled();
-    expect(useSortableMock).not.toHaveBeenCalled();
+    expect(await screen.findByText("b")).toBeInTheDocument();
+    expect(useDragSortMock).toHaveBeenLastCalledWith(
+      { a: providerA, b: providerB },
+      "claude",
+      { desktopHelpersEnabled: false },
+    );
+    expect(useSortableMock).toHaveBeenCalled();
 
     // Trigger action buttons
     fireEvent.click(screen.getByTestId("switch-b"));
@@ -337,7 +341,7 @@ describe("ProviderList Component", () => {
 
   });
 
-  it("renders without dnd wiring when desktop helpers are disabled", () => {
+  it("keeps provider drag sorting available when desktop helpers are disabled", async () => {
     const providerA = createProvider({ id: "a", name: "A", sortIndex: 1 });
     const providerB = createProvider({ id: "b", name: "B", sortIndex: 0 });
 
@@ -355,12 +359,18 @@ describe("ProviderList Component", () => {
       />,
     );
 
-    expect(useDragSortMock).not.toHaveBeenCalled();
-    expect(useSortableMock).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("provider-card-b")).toBeInTheDocument();
+    expect(useDragSortMock).toHaveBeenLastCalledWith(
+      { a: providerA, b: providerB },
+      "claude",
+      { desktopHelpersEnabled: false },
+    );
+    expect(useSortableMock).toHaveBeenCalled();
     expect(providerCardRenderSpy).toHaveBeenCalledTimes(2);
     expect(providerCardRenderSpy.mock.calls[0][0].provider.id).toBe("b");
     expect(providerCardRenderSpy.mock.calls[1][0].provider.id).toBe("a");
-    expect(providerCardRenderSpy.mock.calls[0][0].dragHandleProps).toBeUndefined();
+    expect(providerCardRenderSpy.mock.calls[0][0].dragHandleProps).toBeDefined();
+    expect(screen.getByTestId("drag-attr-b")).toHaveTextContent("b");
   });
 
   it("does not enable local tool live-config hooks when local tools are disabled", async () => {
@@ -423,11 +433,11 @@ describe("ProviderList Component", () => {
     );
 
     expect(await screen.findByTestId("provider-card-provider-a")).toBeInTheDocument();
-    expect(providerCardRenderSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        usageCapabilitiesEnabled: false,
-      }),
-    );
+    expect(
+      providerCardRenderSpy.mock.calls.some(
+        ([props]) => props.usageCapabilitiesEnabled === false,
+      ),
+    ).toBe(true);
   });
 
   it("does not fetch the failover queue until proxy failover mode can display it", async () => {
