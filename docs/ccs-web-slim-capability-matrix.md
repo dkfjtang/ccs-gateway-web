@@ -17,100 +17,100 @@ This matrix is the first slim production profile boundary and implementation-gat
 
 `A+B` is the retained production surface:
 
-| Area | Capability Groups | UI/API Evidence |
-| --- | --- | --- |
-| A: proxy/router runtime | `proxy`, `failover`, `providers`, `usage` | Proxy status/config, provider routing, failover/circuit breaker, request logs, provider cost observability, OpenAI/Anthropic-compatible proxy paths |
-| B: web admin management | `auth`, `providers`, `settings-basic`, `usage`, `backup`, `import-export`, `sync` | Web admin login/session, provider management, usage/pricing/logs/statistics, backup/restore, SQL/config import/export, WebDAV/S3 sync |
+| Area                    | Capability Groups                                                                 | UI/API Evidence                                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A: proxy/router runtime | `proxy`, `failover`, `providers`, `usage`                                         | Proxy status/config, provider routing, failover/circuit breaker, request logs, provider cost observability, OpenAI/Anthropic-compatible proxy paths |
+| B: web admin management | `auth`, `providers`, `settings-basic`, `usage`, `backup`, `import-export`, `sync` | Web admin login/session, provider management, usage/pricing/logs/statistics, backup/restore, SQL/config import/export, WebDAV/S3 sync               |
 
 Everything outside this mapping must be explicitly retained by the spec or disabled in slim.
 
 ## Capability Groups
 
-| Group | Slim | Purpose |
-| --- | --- | --- |
-| `auth` | retained | Web admin authentication and session checks |
-| `providers` | retained | Provider CRUD, switch, sort, live config, model fetch, provider health surface needed by admin UI |
-| `proxy` | retained | Proxy service config, status, takeover controls, and OpenAI/Anthropic-compatible proxy paths |
-| `failover` | retained | Failover queue, provider health, circuit breaker, auto failover controls |
-| `usage` | retained | Usage summaries, pricing, request logs, usage scripts, provider/model stats, read-only quota/usage checks |
-| `backup` | retained | Database backup, restore, rename, delete |
-| `import-export` | retained | SQL import/export and config import/export needed for migration and rollback |
-| `sync` | retained | WebDAV and S3 sync |
-| `settings-basic` | retained | General, proxy, auth, usage, logs, and about settings needed by retained views |
-| `protocol` | retained | JSON-RPC protocol commands and sanitized public health/build metadata |
-| `desktop-helpers` | disabled | Tray, updater, auto launch, desktop dialogs, local open helpers, desktop-only window helpers |
-| `skills` | disabled | Skill repo/search/install/update/migration/backup/import ecosystem management |
-| `mcp` | disabled | MCP server management and cross-application sync |
-| `sessions` | disabled | Session manager and terminal launch |
-| `workspace` | disabled | Workspace file editor and local workspace directory open |
-| `daily-memory` | disabled | Daily memory file management |
-| `third-party-local-tools` | disabled | Claude Desktop repair/config, Hermes local dashboard/memory, OpenClaw tools/env/agents, OpenCode/OMO local files, local prompt file tooling, managed-account login/token/model management |
-| `local-env-helpers` | disabled | Local directory picker and environment conflict repair |
-| `auth-vault` | disabled | Token/cookie capture and token summary APIs |
+| Group                     | Slim                              | Purpose                                                                                                                                                                                   |
+| ------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth`                    | retained                          | Web admin authentication and session checks                                                                                                                                               |
+| `providers`               | retained                          | Provider CRUD, switch, sort, live config, model fetch, provider health surface needed by admin UI                                                                                         |
+| `proxy`                   | retained                          | Proxy service config, status, takeover controls, and OpenAI/Anthropic-compatible proxy paths                                                                                              |
+| `failover`                | retained                          | Failover queue, provider health, circuit breaker, auto failover controls                                                                                                                  |
+| `usage`                   | retained                          | Usage summaries, pricing, request logs, usage scripts, provider/model stats, read-only quota/usage checks                                                                                 |
+| `backup`                  | retained                          | Database backup, restore, rename, delete                                                                                                                                                  |
+| `import-export`           | retained                          | SQL import/export and config import/export needed for migration and rollback                                                                                                              |
+| `sync`                    | retained                          | WebDAV and S3 sync                                                                                                                                                                        |
+| `settings-basic`          | retained                          | General, proxy, auth, usage, logs, and about settings needed by retained views                                                                                                            |
+| `protocol`                | retained                          | JSON-RPC protocol commands and sanitized public health/build metadata                                                                                                                     |
+| `desktop-helpers`         | disabled                          | Tray, updater, auto launch, desktop dialogs, local open helpers, desktop-only window helpers                                                                                              |
+| `skills`                  | disabled                          | Skill repo/search/install/update/migration/backup/import ecosystem management                                                                                                             |
+| `mcp`                     | disabled                          | MCP server management and cross-application sync                                                                                                                                          |
+| `sessions`                | disabled                          | Session manager and terminal launch                                                                                                                                                       |
+| `workspace`               | disabled                          | Workspace file editor and local workspace directory open                                                                                                                                  |
+| `daily-memory`            | disabled                          | Daily memory file management                                                                                                                                                              |
+| `third-party-local-tools` | disabled                          | Claude Desktop repair/config, Hermes local dashboard/memory, OpenClaw tools/env/agents, OpenCode/OMO local files, local prompt file tooling, managed-account login/token/model management |
+| `local-env-helpers`       | disabled                          | Local directory picker and environment conflict repair                                                                                                                                    |
+| `auth-vault`              | disabled except temporary receive | Token/cookie summary APIs stay disabled; explicitly opened temporary receive windows allow guarded token/cookie writes                                                                    |
 
 ## HTTP Routes
 
-| Route | Slim | Group | Gate |
-| --- | --- | --- | --- |
-| `GET /health` | retained | `protocol` | Public sanitized health |
-| `GET /build-info.json` | retained | `protocol` | Public sanitized build metadata with profile and capability manifest |
-| `GET /` and static SPA fallback | retained | `protocol` | Static assets only; not a backend security boundary |
-| `POST /api/invoke` | retained | `protocol` | Management auth first, then per-command capability gate |
-| `GET /api/ws` | retained | `protocol` | Management auth first, then per-message capability gate |
-| `POST /api/import-config` | retained | `import-export` | Management auth and route capability gate |
-| `GET /api/export-config` | retained | `import-export` | Management auth and route capability gate |
-| `POST /api/auth-vault/tokens` | disabled | `auth-vault` | Fixed HTTP 403 `capability_disabled` in slim |
-| `GET /api/auth-vault/tokens/summary` | disabled | `auth-vault` | Fixed HTTP 403 `capability_disabled` in slim |
-| `* /api/auth-vault/*` unknown subpaths | disabled | `auth-vault` | Fixed HTTP 403 `capability_disabled` in slim |
-| `* /api/*` unknown management route | disabled | `unclassified` | Fail closed; must not fall through to SPA |
-| Proxy `/status` and OpenAI/Anthropic-compatible paths | retained | `proxy` | Proxy server path; slim must not change routing behavior |
+| Route                                                 | Slim                   | Group           | Gate                                                                                                                                                             |
+| ----------------------------------------------------- | ---------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                                         | retained               | `protocol`      | Public sanitized health                                                                                                                                          |
+| `GET /build-info.json`                                | retained               | `protocol`      | Public sanitized build metadata with profile and capability manifest                                                                                             |
+| `GET /` and static SPA fallback                       | retained               | `protocol`      | Static assets only; not a backend security boundary                                                                                                              |
+| `POST /api/invoke`                                    | retained               | `protocol`      | Management auth first, then per-command capability gate                                                                                                          |
+| `GET /api/ws`                                         | retained               | `protocol`      | Management auth first, then per-message capability gate                                                                                                          |
+| `POST /api/import-config`                             | retained               | `import-export` | Management auth and route capability gate                                                                                                                        |
+| `GET /api/export-config`                              | retained               | `import-export` | Management auth and route capability gate                                                                                                                        |
+| `POST /api/auth-vault/tokens`                         | temporary receive only | `auth-vault`    | Fixed HTTP 403 `capability_disabled` until an authenticated operator opens the temporary receive window; then guarded writes are allowed for the 5-minute window |
+| `GET /api/auth-vault/tokens/summary`                  | disabled               | `auth-vault`    | Fixed HTTP 403 `capability_disabled` in slim                                                                                                                     |
+| `* /api/auth-vault/*` unknown subpaths                | disabled               | `auth-vault`    | Fixed HTTP 403 `capability_disabled` in slim                                                                                                                     |
+| `* /api/*` unknown management route                   | disabled               | `unclassified`  | Fail closed; must not fall through to SPA                                                                                                                        |
+| Proxy `/status` and OpenAI/Anthropic-compatible paths | retained               | `proxy`         | Proxy server path; slim must not change routing behavior                                                                                                         |
 
-Unknown management routes and unknown RPC commands must fail closed in slim. If web auth is enabled, protected management routes must return `401` before capability or route details are exposed; authenticated unknown management routes may return a JSON `404`/`403` fail-closed response, but never the SPA. The `auth-vault` prefix is an explicit disabled route group in slim and always returns fixed `403 capability_disabled`, including unauthenticated requests, so token/cookie capture is never reachable and the response does not depend on auth state.
+Unknown management routes and unknown RPC commands must fail closed in slim. If web auth is enabled, protected management routes must return `401` before capability or route details are exposed; authenticated unknown management routes may return a JSON `404`/`403` fail-closed response, but never the SPA. The `auth-vault` prefix is disabled by default in slim: summary APIs and unknown subpaths always return fixed `403 capability_disabled`, while `POST /api/auth-vault/tokens` is reachable only after an authenticated operator manually opens the temporary receive window. The receive path must still require the dedicated sync header, allowed origin/referer, and remote session cookie/header checks; successful or failed receives must not close the window before manual close or expiry.
 
 ## WebSocket Commands
 
-| Command Type | Slim | Group | Gate |
-| --- | --- | --- | --- |
-| `ping` | retained | `protocol` | Protocol handler |
-| `event.subscribe` / `event.unsubscribe` | retained | `protocol` | Protocol handler |
-| Business JSON-RPC commands | per command | command group | `dispatch_command` capability gate |
-| Unknown business command | disabled | `unclassified` | JSON-RPC error with `capability_disabled` in slim |
+| Command Type                            | Slim        | Group          | Gate                                              |
+| --------------------------------------- | ----------- | -------------- | ------------------------------------------------- |
+| `ping`                                  | retained    | `protocol`     | Protocol handler                                  |
+| `event.subscribe` / `event.unsubscribe` | retained    | `protocol`     | Protocol handler                                  |
+| Business JSON-RPC commands              | per command | command group  | `dispatch_command` capability gate                |
+| Unknown business command                | disabled    | `unclassified` | JSON-RPC error with `capability_disabled` in slim |
 
 ## Frontend Views And Actions
 
-| UI Surface | Slim | Group |
-| --- | --- | --- |
-| Providers view | retained | `providers` |
-| Settings view | retained | `settings-basic` |
-| Settings general language/theme/app visibility | retained | `settings-basic` |
-| Settings proxy tab | retained | `proxy` |
-| Web admin auth/session gate | retained | `auth` |
-| Settings managed-account auth center | disabled | `third-party-local-tools` |
-| Settings usage tab | retained | `usage` |
-| Settings about tab | retained | `settings-basic` |
-| Settings import/export | retained | `import-export` |
-| Settings backup list | retained | `backup` |
-| Settings WebDAV/S3 sync | retained | `sync` |
-| Settings log config | retained | `settings-basic` |
-| Universal providers view | retained | `providers` |
-| Provider live import/sync actions for local third-party tools | disabled | `third-party-local-tools` |
-| Claude Desktop/OpenClaw/Hermes/OpenCode local config repair actions | disabled | `third-party-local-tools` |
-| Proxy toggle and failover toolbar actions | retained | `proxy` / `failover` |
-| Refresh usage toolbar action | retained | `usage` |
-| Prompts view and prompt toolbar actions | disabled | `third-party-local-tools` |
-| Skills and skillsDiscovery views/actions | disabled | `skills` |
-| MCP view/actions | disabled | `mcp` |
-| Agents view | disabled | `third-party-local-tools` |
-| Sessions view/actions | disabled | `sessions` |
-| Workspace view/actions | disabled | `workspace` |
-| OpenClaw env/tools/agents views | disabled | `third-party-local-tools` |
-| Hermes memory view and dashboard launcher | disabled | `third-party-local-tools` |
-| Startup environment conflict checks | disabled | `local-env-helpers` |
-| Startup skills migration check | disabled | `skills` |
-| WebDAV/S3 status listeners | retained | `sync` |
-| ThemeProvider desktop theme write side effect | disabled | `desktop-helpers` |
-| DeepLinkImportDialog provider import branch | retained | `import-export` / `providers` |
-| DeepLinkImportDialog skill/MCP/prompt import branches | disabled | `skills` / `mcp` / `third-party-local-tools` |
+| UI Surface                                                          | Slim     | Group                                        |
+| ------------------------------------------------------------------- | -------- | -------------------------------------------- |
+| Providers view                                                      | retained | `providers`                                  |
+| Settings view                                                       | retained | `settings-basic`                             |
+| Settings general language/theme/app visibility                      | retained | `settings-basic`                             |
+| Settings proxy tab                                                  | retained | `proxy`                                      |
+| Web admin auth/session gate                                         | retained | `auth`                                       |
+| Settings managed-account auth center                                | disabled | `third-party-local-tools`                    |
+| Settings usage tab                                                  | retained | `usage`                                      |
+| Settings about tab                                                  | retained | `settings-basic`                             |
+| Settings import/export                                              | retained | `import-export`                              |
+| Settings backup list                                                | retained | `backup`                                     |
+| Settings WebDAV/S3 sync                                             | retained | `sync`                                       |
+| Settings log config                                                 | retained | `settings-basic`                             |
+| Universal providers view                                            | retained | `providers`                                  |
+| Provider live import/sync actions for local third-party tools       | disabled | `third-party-local-tools`                    |
+| Claude Desktop/OpenClaw/Hermes/OpenCode local config repair actions | disabled | `third-party-local-tools`                    |
+| Proxy toggle and failover toolbar actions                           | retained | `proxy` / `failover`                         |
+| Refresh usage toolbar action                                        | retained | `usage`                                      |
+| Prompts view and prompt toolbar actions                             | disabled | `third-party-local-tools`                    |
+| Skills and skillsDiscovery views/actions                            | disabled | `skills`                                     |
+| MCP view/actions                                                    | disabled | `mcp`                                        |
+| Agents view                                                         | disabled | `third-party-local-tools`                    |
+| Sessions view/actions                                               | disabled | `sessions`                                   |
+| Workspace view/actions                                              | disabled | `workspace`                                  |
+| OpenClaw env/tools/agents views                                     | disabled | `third-party-local-tools`                    |
+| Hermes memory view and dashboard launcher                           | disabled | `third-party-local-tools`                    |
+| Startup environment conflict checks                                 | disabled | `local-env-helpers`                          |
+| Startup skills migration check                                      | disabled | `skills`                                     |
+| WebDAV/S3 status listeners                                          | retained | `sync`                                       |
+| ThemeProvider desktop theme write side effect                       | disabled | `desktop-helpers`                            |
+| DeepLinkImportDialog provider import branch                         | retained | `import-export` / `providers`                |
+| DeepLinkImportDialog skill/MCP/prompt import branches               | disabled | `skills` / `mcp` / `third-party-local-tools` |
 
 Prompt management is classified as disabled for the first slim stage because the current prompt UI manages local prompt files and app-specific local configuration rather than the retained A+B provider/proxy/usage/sync surface. If prompt management later becomes a TTFlows-facing production requirement, it needs a separate product decision and capability group.
 
@@ -459,6 +459,8 @@ Web/API import and export flows are retained. Desktop file picker commands are d
 - `POST /api/auth-vault/tokens`
 - `GET /api/auth-vault/tokens/summary`
 
+Slim keeps `GET /api/auth-vault/tokens/summary` disabled. `POST /api/auth-vault/tokens` is the only temporary exception, and only inside an operator-opened receive window.
+
 ## Retained Proxy Regression Boundary
 
 Slim must not change these behaviors:
@@ -480,7 +482,7 @@ Slim must not change these behaviors:
 - Rust unit: slim manifest disables known disabled groups, retained groups stay enabled, and backend/frontend disabled group definitions do not drift.
 - Rust unit: every command currently matched by `dispatch_command` is classified exactly once; unclassified commands fail closed in slim.
 - Rust route integration: unauthenticated protected `/api/invoke` and `/api/ws` return auth failure before capability details; authenticated disabled commands return HTTP 403 or JSON-RPC `capability_disabled`.
-- Rust route integration: `/api/auth-vault/*` returns fixed HTTP 403 `capability_disabled` in slim, including authenticated, unauthenticated, known, and unknown auth-vault subpaths.
+- Rust route integration: slim keeps auth-vault summary and unknown subpaths fixed at HTTP 403 `capability_disabled`; `POST /api/auth-vault/tokens` returns capability-disabled before the receive window is opened, allows guarded writes during the 5-minute window, remains open after successful or failed receives, and rejects writes after manual close or expiry.
 - Rust route integration: unknown `/api/*` management routes fail closed and never fall through to the SPA.
 - Rust auth: slim production auth config missing, invalid JSON, empty required fields, or invalid hash/config values fail closed unless the explicit local-test no-auth override is set; publish/smoke paths must reject that override.
 - Frontend unit/render: slim filters disabled entries; retained provider/proxy/usage/import-export/backup/WebDAV/S3 surfaces remain visible; localStorage disabled view falls back to providers; disabled lazy components and startup side effects do not run.

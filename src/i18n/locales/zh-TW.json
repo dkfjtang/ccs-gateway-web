@@ -353,7 +353,7 @@
         "title": "Auth Vault 臨時接收",
         "description": "手動開啟遠端登入狀態接收視窗",
         "switchLabel": "允許接收瀏覽器擴充功能推送",
-        "switchDescription": "開啟後 5 分鐘內僅允許寫入一次 Auth Vault；成功、過期或連續失敗 5 次會自動關閉。",
+        "switchDescription": "開啟後可在 5 分鐘內持續接收瀏覽器擴充功能推送；手動關閉或到期後自動關閉。",
         "statusLabel": "目前狀態",
         "statusOpen": "接收中",
         "statusClosed": "已關閉",

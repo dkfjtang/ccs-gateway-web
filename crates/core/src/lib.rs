@@ -25,22 +25,21 @@ use tokio::sync::RwLock;
 
 /// 对外暴露的核心类型别名，便于直接使用
 pub use cc_switch::{
-    AppError,
-    AppSettings as CoreAppSettings, AppType as CoreAppType, BackupEntry, ClaudeDesktopDefaultRoute,
-    ClaudeDesktopStatus, CodexOAuthManager, CodexOAuthStatus, ConfigStatus, CopilotAuthManager,
-    CopilotAuthStatus, CopilotModel, CopilotUsageResponse, CredentialStatus, DailyStats,
-    DataSourceSummary, DeleteSessionOutcome, DeleteSessionRequest, DiscoverableSkill, FetchedModel,
-    GitHubAccount, GitHubDeviceCodeResponse, HealthStatus, HermesMemoryLimits, HermesModelConfig,
-    HermesWriteOutcome, ImportSkillSelection, LogConfig, LogFilters, McpServer as CoreMcpServer,
-    MemoryKind, ModelPricingInfo as CoreModelPricingInfo, ModelStats, OmoLocalFileData,
-    OpenClawAgentsDefaults, OpenClawDefaultModel, OpenClawEnvConfig, OpenClawModelCatalogEntry,
-    OpenClawToolsConfig, OptimizerConfig, PaginatedLogs, Provider as CoreProvider,
-    ProviderLimitStatus, ProviderStats, RectifierConfig, RequestLogDetail, S3SyncSettings,
-    SessionSyncResult, SkillBackupEntry, SkillMigrationResult, SkillRepo, SkillStorageLocation,
-    SkillUpdateInfo, SkillsMigrationPayload, SkillsShSearchResult, StreamCheckConfig,
-    StreamCheckResult, StreamCheckService, SubscriptionQuota, UniversalProvider, UsageResult,
-    UsageScript, UsageSummary, UsageSummaryByApp, WebDavSyncSettings, WslShellPreferenceInput,
-    WEB_COMPAT_TAURI_COMMANDS,
+    AppError, AppSettings as CoreAppSettings, AppType as CoreAppType, BackupEntry,
+    ClaudeDesktopDefaultRoute, ClaudeDesktopStatus, CodexOAuthManager, CodexOAuthStatus,
+    ConfigStatus, CopilotAuthManager, CopilotAuthStatus, CopilotModel, CopilotUsageResponse,
+    CredentialStatus, DailyStats, DataSourceSummary, DeleteSessionOutcome, DeleteSessionRequest,
+    DiscoverableSkill, FetchedModel, GitHubAccount, GitHubDeviceCodeResponse, HealthStatus,
+    HermesMemoryLimits, HermesModelConfig, HermesWriteOutcome, ImportSkillSelection, LogConfig,
+    LogFilters, McpServer as CoreMcpServer, MemoryKind, ModelPricingInfo as CoreModelPricingInfo,
+    ModelStats, OmoLocalFileData, OpenClawAgentsDefaults, OpenClawDefaultModel, OpenClawEnvConfig,
+    OpenClawModelCatalogEntry, OpenClawToolsConfig, OptimizerConfig, PaginatedLogs,
+    Provider as CoreProvider, ProviderLimitStatus, ProviderStats, RectifierConfig,
+    RequestLogDetail, S3SyncSettings, SessionSyncResult, SkillBackupEntry, SkillMigrationResult,
+    SkillRepo, SkillStorageLocation, SkillUpdateInfo, SkillsMigrationPayload, SkillsShSearchResult,
+    StreamCheckConfig, StreamCheckResult, StreamCheckService, SubscriptionQuota, UniversalProvider,
+    UsageResult, UsageScript, UsageSummary, UsageSummaryByApp, WebDavSyncSettings,
+    WslShellPreferenceInput, WEB_COMPAT_TAURI_COMMANDS,
 };
 
 const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
@@ -52,6 +51,7 @@ const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
 /// - 管理 SkillService 等长生命周期服务
 pub struct CoreContext {
     app_state: AppState,
+    app_config_dir: PathBuf,
     skill_service: Option<Arc<SkillService>>,
     copilot_auth_manager: Arc<RwLock<CopilotAuthManager>>,
     codex_oauth_manager: Arc<RwLock<CodexOAuthManager>>,
@@ -72,6 +72,7 @@ impl CoreContext {
 
         Ok(Self {
             app_state,
+            app_config_dir: app_config_dir.clone(),
             skill_service,
             copilot_auth_manager: Arc::new(RwLock::new(CopilotAuthManager::new(
                 app_config_dir.clone(),
@@ -86,10 +87,18 @@ impl CoreContext {
     }
 
     pub fn from_app_state(app_state: AppState) -> Self {
-        let app_config_dir = cc_switch::get_app_config_dir();
+        Self::from_app_state_with_app_config_dir(app_state, cc_switch::get_app_config_dir())
+    }
+
+    pub fn from_app_state_with_app_config_dir(
+        app_state: AppState,
+        app_config_dir: impl Into<PathBuf>,
+    ) -> Self {
+        let app_config_dir = app_config_dir.into();
         let skill_service = Some(Arc::new(SkillService::new()));
         Self {
             app_state,
+            app_config_dir: app_config_dir.clone(),
             skill_service,
             copilot_auth_manager: Arc::new(RwLock::new(CopilotAuthManager::new(
                 app_config_dir.clone(),
@@ -104,7 +113,7 @@ impl CoreContext {
     }
 
     pub fn app_config_dir(&self) -> PathBuf {
-        cc_switch::get_app_config_dir()
+        self.app_config_dir.clone()
     }
 }
 
@@ -351,6 +360,14 @@ pub async fn fetch_models_for_config(
     models_url: Option<&str>,
     custom_user_agent: Option<&str>,
 ) -> Result<Vec<FetchedModel>, String> {
+    let custom_user_agent = custom_user_agent
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| format!("Invalid custom user agent: {error}"))
+        })
+        .transpose()?;
+
     cc_switch::fetch_models(
         base_url,
         api_key,
@@ -1349,8 +1366,23 @@ pub fn save_settings(settings: AppSettings) -> Result<bool, String> {
 
 #[cfg(test)]
 mod settings_tests {
-    use super::{merge_settings_for_save, settings_for_frontend};
+    use super::{fetch_models_for_config, merge_settings_for_save, settings_for_frontend};
     use cc_switch::{AppSettings, WebDavSyncSettings};
+
+    #[tokio::test]
+    async fn fetch_models_for_config_rejects_invalid_custom_user_agent_before_request() {
+        let err = fetch_models_for_config(
+            "http://127.0.0.1:9",
+            "test-key",
+            false,
+            None,
+            Some("bad\nua"),
+        )
+        .await
+        .expect_err("invalid custom user-agent should fail before network");
+
+        assert!(err.contains("Invalid custom user agent"), "{err}");
+    }
 
     #[test]
     fn frontend_settings_clear_webdav_password_but_keep_config() {

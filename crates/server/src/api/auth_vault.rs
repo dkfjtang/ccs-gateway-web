@@ -114,8 +114,10 @@ pub struct AuthVaultTokenSummary {
     captured_at: Option<String>,
 }
 
-fn vault_path() -> PathBuf {
-    PathBuf::from(cc_switch_core::get_app_config_dir())
+fn vault_path(state: &ServerState) -> PathBuf {
+    state
+        .core
+        .app_config_dir()
         .join("auth-vault")
         .join("tokens.json")
 }
@@ -224,6 +226,16 @@ fn receive_window_closed() -> (StatusCode, Json<Value>) {
         Json(serde_json::json!({
             "ok": false,
             "error": "auth_vault_receive_window_closed"
+        })),
+    )
+}
+
+fn receive_window_busy() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "ok": false,
+            "error": "auth_vault_receive_window_busy"
         })),
     )
 }
@@ -505,9 +517,8 @@ pub async fn save_auth_vault_handler(
         match state.auth_vault_receive_window.begin_receive() {
             AuthVaultReceiveBegin::Claimed => {}
             AuthVaultReceiveBegin::NeverOpened => return auth_vault_disabled(),
-            AuthVaultReceiveBegin::Closed | AuthVaultReceiveBegin::Busy => {
-                return receive_window_closed();
-            }
+            AuthVaultReceiveBegin::Closed => return receive_window_closed(),
+            AuthVaultReceiveBegin::Busy => return receive_window_busy(),
         }
     } else if !is_save_authorized(&state, &headers, &peer_addr) {
         return unauthorized();
@@ -546,7 +557,7 @@ pub async fn save_auth_vault_handler(
         );
     }
 
-    let path = vault_path();
+    let path = vault_path(state.as_ref());
     let file = AuthVaultFile {
         schema_version: 1,
         updated_at: chrono::Utc::now().to_rfc3339(),
@@ -584,7 +595,7 @@ pub async fn save_auth_vault_handler(
 
     let summary = summarize(&file.sites, &file.token_vault);
     if !full_auth_vault {
-        state.auth_vault_receive_window.close_success();
+        state.auth_vault_receive_window.finish_receive_success();
     }
     (
         StatusCode::OK,
@@ -614,7 +625,7 @@ pub async fn auth_vault_summary_handler(
         return unauthorized();
     }
 
-    let path = vault_path();
+    let path = vault_path(state.as_ref());
     let file = std::fs::read_to_string(&path)
         .ok()
         .and_then(|raw| serde_json::from_str::<AuthVaultFile>(&raw).ok())

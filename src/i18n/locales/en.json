@@ -338,7 +338,7 @@
         "title": "Auth Vault Temporary Receive",
         "description": "Manually open the remote login-state receive window",
         "switchLabel": "Allow browser extension push",
-        "switchDescription": "After opening, one Auth Vault write is allowed for 5 minutes. Success, expiry, or 5 consecutive failures closes it automatically.",
+        "switchDescription": "After opening, browser extension pushes are accepted for 5 minutes. Close it manually, or it closes automatically when time expires.",
         "statusLabel": "Current status",
         "statusOpen": "Receiving",
         "statusClosed": "Closed",

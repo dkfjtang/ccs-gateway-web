@@ -121,7 +121,7 @@ export function AuthVaultReceiveWindowSection() {
         </div>
         <div>
           <p className="font-medium text-foreground">
-            {status?.failureCount ?? 0}/5
+            {status?.failureCount ?? 0}
           </p>
           <p>{t("settings.advanced.authVaultReceive.failureLabel")}</p>
         </div>

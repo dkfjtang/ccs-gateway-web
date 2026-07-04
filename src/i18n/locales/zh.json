@@ -338,7 +338,7 @@
         "title": "Auth Vault 临时接收",
         "description": "手工打开远端登录态接收窗口",
         "switchLabel": "允许接收浏览器扩展推送",
-        "switchDescription": "打开后 5 分钟内仅允许写入一次 Auth Vault；成功、过期或连续失败 5 次会自动关闭。",
+        "switchDescription": "打开后可在 5 分钟内持续接收浏览器扩展推送；手动关闭或到期后自动关闭。",
         "statusLabel": "当前状态",
         "statusOpen": "接收中",
         "statusClosed": "已关闭",

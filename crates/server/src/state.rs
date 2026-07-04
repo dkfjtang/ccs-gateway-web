@@ -26,8 +26,6 @@ pub struct ServerState {
 pub enum AuthVaultReceiveCloseReason {
     Manual,
     Expired,
-    Success,
-    FailureLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +75,6 @@ impl Default for AuthVaultReceiveWindow {
 
 impl AuthVaultReceiveWindow {
     const DEFAULT_WINDOW_SECONDS: i64 = 5 * 60;
-    const MAX_FAILURES: u8 = 5;
 
     pub fn open_default(&self) -> AuthVaultReceiveWindowStatus {
         self.open_for_seconds(Self::DEFAULT_WINDOW_SECONDS)
@@ -94,10 +91,6 @@ impl AuthVaultReceiveWindow {
 
     pub fn close_manual(&self) -> AuthVaultReceiveWindowStatus {
         self.close(AuthVaultReceiveCloseReason::Manual)
-    }
-
-    pub fn close_success(&self) -> AuthVaultReceiveWindowStatus {
-        self.close(AuthVaultReceiveCloseReason::Success)
     }
 
     pub fn status(&self) -> AuthVaultReceiveWindowStatus {
@@ -132,16 +125,18 @@ impl AuthVaultReceiveWindow {
         Self::record_failure_from_inner(&mut inner)
     }
 
+    pub fn finish_receive_success(&self) -> AuthVaultReceiveWindowStatus {
+        let mut inner = self.inner.lock().expect("auth vault receive window lock");
+        inner.in_progress = false;
+        inner.failure_count = 0;
+        Self::status_from_inner(&mut inner)
+    }
+
     fn record_failure_from_inner(
         inner: &mut AuthVaultReceiveWindowInner,
     ) -> AuthVaultReceiveWindowStatus {
         if Self::is_inner_open(inner) {
             inner.failure_count = inner.failure_count.saturating_add(1);
-            if inner.failure_count >= Self::MAX_FAILURES {
-                inner.expires_at = None;
-                inner.closed_reason = Some(AuthVaultReceiveCloseReason::FailureLimit);
-                inner.in_progress = false;
-            }
         }
         Self::status_from_inner(inner)
     }

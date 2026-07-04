@@ -338,7 +338,7 @@
         "title": "Auth Vault 一時受信",
         "description": "リモートのログイン状態受信ウィンドウを手動で開きます",
         "switchLabel": "ブラウザー拡張の送信を許可",
-        "switchDescription": "開くと 5 分間、Auth Vault への 1 回の書き込みだけを許可します。成功、期限切れ、または連続 5 回の失敗で自動的に閉じます。",
+        "switchDescription": "開くと 5 分間、ブラウザー拡張からの送信を継続して受け付けます。手動で閉じるか、期限切れで自動的に閉じます。",
         "statusLabel": "現在の状態",
         "statusOpen": "受信中",
         "statusClosed": "閉じています",

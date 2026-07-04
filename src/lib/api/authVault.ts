@@ -1,10 +1,6 @@
 const API_BASE = import.meta.env.VITE_CC_SWITCH_API_BASE || "/api";
 
-export type AuthVaultReceiveClosedReason =
-  | "manual"
-  | "expired"
-  | "success"
-  | "failure_limit";
+export type AuthVaultReceiveClosedReason = "manual" | "expired";
 
 export interface AuthVaultReceiveWindowStatus {
   ok: boolean;

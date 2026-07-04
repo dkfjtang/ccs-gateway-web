@@ -1,4 +1,10 @@
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use axum::{
     body::{to_bytes, Body},
@@ -23,6 +29,21 @@ use cc_switch_server::{
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
+static TEST_CONFIG_DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+fn test_config_dir() -> PathBuf {
+    let id = TEST_CONFIG_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "ccs-gateway-web-slim-routes-{}-{id}",
+        std::process::id()
+    ));
+    if path.exists() {
+        std::fs::remove_dir_all(&path).expect("clear test config dir");
+    }
+    std::fs::create_dir_all(&path).expect("test config dir");
+    path
+}
+
 fn test_state(profile: &str, auth_enabled: bool) -> Arc<ServerState> {
     let db = Arc::new(Database::memory().expect("in-memory database"));
     let profile = ProfileConfig::from_env_value(Some(profile)).unwrap();
@@ -30,7 +51,7 @@ fn test_state(profile: &str, auth_enabled: bool) -> Arc<ServerState> {
     Arc::new(ServerState {
         auth_token: None,
         event_bus: create_event_bus(8),
-        core: CoreContext::from_app_state(AppState::new(db)),
+        core: CoreContext::from_app_state_with_app_config_dir(AppState::new(db), test_config_dir()),
         session_store: Arc::new(SessionStore::new()),
         auth_config: auth_enabled.then(|| AuthConfig {
             password_hash: "$2b$04$MJuc/Azj7j9Js28.20f31uIhhVpf8f1GqCdPbh3D5StxPf8/FxYSi"
@@ -308,7 +329,7 @@ async fn auth_vault_tokens_rejects_before_json_parsing_in_slim() {
 }
 
 #[tokio::test]
-async fn slim_receive_window_allows_one_cookie_authenticated_token_write_only() {
+async fn slim_receive_window_stays_open_after_cookie_authenticated_token_write() {
     let state = test_state("slim", true);
     let cookie = session_cookie(&state);
     let app = test_app(Arc::clone(&state));
@@ -330,6 +351,11 @@ async fn slim_receive_window_allows_one_cookie_authenticated_token_write_only() 
     let open_body = body_json(open_response).await;
     assert_eq!(open_body["ok"], true);
     assert_eq!(open_body["status"], "open");
+    let remaining = open_body["remainingSeconds"].as_i64().unwrap_or_default();
+    assert!(
+        (295..=300).contains(&remaining),
+        "remainingSeconds should start near 300, got {remaining}"
+    );
 
     let write_response = app
         .clone()
@@ -344,14 +370,22 @@ async fn slim_receive_window_allows_one_cookie_authenticated_token_write_only() 
     assert_eq!(write_body["ok"], true);
     assert_eq!(write_body["siteCount"], 1);
 
-    let replay_response = app
+    let status_after_write = state.auth_vault_receive_window.status();
+    assert!(status_after_write.enabled);
+    assert_eq!(status_after_write.closed_reason, None);
+
+    let second_write_response = app
         .clone()
-        .oneshot(remote_auth_vault_request(&cookie, json!({}).to_string()))
+        .oneshot(remote_auth_vault_request(
+            &cookie,
+            valid_auth_vault_payload(),
+        ))
         .await
         .expect("response");
-    assert_eq!(replay_response.status(), StatusCode::FORBIDDEN);
-    let replay_body = body_json(replay_response).await;
-    assert_eq!(replay_body["error"], "auth_vault_receive_window_closed");
+    assert_eq!(second_write_response.status(), StatusCode::OK);
+    let second_write_body = body_json(second_write_response).await;
+    assert_eq!(second_write_body["ok"], true);
+    assert_eq!(second_write_body["siteCount"], 1);
 
     let summary_response = app
         .oneshot(
@@ -663,7 +697,7 @@ async fn slim_receive_window_rejects_cross_site_origin() {
 }
 
 #[tokio::test]
-async fn slim_receive_window_allows_only_one_concurrent_success() {
+async fn slim_receive_window_allows_multiple_quick_successes_within_open_window() {
     let state = test_state("slim", true);
     let cookie = session_cookie(&state);
     let app = test_app(state);
@@ -701,22 +735,58 @@ async fn slim_receive_window_allows_only_one_concurrent_success() {
             .iter()
             .filter(|status| **status == StatusCode::OK)
             .count(),
-        1
-    );
-    assert_eq!(
-        statuses
-            .iter()
-            .filter(|status| **status == StatusCode::FORBIDDEN)
-            .count(),
-        1
+        2
     );
 }
 
 #[tokio::test]
-async fn slim_receive_window_closes_after_five_failed_writes() {
+async fn slim_receive_window_reports_busy_without_closing() {
     let state = test_state("slim", true);
     let cookie = session_cookie(&state);
-    let app = test_app(state);
+    let app = test_app(Arc::clone(&state));
+
+    let open_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/auth-vault/receive-window")
+                .header(header::COOKIE, cookie.clone())
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(open_response.status(), StatusCode::OK);
+
+    assert!(matches!(
+        state.auth_vault_receive_window.begin_receive(),
+        cc_switch_server::state::AuthVaultReceiveBegin::Claimed
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(remote_auth_vault_request(
+            &cookie,
+            valid_auth_vault_payload(),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = body_json(response).await;
+    assert_eq!(body["error"], "auth_vault_receive_window_busy");
+
+    state.auth_vault_receive_window.finish_receive_success();
+    let status = state.auth_vault_receive_window.status();
+    assert!(status.enabled);
+    assert_eq!(status.closed_reason, None);
+}
+
+#[tokio::test]
+async fn slim_receive_window_failed_writes_do_not_close_before_expiry() {
+    let state = test_state("slim", true);
+    let cookie = session_cookie(&state);
+    let app = test_app(Arc::clone(&state));
 
     let open_response = app
         .clone()
@@ -771,6 +841,11 @@ async fn slim_receive_window_closes_after_five_failed_writes() {
         );
     }
 
+    let status_after_failures = state.auth_vault_receive_window.status();
+    assert!(status_after_failures.enabled);
+    assert_eq!(status_after_failures.failure_count, 5);
+    assert_eq!(status_after_failures.closed_reason, None);
+
     let response = app
         .oneshot(remote_auth_vault_request(
             &cookie,
@@ -778,9 +853,15 @@ async fn slim_receive_window_closes_after_five_failed_writes() {
         ))
         .await
         .expect("response");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
-    assert_eq!(body["error"], "auth_vault_receive_window_closed");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["siteCount"], 1);
+
+    let status_after_success = state.auth_vault_receive_window.status();
+    assert!(status_after_success.enabled);
+    assert_eq!(status_after_success.failure_count, 0);
+    assert_eq!(status_after_success.closed_reason, None);
 }
 
 #[tokio::test]
