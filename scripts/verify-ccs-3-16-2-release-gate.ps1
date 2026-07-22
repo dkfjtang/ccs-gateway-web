@@ -41,10 +41,19 @@ function Invoke-Gate {
         [scriptblock]$Command
     )
 
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "==> $Name"
-    & $Command
-    if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
-        throw "Gate failed: $Name (exit $LASTEXITCODE)"
+    try {
+        & $Command
+        if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
+            throw "Gate failed: $Name (exit $LASTEXITCODE)"
+        }
+        $timer.Stop()
+        Write-Host ("<== {0} elapsedMs={1}" -f $Name, [int64]$timer.Elapsed.TotalMilliseconds)
+    } catch {
+        $timer.Stop()
+        Write-Host ("<!! {0} elapsedMs={1}" -f $Name, [int64]$timer.Elapsed.TotalMilliseconds)
+        throw
     }
 }
 

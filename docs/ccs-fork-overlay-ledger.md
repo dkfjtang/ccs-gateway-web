@@ -59,10 +59,12 @@ Before following a newer official `farion1231/cc-switch` baseline:
 3. Run `scripts/verify-local-overlays.ps1` and require `overlay_status=overlay_ready`.
 4. Compare changed official upstream files against every entry in this ledger.
 5. Re-run `scripts/verify-token-cost-savers.ps1` after proxy or provider transform conflicts are resolved.
-6. Run `scripts/verify-ccs-3-16-2-release-gate.ps1` for the full Codex Chat, sync, usage, provider preset, i18n, Docker, and secret verification sweep.
-7. Re-run the relevant Caveman smoke/gate only when prompt UI, prompt service, Web runtime, or packaging paths changed.
-8. Probe OpenClaw priority patch with `apply_openclaw_fast_priority_patch.sh --check` on the target OpenClaw version before declaring the last-hop route healthy.
-9. Use `ccs-web-reference` only when an official upstream conflict needs historical fork context.
+6. Use `pnpm gate:quick` for developer feedback only. It runs whitespace and changed-scope secret checks and must not be treated as release evidence.
+7. Use `pnpm gate:standard` for scoped validation. It expands checks based on the changed files, but still is not a publish gate and does not run Docker up/down smoke.
+8. Run `pnpm gate:release` or `scripts/verify-ccs-3-16-2-release-gate.ps1` for the full Codex Chat, sync, usage, provider preset, i18n, Docker, and secret verification sweep. This is the publish gate and must keep Docker and desktop preflight enabled by default.
+9. Re-run the relevant Caveman smoke/gate only when prompt UI, prompt service, Web runtime, or packaging paths changed.
+10. Probe OpenClaw priority patch with `apply_openclaw_fast_priority_patch.sh --check` on the target OpenClaw version before declaring the last-hop route healthy.
+11. Use `ccs-web-reference` only when an official upstream conflict needs historical fork context.
 
 ## Current Decision
 

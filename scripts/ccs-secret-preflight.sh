@@ -60,18 +60,20 @@ check_for_tracked_env_files() {
 }
 
 check_dockerignore() {
-  grep -qxF '.env' .dockerignore
-  grep -qxF '.env.*' .dockerignore
-  grep -qxF '!.env.web' .dockerignore
-  grep -qxF '.git' .dockerignore
-  grep -qxF 'node_modules' .dockerignore
-  grep -qxF '.codex' .dockerignore
-  grep -qxF '.learnings' .dockerignore
-  grep -qxF '.serena' .dockerignore
-  grep -qxF '.run' .dockerignore
-  grep -qxF '.upstream' .dockerignore
-  grep -qxF '.worktrees' .dockerignore
-  grep -qxF 'tmp' .dockerignore
+  local dockerignore
+  dockerignore="$(tr -d '\r' < .dockerignore)"
+  grep -qxF '.env' <<< "$dockerignore"
+  grep -qxF '.env.*' <<< "$dockerignore"
+  grep -qxF '!.env.web' <<< "$dockerignore"
+  grep -qxF '.git' <<< "$dockerignore"
+  grep -qxF 'node_modules' <<< "$dockerignore"
+  grep -qxF '.codex' <<< "$dockerignore"
+  grep -qxF '.learnings' <<< "$dockerignore"
+  grep -qxF '.serena' <<< "$dockerignore"
+  grep -qxF '.run' <<< "$dockerignore"
+  grep -qxF '.upstream' <<< "$dockerignore"
+  grep -qxF '.worktrees' <<< "$dockerignore"
+  grep -qxF 'tmp' <<< "$dockerignore"
 }
 
 check_sensitive_literals() {

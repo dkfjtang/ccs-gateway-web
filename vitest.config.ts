@@ -2,6 +2,13 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
+const isRunningInsideWorktree = __dirname
+  .split(/[\\/]+/)
+  .includes(".worktrees");
+const localWorkspaceExcludes = isRunningInsideWorktree
+  ? []
+  : ["**/.worktrees/**"];
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -27,7 +34,7 @@ export default defineConfig({
       "**/node_modules/**",
       "**/dist/**",
       "**/.upstream/**",
-      "**/.worktrees/**",
+      ...localWorkspaceExcludes,
       "**/.run/**",
       "**/.pnpm-store/**",
       "**/tmp/**",

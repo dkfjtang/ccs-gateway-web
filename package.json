@@ -20,6 +20,9 @@
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest watch",
+    "gate:quick": "node scripts/release-gate-profiles.mjs quick",
+    "gate:standard": "node scripts/release-gate-profiles.mjs standard",
+    "gate:release": "node scripts/release-gate-profiles.mjs release",
     "release:sync-version": "node scripts/release-manager.mjs sync",
     "release:cut": "node scripts/release-manager.mjs release"
   },
